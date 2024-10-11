@@ -5,14 +5,12 @@ import contextlib
 import functools
 import logging
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum, auto
 from typing import (
     Any,
     AsyncGenerator,
-    Awaitable,
     Callable,
     Dict,
     Final,
@@ -23,13 +21,16 @@ from typing import (
     Set,
     Tuple,
 )
-from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import aiofiles
 import aiofiles.os
+import cysimdjson
 import interactions
-import ujson
+import re2 as re
+from cachetools import TTLCache
 from interactions.api.events import MessageCreate, NewThreadCreate
+from interactions.client.errors import Forbidden, NotFound
+from yarl import URL
 
 LOG_DIR: Final[str] = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -86,23 +87,26 @@ class ActionDetails:
 
 class Model:
     def __init__(self):
-        self.banned_users: Dict[str, Dict[str, List[str]]] = {}
+        self.banned_users: Dict[str, Dict[str, Set[str]]] = {}
         self.ban_lock = asyncio.Lock()
         self.ban_cache: Dict[Tuple[str, str, str], Tuple[bool, datetime]] = {}
         self.CACHE_DURATION = timedelta(minutes=5)
+        self.parser = cysimdjson.JSONParser()
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
             async with aiofiles.open(file_path, "r") as file:
                 content = await file.read()
-                self.banned_users = ujson.loads(content) if content.strip() else {}
+                self.banned_users = (
+                    self.parser.parse(content) if content.strip() else {}
+                )
         except Exception as e:
             logger.error(f"Error loading banned users data: {e}")
             self.banned_users = {}
 
     async def save_banned_users(self, file_path: str) -> None:
         async with aiofiles.open(file_path, "w") as file:
-            await file.write(ujson.dumps(self.banned_users, indent=4))
+            await file.write(self.parser.dumps(self.banned_users, indent=4))
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
         cache_key = (channel_id, post_id, user_id)
@@ -113,7 +117,7 @@ class Model:
             if current_time - timestamp < self.CACHE_DURATION:
                 return is_banned
 
-        is_banned = user_id in self.banned_users.get(channel_id, {}).get(post_id, [])
+        is_banned = user_id in self.banned_users.get(channel_id, {}).get(post_id, set())
 
         self.ban_cache[cache_key] = (is_banned, current_time)
 
@@ -200,6 +204,7 @@ class Posts(interactions.Extension):
             1183048643071180871,
         ]
         asyncio.create_task(self.model.load_banned_users(self.BANNED_USERS_FILE))
+        self.url_cache = TTLCache(maxsize=1024, ttl=3600)
 
     # View methods
 
@@ -602,7 +607,7 @@ class Posts(interactions.Extension):
 
         try:
             member = await ctx.guild.fetch_member(int(user_id))
-        except interactions.errors.NotFound:
+        except NotFound:
             return await self.send_error(
                 ctx, f"User with ID {user_id} not found in the server."
             )
@@ -671,7 +676,7 @@ class Posts(interactions.Extension):
 
         try:
             await member.send(embeds=[dm_embed])
-        except interactions.errors.Forbidden:
+        except Forbidden:
             logger.warning(
                 f"Unable to send DM to {member.mention}. They may have DMs disabled."
             )
@@ -820,7 +825,8 @@ class Posts(interactions.Extension):
         self, channel: interactions.GuildChannel
     ) -> Optional[str]:
         async for message in channel.history(limit=1):
-            return f"{message.jump_url.rsplit('/', 1)[0]}/0"
+            url = URL(message.jump_url)
+            return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
         return None
 
     # Event methods
@@ -955,16 +961,17 @@ class Posts(interactions.Extension):
         return tuple(channel.available_tags or ())
 
     @functools.lru_cache(maxsize=1024)
-    def sanitize_url(self, url: str, preserve_params: Tuple[str, ...] = ("p",)) -> str:
-        parts = urlsplit(url)
-        query = parse_qs(parts.query)
-        new_query = {k: v for k, v in query.items() if k in preserve_params}
-        return urlunsplit(parts._replace(query=urlencode(new_query, doseq=True)))
+    def sanitize_url(
+        self, url_str: str, preserve_params: Tuple[str, ...] = ("p",)
+    ) -> str:
+        url = URL(url_str)
+        query = {k: v for k, v in url.query.items() if k in preserve_params}
+        return str(url.with_query(query))
 
     @functools.lru_cache(maxsize=1)
     def get_link_transformations(
         self,
-    ) -> List[Tuple[re.Pattern, Callable[[str], Awaitable[str]]]]:
+    ) -> List[Tuple[re.Pattern, Callable[[str], str]]]:
         return [
             (
                 re.compile(
@@ -974,17 +981,17 @@ class Posts(interactions.Extension):
                 lambda url: (
                     self.sanitize_url(url)
                     if "bilibili.com" in url.lower()
-                    else url.replace("b23.tv", "b23.tf", 1)
+                    else str(URL(url).with_host("b23.tf"))
                 ),
             ),
         ]
 
     async def transform_links(self, content: str) -> str:
-        async def transform_url(match: re.Match) -> str:
+        def transform_url(match: re.Match) -> str:
             url = match.group(0)
             for pattern, transform in self.get_link_transformations():
                 if pattern.match(url):
-                    return await transform(url)
+                    return transform(url)
             return url
 
         return await asyncio.to_thread(
