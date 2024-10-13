@@ -1,0 +1,6 @@
+aiofiles
+cysimdjson
+discord-py-interactions
+re2
+cachetools
+yarl
