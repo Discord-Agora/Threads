@@ -1,0 +1,27 @@
+## 2024-10-16
+### Major Changes
+- Architecture Overhaul: Implemented the Model-View-Controller (MVC) pattern.
+- Performance Optimization: Replaced several libraries with faster alternatives and optimized data structures.
+### Refactoring
+- Implemented the MVC pattern.
+- Organized the Controller into distinct sections: View methods, Command methods, Event methods, Check methods, and Utility methods.
+- Separated Model and Decorator from Controller (`interactions.Extension`).
+- Removed global logging configuration for better modularity.
+### Performance Improvements
+- Replaced `cysimdjson` with `orjson`.
+- Optimized performance across various components of the application.
+- Replaced built-in libraries with faster third-party alternatives.
+- Changed `banned_users` data structure from a list to a set.
+### Features
+- Added `requirements.txt`.
+- Implemented action logging with embeds.
+- Expanded the banned users data structure and storage.
+- Added additional error handling and logging.
+### Chores
+- Removed unnecessary files.
+- Fixed imports for `Forbidden` and `NotFound`.
+- Removed unused imports.
+- Used Final type hints for constants.
+- Renamed logging constants.
+### Commits
+- Initial commit with foundational changes and optimizations.
