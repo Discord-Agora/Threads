@@ -1,6 +1,5 @@
 aiofiles
-cysimdjson
+orjson
 discord-py-interactions
-re2
 cachetools
 yarl
