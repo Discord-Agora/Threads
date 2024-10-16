@@ -459,7 +459,6 @@ class Posts(interactions.Extension):
             )
         else:
             await self.send_error(ctx, "Unable to find the top message in this post.")
-            return
 
     @module_base.subcommand("lock", sub_cmd_description="Lock the current post")
     @interactions.slash_option(
@@ -954,9 +953,7 @@ class Posts(interactions.Extension):
 
     async def send_warning(self, user: interactions.Member, message: str) -> None:
         embed = await self.create_embed(
-            title="Warning",
-            description=message,
-            color=EmbedColor.WARN
+            title="Warning", description=message, color=EmbedColor.WARN
         )
         try:
             await user.send(embeds=[embed])
@@ -989,13 +986,15 @@ class Posts(interactions.Extension):
             except Exception as e:
                 logger.exception(f"Failed to replace message: {e}")
 
-    @functools.lru_cache(maxsize=128)
     async def fetch_oldest_message_url(
         self, channel: interactions.GuildChannel
     ) -> Optional[str]:
-        async for message in channel.history(limit=1):
-            url = URL(message.jump_url)
-            return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
+        try:
+            async for message in channel.history(limit=1, oldest_first=True):
+                url = URL(message.jump_url)
+                return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
+        except Exception as e:
+            logger.error(f"Error fetching oldest message: {e}")
         return None
 
     # Event methods
