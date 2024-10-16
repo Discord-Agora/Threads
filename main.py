@@ -990,7 +990,7 @@ class Posts(interactions.Extension):
         self, channel: interactions.GuildChannel
     ) -> Optional[str]:
         try:
-            async for message in channel.history(limit=1, oldest_first=True):
+            async for message in channel.history(limit=1):
                 url = URL(message.jump_url)
                 return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
         except Exception as e:
