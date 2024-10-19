@@ -35,15 +35,17 @@ from interactions.api.events import MessageCreate, NewThreadCreate
 from interactions.client.errors import NotFound
 from yarl import URL
 
-LOG_DIR: Final[str] = os.path.join(os.path.dirname(__file__), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE: Final[str] = os.path.join(LOG_DIR, "posts.log")
+BASE_DIR: Final[str] = os.path.dirname(__file__)
+LOG_FILE: Final[str] = os.path.join(BASE_DIR, "roles.log")
+
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
 file_handler: Final[RotatingFileHandler] = RotatingFileHandler(
     LOG_FILE, maxBytes=1 * 1024 * 1024, backupCount=1
 )
 file_handler.setLevel(logging.DEBUG)
+
 formatter: Final[logging.Formatter] = logging.Formatter(
     "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
