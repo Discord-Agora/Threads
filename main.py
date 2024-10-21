@@ -68,8 +68,8 @@ class ActionType(Enum):
     UNBAN = auto()
     DELETE = auto()
     EDIT = auto()
-    SHARE = auto()
-    REVOKE = auto()
+    SHARE_PERMISSIONS = auto()
+    REVOKE_PERMISSIONS = auto()
 
 
 class EmbedColor(Enum):
@@ -453,8 +453,8 @@ class Posts(interactions.Extension):
                 ActionType.DELETE,
                 ActionType.BAN,
                 ActionType.UNBAN,
-                ActionType.SHARE,
-                ActionType.REVOKE,
+                ActionType.SHARE_PERMISSIONS,
+                ActionType.REVOKE_PERMISSIONS,
             }:
                 tasks.append(self.send_dm(details.target, dm_embed, components))
 
@@ -469,8 +469,8 @@ class Posts(interactions.Extension):
             ActionType.UNLOCK: EmbedColor.INFO,
             ActionType.UNBAN: EmbedColor.INFO,
             ActionType.EDIT: EmbedColor.INFO,
-            ActionType.SHARE: EmbedColor.INFO,
-            ActionType.REVOKE: EmbedColor.WARN,
+            ActionType.SHARE_PERMISSIONS: EmbedColor.INFO,
+            ActionType.REVOKE_PERMISSIONS: EmbedColor.WARN,
         }
         return color_mapping.get(action, EmbedColor.DEBUG).value
 
@@ -502,8 +502,8 @@ class Posts(interactions.Extension):
             ),
             ActionType.BAN: lambda: f"You have been banned from {channel_mention}. If you continue to attempt to post, your comments will be deleted.",
             ActionType.UNBAN: lambda: f"You have been unbanned from {channel_mention}.",
-            ActionType.SHARE: lambda: f"You have been granted permissions to {channel_mention}.",
-            ActionType.REVOKE: lambda: f"Your permissions for {channel_mention} have been revoked.",
+            ActionType.SHARE_PERMISSIONS: lambda: f"You have been granted permissions to {channel_mention}.",
+            ActionType.REVOKE_PERMISSIONS: lambda: f"Your permissions for {channel_mention} have been revoked.",
         }
 
         message: str = notification_messages.get(
@@ -514,8 +514,8 @@ class Posts(interactions.Extension):
         if details.action not in {
             ActionType.BAN,
             ActionType.UNBAN,
-            ActionType.SHARE,
-            ActionType.REVOKE,
+            ActionType.SHARE_PERMISSIONS,
+            ActionType.REVOKE_PERMISSIONS,
         }:
             message += f" Reason: {details.reason}"
 
@@ -794,10 +794,10 @@ class Posts(interactions.Extension):
         post_id, user_id = map(str, (post.id, member.id))
 
         match action:
-            case ActionType.SHARE:
+            case ActionType.SHARE_PERMISSIONS:
                 self.model.post_permissions[post_id].add(user_id)
                 action_name = "shared"
-            case ActionType.REVOKE:
+            case ActionType.REVOKE_PERMISSIONS:
                 self.model.post_permissions[post_id].discard(user_id)
                 action_name = "revoked"
             case _:
@@ -934,7 +934,7 @@ class Posts(interactions.Extension):
         match action:
             case ActionType.BAN | ActionType.UNBAN:
                 return await self.ban_unban_user(ctx, member, action)
-            case ActionType.SHARE | ActionType.REVOKE:
+            case ActionType.SHARE_PERMISSIONS | ActionType.REVOKE_PERMISSIONS:
                 return await self.share_revoke_permissions(ctx, member, action)
             case _:
                 await self.send_error(ctx, "Invalid action. Please try again.")
