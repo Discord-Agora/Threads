@@ -4,13 +4,14 @@ This module is designed to manage forum posts, user interactions, and content mo
 
 ## Features
 
-- Post locking and unlocking
-- User banning and unbanning within specific posts
-- Message deletion
-- Tag management for forum posts
-- Automatic processing of new posts
-- Link sanitization for privacy protection
-- Logging of moderation actions
+- Locking and unlocking posts
+- Banning and unbanning users for specific posts
+- Deleting messages
+- Managing tags for forum posts
+- Automatically processing new posts
+- Sanitizing links for privacy protection
+- Logging moderation actions
+- Dynamically sharing or revoking user permissions for specific posts within a forum
 
 ## Usage
 
@@ -20,7 +21,7 @@ The module responds to various slash commands and context menu interactions:
 - `/posts lock`: Lock the current post
 - `/posts unlock`: Unlock the current post
 - Right-click menu on messages: **Message in Post** for deletion
-- Right-click menu on users: **User in Post** for banning/unbanning
+- Right-click menu on users: **User in Post** for banning, unbanning, sharing permissions, or revoking permissions
 - Right-click menu on messages: **Tags in Post** for tag management
 
 ## Configuration
