@@ -3,20 +3,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
-import logging
 import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
-from logging.handlers import RotatingFileHandler
 from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    Coroutine,
+    DefaultDict,
     Dict,
     Final,
+    Generator,
     List,
     Literal,
     Mapping,
@@ -33,24 +34,28 @@ import orjson
 from cachetools import TTLCache
 from interactions.api.events import MessageCreate, NewThreadCreate
 from interactions.client.errors import NotFound
+from loguru import logger
 from yarl import URL
 
 BASE_DIR: Final[str] = os.path.dirname(__file__)
-LOG_FILE: Final[str] = os.path.join(BASE_DIR, "roles.log")
+LOG_FILE: Final[str] = os.path.join(BASE_DIR, "posts.log")
 
-logger: Final[logging.Logger] = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-file_handler: Final[RotatingFileHandler] = RotatingFileHandler(
-    LOG_FILE, maxBytes=1 * 1024 * 1024, backupCount=1
+logger.remove()
+logger.add(
+    LOG_FILE,
+    level="DEBUG",
+    format="{time:YYYY-MM-DD HH:mm:ss ZZ} | {level} | {message}",
+    filter=None,
+    colorize=None,
+    serialize=False,
+    backtrace=True,
+    diagnose=True,
+    enqueue=True,
+    catch=True,
+    rotation="1 MB",
+    compression="zip",
+    encoding="utf-8",
 )
-file_handler.setLevel(logging.DEBUG)
-
-formatter: Final[logging.Formatter] = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
 
 
 # Model
@@ -63,6 +68,8 @@ class ActionType(Enum):
     UNBAN = auto()
     DELETE = auto()
     EDIT = auto()
+    SHARE = auto()
+    REVOKE = auto()
 
 
 class EmbedColor(Enum):
@@ -78,55 +85,61 @@ class EmbedColor(Enum):
 
 @dataclass
 class ActionDetails:
-    action: ActionType
-    reason: str
-    post_name: str
-    actor: interactions.Member
-    target: Optional[interactions.Member] = None
-    result: str = "successful"
-    channel: Optional[interactions.GuildForumPost] = None
-    additional_info: Optional[Dict[str, Any]] = None
+    action: Final[ActionType]
+    reason: Final[str]
+    post_name: Final[str]
+    actor: Final[interactions.Member]
+    target: Final[Optional[interactions.Member]] = None
+    result: Final[str] = "successful"
+    channel: Final[Optional[interactions.GuildForumPost]] = None
+    additional_info: Final[Optional[Mapping[str, Any]]] = None
 
 
 class Model:
-    def __init__(self):
-        self.banned_users: Dict[str, Dict[str, Set[str]]] = {}
-        self.ban_cache: Dict[Tuple[str, str, str], Tuple[bool, datetime]] = {}
-        self.CACHE_DURATION = timedelta(minutes=5)
+    def __init__(self) -> None:
+        self.banned_users: Final[DefaultDict[str, DefaultDict[str, Set[str]]]] = (
+            defaultdict(lambda: defaultdict(set))
+        )
+        self.post_permissions: Final[DefaultDict[str, Set[str]]] = defaultdict(set)
+        self.ban_cache: Final[Dict[Tuple[str, str, str], Tuple[bool, datetime]]] = {}
+        self.CACHE_DURATION: Final[timedelta] = timedelta(minutes=5)
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
             async with aiofiles.open(file_path, "rb") as file:
-                content = await file.read()
+                content: bytes = await file.read()
                 loaded_data: Dict[str, Dict[str, list]] = (
                     orjson.loads(content) if content.strip() else {}
                 )
 
-                self.banned_users: Dict[str, Dict[str, Set[str]]] = defaultdict(
-                    lambda: defaultdict(set)
-                )
-                for channel_id, channel_data in loaded_data.items():
-                    for post_id, user_list in channel_data.items():
-                        self.banned_users[channel_id][post_id].update(user_list)
-
+            self.banned_users.clear()
+            self.banned_users.update(
+                {
+                    channel_id: defaultdict(
+                        set,
+                        {
+                            post_id: set(user_list)
+                            for post_id, user_list in channel_data.items()
+                        },
+                    )
+                    for channel_id, channel_data in loaded_data.items()
+                }
+            )
         except FileNotFoundError:
             logger.warning(
                 f"Banned users file not found: {file_path}. Creating a new one."
             )
-            self.banned_users = defaultdict(lambda: defaultdict(set))
             await self.save_banned_users(file_path)
-        except (orjson.JSONDecodeError, TypeError) as e:
+        except orjson.JSONDecodeError as e:
             logger.error(f"Error decoding JSON data: {e}")
-            self.banned_users = defaultdict(lambda: defaultdict(set))
         except Exception as e:
             logger.error(
                 f"Unexpected error loading banned users data: {e}", exc_info=True
             )
-            self.banned_users = defaultdict(lambda: defaultdict(set))
 
     async def save_banned_users(self, file_path: str) -> None:
         try:
-            serializable_banned_users: Dict[str, Dict[str, list]] = {
+            serializable_banned_users: Dict[str, Dict[str, List[str]]] = {
                 channel_id: {
                     post_id: list(user_set)
                     for post_id, user_set in channel_data.items()
@@ -134,7 +147,7 @@ class Model:
                 for channel_id, channel_data in self.banned_users.items()
             }
 
-            json_data = orjson.dumps(
+            json_data: bytes = orjson.dumps(
                 serializable_banned_users,
                 option=orjson.OPT_INDENT_2
                 | orjson.OPT_SORT_KEYS
@@ -145,35 +158,78 @@ class Model:
                 await file.write(json_data)
 
             logger.info(f"Successfully saved banned users data to {file_path}")
-        except (orjson.JSONEncodeError, TypeError) as e:
-            logger.error(f"Error encoding banned users data: {e}")
-        except IOError as e:
-            logger.error(f"I/O error while saving banned users data: {e}")
         except Exception as e:
-            logger.error(
-                f"Unexpected error saving banned users data: {e}", exc_info=True
+            logger.error(f"Error saving banned users data: {e}", exc_info=True)
+
+    async def save_post_permissions(self, file_path: str) -> None:
+        try:
+            serializable_permissions: Dict[str, List[str]] = {
+                k: list(v) for k, v in self.post_permissions.items()
+            }
+            json_data: bytes = orjson.dumps(
+                serializable_permissions, option=orjson.OPT_INDENT_2
             )
 
+            async with aiofiles.open(file_path, "wb") as file:
+                await file.write(json_data)
+
+            logger.info(f"Successfully saved post permissions to {file_path}")
+        except Exception as e:
+            logger.error(f"Error saving post permissions: {e}", exc_info=True)
+
+    async def load_post_permissions(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, "rb") as file:
+                content: bytes = await file.read()
+                loaded_data: Dict[str, List[str]] = orjson.loads(content)
+
+            self.post_permissions.clear()
+            self.post_permissions.update({k: set(v) for k, v in loaded_data.items()})
+
+            logger.info(f"Successfully loaded post permissions from {file_path}")
+        except FileNotFoundError:
+            logger.warning(
+                f"Post permissions file not found: {file_path}. Creating a new one."
+            )
+            await self.save_post_permissions(file_path)
+        except Exception as e:
+            logger.error(f"Error loading post permissions: {e}", exc_info=True)
+
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
-        cache_key = (channel_id, post_id, user_id)
-        current_time = datetime.now()
+        cache_key: Final[Tuple[str, str, str]] = (channel_id, post_id, user_id)
+        current_time: Final[datetime] = datetime.now()
 
         if cache_key in self.ban_cache:
             is_banned, timestamp = self.ban_cache[cache_key]
             if current_time - timestamp < self.CACHE_DURATION:
                 return is_banned
 
-        is_banned = user_id in self.banned_users.get(channel_id, {}).get(post_id, set())
-
+        is_banned: bool = user_id in self.banned_users[channel_id][post_id]
         self.ban_cache[cache_key] = (is_banned, current_time)
-
         return is_banned
 
     async def invalidate_ban_cache(
         self, channel_id: str, post_id: str, user_id: str
     ) -> None:
-        cache_key = (channel_id, post_id, user_id)
-        self.ban_cache.pop(cache_key, None)
+        self.ban_cache.pop((channel_id, post_id, user_id), None)
+
+    def has_post_permission(self, post_id: str, user_id: str) -> bool:
+        return user_id in self.post_permissions[post_id]
+
+    def get_banned_users(self) -> Generator[Tuple[str, str, str], None, None]:
+        return (
+            (channel_id, post_id, user_id)
+            for channel_id, channel_data in self.banned_users.items()
+            for post_id, user_set in channel_data.items()
+            for user_id in user_set
+        )
+
+    def get_post_permissions(self) -> Generator[Tuple[str, str], None, None]:
+        return (
+            (post_id, user_id)
+            for post_id, user_set in self.post_permissions.items()
+            for user_id in user_set
+        )
 
 
 # Decorator
@@ -181,8 +237,8 @@ class Model:
 
 def log_action(func):
     @functools.wraps(func)
-    async def wrapper(self, ctx, *args, **kwargs):
-        action_details = None
+    async def wrapper(self, ctx: interactions.CommandContext, *args, **kwargs):
+        action_details: Optional[ActionDetails] = None
         try:
             result = await func(self, ctx, *args, **kwargs)
             if isinstance(result, ActionDetails):
@@ -190,7 +246,7 @@ def log_action(func):
             else:
                 return result
         except Exception as e:
-            error_message = str(e)
+            error_message: str = str(e)
             await self.send_error(ctx, error_message)
             action_details = ActionDetails(
                 action=ActionType.DELETE,
@@ -211,7 +267,7 @@ def log_action(func):
             raise
         finally:
             if action_details:
-                await self.log_action_internal(action_details)
+                await asyncio.shield(self.log_action_internal(action_details))
         return result
 
     return wrapper
@@ -221,28 +277,33 @@ def log_action(func):
 
 
 class Posts(interactions.Extension):
-    def __init__(self, bot: interactions.Client):
-        self.bot = bot
-        self.model = Model()
-        self.ban_lock = asyncio.Lock()
-        self.BANNED_USERS_FILE: str = f"{os.path.dirname(__file__)}/banned_users.json"
+    def __init__(self, bot: interactions.Client) -> None:
+        self.bot: Final[interactions.Client] = bot
+        self.model: Final[Model] = Model()
+        self.ban_lock: Final[asyncio.Lock] = asyncio.Lock()
+        self.BANNED_USERS_FILE: Final[str] = (
+            f"{os.path.dirname(__file__)}/banned_users.json"
+        )
+        self.POST_PERMISSIONS_FILE: Final[str] = (
+            f"{os.path.dirname(__file__)}/post_permissions.json"
+        )
         self.LOG_CHANNEL_ID: Final[int] = 1166627731916734504
         self.LOG_FORUM_ID: Final[int] = 1159097493875871784
         self.LOG_POST_ID: Final[int] = 1279118293936111707
         self.POLL_FORUM_ID: Final[int] = 1155914521907568740
         self.TAIWAN_ROLE_ID: Final[int] = 1261328929013108778
         self.GUILD_ID: Final[int] = 1150630510696075404
-        self.ROLE_CHANNEL_PERMISSIONS: Dict[int, List[int]] = {
-            1223635198327914639: [
+        self.ROLE_CHANNEL_PERMISSIONS: Final[Dict[int, Tuple[int, ...]]] = {
+            1223635198327914639: (
                 1152311220557320202,
                 1168209956802142360,
                 1230197011761074340,
                 1155914521907568740,
                 1169032829548630107,
-            ],
-            1213490790341279754: [1185259262654562355],
+            ),
+            1213490790341279754: (1185259262654562355,),
         }
-        self.ALLOWED_CHANNELS: List[int] = [
+        self.ALLOWED_CHANNELS: Final[Tuple[int, ...]] = (
             1152311220557320202,
             1168209956802142360,
             1230197011761074340,
@@ -250,9 +311,15 @@ class Posts(interactions.Extension):
             1169032829548630107,
             1185259262654562355,
             1183048643071180871,
-        ]
-        asyncio.create_task(self.model.load_banned_users(self.BANNED_USERS_FILE))
-        self.url_cache = TTLCache(maxsize=1024, ttl=3600)
+        )
+        asyncio.create_task(self._initialize_data())
+        self.url_cache: Final[TTLCache] = TTLCache(maxsize=1024, ttl=3600)
+
+    async def _initialize_data(self) -> None:
+        await asyncio.gather(
+            self.model.load_banned_users(self.BANNED_USERS_FILE),
+            self.model.load_post_permissions(self.POST_PERMISSIONS_FILE),
+        )
 
     # View methods
 
@@ -262,18 +329,19 @@ class Posts(interactions.Extension):
         description: str = "",
         color: Union[EmbedColor, int] = EmbedColor.INFO,
     ) -> interactions.Embed:
-        if isinstance(color, EmbedColor):
-            color_value = color.value
-        else:
-            color_value = color
+        color_value: Final[int] = (
+            color.value if isinstance(color, EmbedColor) else color
+        )
 
-        embed = interactions.Embed(
+        embed: Final[interactions.Embed] = interactions.Embed(
             title=title, description=description, color=color_value
         )
-        guild = await self.bot.fetch_guild(self.GUILD_ID)
+
+        guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
         if guild and guild.icon:
             embed.set_footer(text=guild.name, icon_url=guild.icon.url)
-        embed.timestamp = datetime.now()
+
+        embed.timestamp = datetime.now(timezone.utc)
         embed.set_footer(text="鍵政大舞台")
         return embed
 
@@ -301,7 +369,7 @@ class Posts(interactions.Extension):
 
     async def log_action_internal(self, details: ActionDetails) -> None:
         logger.debug(f"log_action_internal called for action: {details.action}")
-        timestamp: Final[int] = int(datetime.now().timestamp())
+        timestamp: Final[int] = int(datetime.now(timezone.utc).timestamp())
 
         log_embed: Final[interactions.Embed] = await self.create_embed(
             title=f"Action Log: {details.action.name.capitalize()}",
@@ -329,23 +397,27 @@ class Posts(interactions.Extension):
         log_embed.add_field(name="Reason", value=details.reason, inline=False)
 
         if details.additional_info:
-            formatted_info = self.format_additional_info(details.additional_info)
+            formatted_info: Final[str] = self.format_additional_info(
+                details.additional_info
+            )
             log_embed.add_field(
                 name="Additional Info", value=formatted_info, inline=False
             )
 
-        tasks: List[asyncio.Task] = []
+        tasks: List[Coroutine] = []
 
         log_channel, log_forum = await asyncio.gather(
             self.bot.fetch_channel(self.LOG_CHANNEL_ID),
             self.bot.fetch_channel(self.LOG_FORUM_ID),
         )
-        log_post = await log_forum.fetch_post(self.LOG_POST_ID)
+        log_post: Final[interactions.GuildForumPost] = await log_forum.fetch_post(
+            self.LOG_POST_ID
+        )
 
         if log_post.archived:
-            tasks.append(asyncio.create_task(log_post.edit(archived=False)))
+            tasks.append(log_post.edit(archived=False))
 
-        log_key = f"{details.action}_{details.post_name}_{timestamp}"
+        log_key: Final[str] = f"{details.action}_{details.post_name}_{timestamp}"
         if hasattr(self, "_last_log_key") and self._last_log_key == log_key:
             logger.warning(f"Duplicate log detected: {log_key}")
             return
@@ -354,8 +426,8 @@ class Posts(interactions.Extension):
 
         tasks.extend(
             [
-                asyncio.create_task(log_post.send(embeds=[log_embed])),
-                asyncio.create_task(log_channel.send(embeds=[log_embed])),
+                log_post.send(embeds=[log_embed]),
+                log_channel.send(embeds=[log_embed]),
             ]
         )
 
@@ -381,16 +453,15 @@ class Posts(interactions.Extension):
                 ActionType.DELETE,
                 ActionType.BAN,
                 ActionType.UNBAN,
+                ActionType.SHARE,
+                ActionType.REVOKE,
             }:
-                tasks.append(
-                    asyncio.create_task(
-                        self.send_dm(details.target, dm_embed, components)
-                    )
-                )
+                tasks.append(self.send_dm(details.target, dm_embed, components))
 
         await asyncio.gather(*tasks)
 
-    def get_action_color(self, action: ActionType) -> int:
+    @staticmethod
+    def get_action_color(action: ActionType) -> int:
         color_mapping: Final[Dict[ActionType, EmbedColor]] = {
             ActionType.LOCK: EmbedColor.WARN,
             ActionType.BAN: EmbedColor.ERROR,
@@ -398,19 +469,29 @@ class Posts(interactions.Extension):
             ActionType.UNLOCK: EmbedColor.INFO,
             ActionType.UNBAN: EmbedColor.INFO,
             ActionType.EDIT: EmbedColor.INFO,
+            ActionType.SHARE: EmbedColor.INFO,
+            ActionType.REVOKE: EmbedColor.WARN,
         }
         return color_mapping.get(action, EmbedColor.DEBUG).value
 
-    async def send_dm(self, target, embed, components):
+    async def send_dm(
+        self,
+        target: interactions.Member,
+        embed: interactions.Embed,
+        components: List[interactions.Button],
+    ) -> None:
         try:
             await target.send(embeds=[embed], components=components)
         except Exception:
-            logger.warning(f"Failed to send DM to {target.mention}")
+            logger.warning(f"Failed to send DM to {target.mention}", exc_info=True)
 
-    def get_notification_message(self, details: ActionDetails) -> str:
-        channel_mention = details.channel.mention if details.channel else "the post"
+    @staticmethod
+    def get_notification_message(details: ActionDetails) -> str:
+        channel_mention: Final[str] = (
+            details.channel.mention if details.channel else "the post"
+        )
 
-        notification_messages: Final[Mapping[ActionType, Callable[[], str]]] = {
+        notification_messages: Final[Dict[ActionType, Callable[[], str]]] = {
             ActionType.LOCK: lambda: f"{channel_mention} has been locked.",
             ActionType.UNLOCK: lambda: f"{channel_mention} has been unlocked.",
             ActionType.DELETE: lambda: f"Your message has been deleted from {channel_mention}.",
@@ -421,40 +502,48 @@ class Posts(interactions.Extension):
             ),
             ActionType.BAN: lambda: f"You have been banned from {channel_mention}. If you continue to attempt to post, your comments will be deleted.",
             ActionType.UNBAN: lambda: f"You have been unbanned from {channel_mention}.",
+            ActionType.SHARE: lambda: f"You have been granted permissions to {channel_mention}.",
+            ActionType.REVOKE: lambda: f"Your permissions for {channel_mention} have been revoked.",
         }
 
-        message = notification_messages.get(
+        message: str = notification_messages.get(
             details.action,
             lambda: f"An action ({details.action.name.lower()}) has been performed in {channel_mention}.",
         )()
 
-        if details.action not in {ActionType.BAN, ActionType.UNBAN}:
+        if details.action not in {
+            ActionType.BAN,
+            ActionType.UNBAN,
+            ActionType.SHARE,
+            ActionType.REVOKE,
+        }:
             message += f" Reason: {details.reason}"
 
         return message
 
-    def format_additional_info(self, info: Dict[str, Any]) -> str:
-        formatted = []
+    @staticmethod
+    def format_additional_info(info: Mapping[str, Any]) -> str:
+        formatted: List[str] = []
         for key, value in info.items():
             if isinstance(value, list) and value and isinstance(value[0], dict):
                 formatted.append(f"**{key.replace('_', ' ').title()}**:")
-                for item in value:
-                    formatted.extend(f"• {k}: {v}" for k, v in item.items())
+                formatted.extend(
+                    f"• {k}: {v}" for item in value for k, v in item.items()
+                )
             else:
                 formatted.append(f"**{key.replace('_', ' ').title()}**: {value}")
         return "\n".join(formatted)
 
     # Command methods
 
-    module_base: interactions.SlashCommand = interactions.SlashCommand(
+    module_base: Final[interactions.SlashCommand] = interactions.SlashCommand(
         name="posts", description="Posts commands"
     )
 
     @module_base.subcommand("top", sub_cmd_description="Return to the top")
-    async def navigate_to_top_post(self, ctx: interactions.SlashContext):
+    async def navigate_to_top_post(self, ctx: interactions.SlashContext) -> None:
         post: Final[interactions.GuildForumPost] = ctx.channel
-        message_url = await self.fetch_oldest_message_url(post)
-        if message_url:
+        if message_url := await self.fetch_oldest_message_url(post):
             await self.send_success(
                 ctx,
                 f"Here's the link to the top of the post: [Click here]({message_url}).",
@@ -633,11 +722,11 @@ class Posts(interactions.Extension):
         post: Final[interactions.GuildForumPost] = ctx.channel
         target_user: Final[interactions.Member] = ctx.target
 
-        # if target_user.id in {ctx.author.id, self.bot.user.id}:
-        # await self.send_error(ctx, "You cannot manage yourself or the bot.")
-        # return
+        if target_user.id in {ctx.author.id, self.bot.user.id}:
+            await self.send_error(ctx, "You cannot manage yourself or the bot.")
+            return
 
-        if post.owner_id != ctx.author.id:
+        if not await self.can_manage_post(post, ctx.author):
             await self.send_error(
                 ctx, "You don't have permission to manage users in this post."
             )
@@ -647,10 +736,17 @@ class Posts(interactions.Extension):
             str, (post.parent_id, post.id, target_user.id)
         )
         is_banned: Final[bool] = await self.is_user_banned(channel_id, post_id, user_id)
+        has_permissions: Final[bool] = self.model.has_post_permission(post_id, user_id)
 
         options: Final[Tuple[interactions.StringSelectOption, ...]] = (
             interactions.StringSelectOption(label="Ban", value="ban"),
             interactions.StringSelectOption(label="Unban", value="unban"),
+            interactions.StringSelectOption(
+                label="Share Permissions", value="share_permissions"
+            ),
+            interactions.StringSelectOption(
+                label="Revoke Permissions", value="revoke_permissions"
+            ),
         )
         select_menu: Final[interactions.StringSelectMenu] = (
             interactions.StringSelectMenu(
@@ -663,13 +759,70 @@ class Posts(interactions.Extension):
         embed: Final[interactions.Embed] = await self.create_embed(
             title="User in Post",
             description=f"Select action for {target_user.mention}:\n"
-            f"Current status: {'Banned' if is_banned else 'Not banned'} in this post.",
+            f"Current status: {'Banned' if is_banned else 'Not banned'} in this post.\n"
+            f"Permissions: {'Shared' if has_permissions else 'Not shared'}",
             color=EmbedColor.INFO,
         )
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
 
     # Serve
+
+    @log_action
+    async def share_revoke_permissions(
+        self,
+        ctx: interactions.ContextMenuContext,
+        member: interactions.Member,
+        action: ActionType,
+    ) -> Optional[ActionDetails]:
+        if not await self.validate_channel(ctx) or not isinstance(
+            ctx.channel, interactions.GuildForumPost
+        ):
+            await self.send_error(
+                ctx, "This command can only be used in specific forum posts."
+            )
+            return None
+
+        post: Final[interactions.GuildForumPost] = ctx.channel
+        if not await self.can_manage_post(post, ctx.author):
+            await self.send_error(
+                ctx,
+                f"You can only {action.name.lower()} permissions for posts you manage.",
+            )
+            return None
+
+        post_id, user_id = map(str, (post.id, member.id))
+
+        match action:
+            case ActionType.SHARE:
+                self.model.post_permissions[post_id].add(user_id)
+                action_name = "shared"
+            case ActionType.REVOKE:
+                self.model.post_permissions[post_id].discard(user_id)
+                action_name = "revoked"
+            case _:
+                await self.send_error(ctx, "Invalid action.")
+                return None
+
+        await self.model.save_post_permissions(self.POST_PERMISSIONS_FILE)
+
+        await self.send_success(
+            ctx, f"Permissions have been {action_name} successfully."
+        )
+
+        return ActionDetails(
+            action=action,
+            reason=f"Permissions {action_name} by {ctx.author.mention}",
+            post_name=post.name,
+            actor=ctx.author,
+            target=member,
+            channel=post,
+            additional_info={
+                "action_type": f"{action_name.capitalize()} permissions",
+                "affected_user": str(member),
+                "affected_user_id": member.id,
+            },
+        )
 
     @log_action
     async def toggle_post_lock(
@@ -778,7 +931,14 @@ class Posts(interactions.Extension):
             )
             return None
 
-        return await self.ban_unban_user(ctx, member, action)
+        match action:
+            case ActionType.BAN | ActionType.UNBAN:
+                return await self.ban_unban_user(ctx, member, action)
+            case ActionType.SHARE | ActionType.REVOKE:
+                return await self.share_revoke_permissions(ctx, member, action)
+            case _:
+                await self.send_error(ctx, "Invalid action. Please try again.")
+                return None
 
     @log_action
     async def ban_unban_user(
@@ -786,7 +946,7 @@ class Posts(interactions.Extension):
         ctx: interactions.ContextMenuContext,
         member: interactions.Member,
         action: ActionType,
-    ) -> ActionDetails:
+    ) -> Optional[ActionDetails]:
         if not await self.validate_channel(ctx) or not isinstance(
             ctx.channel, interactions.GuildForumPost
         ):
@@ -795,10 +955,10 @@ class Posts(interactions.Extension):
             )
             return None
 
-        post = ctx.channel
-        if post.owner_id != ctx.author.id:
+        post: Final[interactions.GuildForumPost] = ctx.channel
+        if not await self.can_manage_post(post, ctx.author):
             await self.send_error(
-                ctx, f"You can only {action.name.lower()} users from your own posts."
+                ctx, f"You can only {action.name.lower()} users from posts you manage."
             )
             return None
 
@@ -809,10 +969,14 @@ class Posts(interactions.Extension):
             channel_users = banned_users.setdefault(channel_id, {})
             post_users = channel_users.setdefault(post_id, set())
 
-            if action == ActionType.BAN:
-                post_users.add(user_id)
-            elif action == ActionType.UNBAN:
-                post_users.discard(user_id)
+            match action:
+                case ActionType.BAN:
+                    post_users.add(user_id)
+                case ActionType.UNBAN:
+                    post_users.discard(user_id)
+                case _:
+                    await self.send_error(ctx, "Invalid action.")
+                    return None
 
             if not post_users:
                 del channel_users[post_id]
@@ -823,7 +987,7 @@ class Posts(interactions.Extension):
 
         await self.model.invalidate_ban_cache(channel_id, post_id, user_id)
 
-        action_name = "banned" if action == ActionType.BAN else "unbanned"
+        action_name: Final[str] = "banned" if action == ActionType.BAN else "unbanned"
         await self.send_success(ctx, f"User has been {action_name} successfully.")
 
         return ActionDetails(
@@ -844,14 +1008,17 @@ class Posts(interactions.Extension):
 
     @interactions.component_callback(manage_tags_regex_pattern)
     @log_action
-    async def on_manage_tags(self, ctx: interactions.ComponentContext) -> ActionDetails:
+    async def on_manage_tags(
+        self, ctx: interactions.ComponentContext
+    ) -> Optional[ActionDetails]:
         logger.info(f"on_manage_tags called with custom_id: {ctx.custom_id}")
 
         if not (match := self.manage_tags_regex_pattern.match(ctx.custom_id)):
             logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
-            return await self.send_error(ctx, "Invalid custom ID format.")
+            await self.send_error(ctx, "Invalid custom ID format.")
+            return None
 
-        post_id = int(match.group(1))
+        post_id: Final[int] = int(match.group(1))
 
         try:
             post, parent_forum = await asyncio.gather(
@@ -860,23 +1027,25 @@ class Posts(interactions.Extension):
             )
         except Exception as e:
             logger.error(f"Error fetching channels: {e}", exc_info=True)
-            return await self.send_error(ctx, "Failed to fetch the required channels.")
+            await self.send_error(ctx, "Failed to fetch the required channels.")
+            return None
 
         if not isinstance(post, interactions.GuildForumPost):
             logger.warning(f"Channel {post_id} is not a GuildForumPost")
-            return await self.send_error(ctx, "This is not a valid forum post.")
+            await self.send_error(ctx, "This is not a valid forum post.")
+            return None
 
-        tag_updates: Dict[str, Set[int]] = defaultdict(set)
+        tag_updates: Final[Dict[str, Set[int]]] = defaultdict(set)
         for value in ctx.values:
             action, tag_id = value.split(":")
             tag_updates[action].add(int(tag_id))
 
         logger.info(f"Tag updates for post {post_id}: {dict(tag_updates)}")
 
-        current_tag_ids: Set[int] = {tag.id for tag in post.applied_tags}
-        new_tag_ids: Set[int] = (current_tag_ids | tag_updates["add"]) - tag_updates[
-            "remove"
-        ]
+        current_tag_ids: Final[Set[int]] = {tag.id for tag in post.applied_tags}
+        new_tag_ids: Final[Set[int]] = (
+            current_tag_ids | tag_updates["add"]
+        ) - tag_updates["remove"]
 
         if new_tag_ids == current_tag_ids:
             return await self.send_success(ctx, "No changes were made to the tags.")
@@ -886,16 +1055,17 @@ class Posts(interactions.Extension):
             logger.info(f"Successfully updated tags for post {post_id}")
         except Exception as e:
             logger.exception(f"Error editing post tags: {e}")
-            return await self.send_error(
+            await self.send_error(
                 ctx,
                 "An error occurred while updating the post tags. Please try again later.",
             )
+            return None
 
-        tag_names: Dict[int, str] = {
+        tag_names: Final[Dict[int, str]] = {
             tag.id: tag.name for tag in parent_forum.available_tags
         }
 
-        update_messages: List[str] = [
+        update_messages: Final[List[str]] = [
             f"Tag `{tag_names.get(tag_id, 'Unknown')}` {'added to' if action == 'add' else 'removed from'} the post."
             for action, tag_ids in tag_updates.items()
             for tag_id in tag_ids
@@ -923,11 +1093,11 @@ class Posts(interactions.Extension):
 
     async def process_new_post(self, thread: interactions.GuildPublicThread) -> None:
         try:
-            timestamp = datetime.now().strftime("%y%m%d%H%M")
-            new_title = f"[{timestamp}] {thread.name}"
+            timestamp: Final[str] = datetime.now().strftime("%y%m%d%H%M")
+            new_title: Final[str] = f"[{timestamp}] {thread.name}"
             await thread.edit(name=new_title)
 
-            poll = interactions.Poll.create(
+            poll: Final[interactions.Poll] = interactions.Poll.create(
                 question="Do you support this petition?",
                 duration=48,
                 allow_multiselect=False,
@@ -944,7 +1114,7 @@ class Posts(interactions.Extension):
         if not self.should_process_link(event):
             return
 
-        new_content = await self.transform_links(event.message.content)
+        new_content: Final[str] = await self.transform_links(event.message.content)
         if new_content == event.message.content:
             return
 
@@ -954,7 +1124,7 @@ class Posts(interactions.Extension):
         )
 
     async def send_warning(self, user: interactions.Member, message: str) -> None:
-        embed = await self.create_embed(
+        embed: Final[interactions.Embed] = await self.create_embed(
             title="Warning", description=message, color=EmbedColor.WARN
         )
         try:
@@ -966,7 +1136,7 @@ class Posts(interactions.Extension):
     async def create_temp_webhook(
         self, channel: interactions.TextChannel, name: str
     ) -> AsyncGenerator[interactions.Webhook, None]:
-        webhook = await channel.create_webhook(name=name)
+        webhook: Final[interactions.Webhook] = await channel.create_webhook(name=name)
         try:
             yield webhook
         finally:
@@ -974,7 +1144,7 @@ class Posts(interactions.Extension):
                 await webhook.delete()
 
     async def replace_message(self, event: MessageCreate, new_content: str) -> None:
-        channel = event.message.channel
+        channel: Final[interactions.TextChannel] = event.message.channel
         async with self.create_temp_webhook(channel, "Temp Webhook") as webhook:
             try:
                 await asyncio.gather(
@@ -993,7 +1163,7 @@ class Posts(interactions.Extension):
     ) -> Optional[str]:
         try:
             async for message in channel.history(limit=1):
-                url = URL(message.jump_url)
+                url: Final[URL] = URL(message.jump_url)
                 return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
         except Exception as e:
             logger.error(f"Error fetching oldest message: {e}")
@@ -1003,48 +1173,52 @@ class Posts(interactions.Extension):
 
     @interactions.listen(MessageCreate)
     async def on_message_create(self, event: MessageCreate) -> None:
-        tasks = []
+        if not event.message.guild:
+            return
 
-        if event.message.guild:
+        tasks: list[Coroutine] = []
+
+        if self.should_process_link(event):
             tasks.append(self.process_link(event))
 
-            if self.should_process_message(event):
-                channel_id, post_id, author_id = map(
-                    str,
-                    (
-                        event.message.channel.parent_id,
-                        event.message.channel.id,
-                        event.message.author.id,
-                    ),
-                )
+        if self.should_process_message(event):
+            channel_id, post_id, author_id = map(
+                str,
+                (
+                    event.message.channel.parent_id,
+                    event.message.channel.id,
+                    event.message.author.id,
+                ),
+            )
 
-                if await self.is_user_banned(channel_id, post_id, author_id):
-                    tasks.append(event.message.delete())
+            if await self.is_user_banned(channel_id, post_id, author_id):
+                tasks.append(event.message.delete())
 
         if tasks:
             await asyncio.gather(*tasks)
 
     @interactions.listen(NewThreadCreate)
     async def on_new_thread_create(self, event: NewThreadCreate) -> None:
-        if not (
-            isinstance(event.thread, interactions.GuildPublicThread)
-            and event.thread.parent_id == self.POLL_FORUM_ID
-            and event.thread.owner_id is not None
-        ):
+        if not isinstance(event.thread, interactions.GuildPublicThread):
+            return
+        if event.thread.parent_id != self.POLL_FORUM_ID:
+            return
+        if event.thread.owner_id is None:
             return
 
-        guild = await self.bot.fetch_guild(self.GUILD_ID)
-        owner = await guild.fetch_member(event.thread.owner_id)
+        guild: interactions.Guild = await self.bot.fetch_guild(self.GUILD_ID)
+        owner: Optional[interactions.Member] = await guild.fetch_member(
+            event.thread.owner_id
+        )
 
         if owner and not owner.bot:
             await self.process_new_post(event.thread)
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_banned_users(self, event: MessageCreate) -> None:
-        if not (
-            event.message.guild
-            and isinstance(event.message.channel, interactions.GuildForumPost)
-        ):
+        if not event.message.guild:
+            return
+        if not isinstance(event.message.channel, interactions.GuildForumPost):
             return
 
         channel_id, post_id, author_id = map(
@@ -1061,10 +1235,25 @@ class Posts(interactions.Extension):
 
     # Check methods
 
+    async def can_manage_post(
+        self, post: interactions.GuildForumPost, user: interactions.Member
+    ) -> bool:
+        return (
+            post.owner_id == user.id
+            or self.model.has_post_permission(str(post.id), str(user.id))
+            or any(
+                role_id in (role.id for role in user.roles)
+                and post.parent_id in channels
+                for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
+            )
+        )
+
     async def check_permissions(
         self, ctx: interactions.SlashContext
-    ) -> Tuple[bool, str]:
-        author_roles_ids: Set[int] = {role.id for role in ctx.author.roles}
+    ) -> tuple[bool, str]:
+        author_roles_ids: frozenset[int] = frozenset(
+            role.id for role in ctx.author.roles
+        )
         parent_id: int = ctx.channel.parent_id
 
         has_perm: bool = any(
@@ -1097,54 +1286,55 @@ class Posts(interactions.Extension):
         author: interactions.Member,
         message: interactions.Message,
     ) -> bool:
-        if post.owner_id == author.id or message.author.id == author.id:
+        if message.author.id == author.id:
             return True
 
-        author_role_ids = {role.id for role in author.roles}
-        return any(
-            role_id in author_role_ids and post.parent_id in channels
-            for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
-        )
+        return await self.can_manage_post(post, author)
 
     def should_process_link(self, event: MessageCreate) -> bool:
         if not event.message.guild or event.message.guild.id != self.GUILD_ID:
             return False
 
-        member = event.message.guild.get_member(event.message.author.id)
+        member: Optional[interactions.Member] = event.message.guild.get_member(
+            event.message.author.id
+        )
         if not member:
             return False
 
-        if any(role.id == self.TAIWAN_ROLE_ID for role in member.roles):
-            return False
-
-        return bool(event.message.content)
+        return bool(event.message.content) and not any(
+            role.id == self.TAIWAN_ROLE_ID for role in member.roles
+        )
 
     # Utility methods
 
     async def is_user_banned(
         self, channel_id: str, post_id: str, author_id: str
     ) -> bool:
-        return self.model.is_user_banned(channel_id, post_id, author_id)
+        return await asyncio.to_thread(
+            self.model.is_user_banned, channel_id, post_id, author_id
+        )
 
     @functools.lru_cache(maxsize=32)
     async def fetch_available_tags(
         self, parent_id: int
-    ) -> Tuple[interactions.ForumTag, ...]:
-        channel = await self.bot.fetch_channel(parent_id)
+    ) -> tuple[interactions.ForumTag, ...]:
+        channel: interactions.GuildChannel = await self.bot.fetch_channel(parent_id)
         return tuple(channel.available_tags or ())
 
     @functools.lru_cache(maxsize=1024)
     def sanitize_url(
-        self, url_str: str, preserve_params: Tuple[str, ...] = ("p",)
+        self, url_str: str, preserve_params: tuple[str, ...] = ("p",)
     ) -> str:
-        url = URL(url_str)
-        query = {k: v for k, v in url.query.items() if k in preserve_params}
+        url: URL = URL(url_str)
+        query: dict[str, str] = {
+            k: v for k, v in url.query.items() if k in preserve_params
+        }
         return str(url.with_query(query))
 
     @functools.lru_cache(maxsize=1)
     def get_link_transformations(
         self,
-    ) -> List[Tuple[re.Pattern, Callable[[str], str]]]:
+    ) -> list[tuple[re.Pattern, Callable[[str], str]]]:
         return [
             (
                 re.compile(
@@ -1161,7 +1351,7 @@ class Posts(interactions.Extension):
 
     async def transform_links(self, content: str) -> str:
         def transform_url(match: re.Match) -> str:
-            url = match.group(0)
+            url: str = match.group(0)
             for pattern, transform in self.get_link_transformations():
                 if pattern.match(url):
                     return transform(url)
@@ -1171,6 +1361,7 @@ class Posts(interactions.Extension):
             lambda: re.sub(r"https?://\S+", transform_url, content, flags=re.IGNORECASE)
         )
 
+    @functools.lru_cache(maxsize=1)
     def get_warning_message(self) -> str:
         return (
             "The link you sent may expose your ID. "
