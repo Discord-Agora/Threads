@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import math
 import os
 import re
 from collections import defaultdict
@@ -18,6 +19,7 @@ from typing import (
     Dict,
     Final,
     Generator,
+    Iterable,
     List,
     Literal,
     Mapping,
@@ -95,6 +97,12 @@ class ActionDetails:
     additional_info: Final[Optional[Mapping[str, Any]]] = None
 
 
+@dataclass
+class PostStats:
+    message_count: int = 0
+    last_activity: datetime = datetime.now(timezone.utc)
+
+
 class Model:
     def __init__(self) -> None:
         self.banned_users: Final[DefaultDict[str, DefaultDict[str, Set[str]]]] = (
@@ -103,6 +111,8 @@ class Model:
         self.post_permissions: Final[DefaultDict[str, Set[str]]] = defaultdict(set)
         self.ban_cache: Final[Dict[Tuple[str, str, str], Tuple[bool, datetime]]] = {}
         self.CACHE_DURATION: Final[timedelta] = timedelta(minutes=5)
+        self.post_stats: Final[Dict[str, PostStats]] = {}
+        self.selected_posts: Dict[str, str] = {}
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
@@ -195,6 +205,85 @@ class Model:
         except Exception as e:
             logger.error(f"Error loading post permissions: {e}", exc_info=True)
 
+    async def load_post_stats(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, "rb") as file:
+                content: bytes = await file.read()
+                if not content.strip():
+                    loaded_data = {}
+                else:
+                    loaded_data: Dict[str, Dict[str, Any]] = orjson.loads(content)
+
+            self.post_stats = {
+                post_id: PostStats(
+                    message_count=data.get("message_count", 0),
+                    last_activity=datetime.fromisoformat(data["last_activity"]),
+                )
+                for post_id, data in loaded_data.items()
+            }
+            logger.info(f"Successfully loaded post stats from {file_path}")
+        except FileNotFoundError:
+            logger.warning(
+                f"Post stats file not found: {file_path}. Creating a new one."
+            )
+            await self.save_post_stats(file_path)
+        except orjson.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON data: {e}")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error loading post stats data: {e}", exc_info=True
+            )
+
+    async def save_post_stats(self, file_path: str) -> None:
+        try:
+            serializable_stats: Dict[str, Dict[str, Any]] = {
+                post_id: {
+                    "message_count": stats.message_count,
+                    "last_activity": stats.last_activity.isoformat(),
+                }
+                for post_id, stats in self.post_stats.items()
+            }
+            json_data: bytes = orjson.dumps(
+                serializable_stats,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            )
+            async with aiofiles.open(file_path, "wb") as file:
+                await file.write(json_data)
+            logger.info(f"Successfully saved post stats to {file_path}")
+        except Exception as e:
+            logger.error(f"Error saving post stats data: {e}", exc_info=True)
+
+    async def save_selected_posts(self, file_path: str) -> None:
+        try:
+            json_data = orjson.dumps(
+                self.selected_posts, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+            )
+            async with aiofiles.open(file_path, mode="wb") as file:
+                await file.write(json_data)
+            logger.info(f"Successfully saved selected posts to {file_path}")
+        except Exception as e:
+            logger.exception(
+                f"Error saving selected posts to {file_path}: {e}", exc_info=True
+            )
+
+    async def load_selected_posts(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, mode="rb") as file:
+                content = await file.read()
+                self.selected_posts = orjson.loads(content) if content else {}
+            logger.info(f"Successfully loaded selected posts from {file_path}")
+        except FileNotFoundError:
+            logger.warning(
+                f"Selected posts file not found: {file_path}. Creating a new one."
+            )
+            await self.save_selected_posts(file_path)
+        except orjson.JSONDecodeError as json_err:
+            logger.error(f"JSON decoding error in selected posts: {json_err}")
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error while loading selected posts: {e}", exc_info=True
+            )
+
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
         cache_key: Final[Tuple[str, str, str]] = (channel_id, post_id, user_id)
         current_time: Final[datetime] = datetime.now()
@@ -281,11 +370,15 @@ class Posts(interactions.Extension):
         self.bot: Final[interactions.Client] = bot
         self.model: Final[Model] = Model()
         self.ban_lock: Final[asyncio.Lock] = asyncio.Lock()
-        self.BANNED_USERS_FILE: Final[str] = (
-            f"{os.path.dirname(__file__)}/banned_users.json"
+        self.BANNED_USERS_FILE: Final[str] = os.path.join(
+            os.path.dirname(__file__), "banned_users.json"
         )
-        self.POST_PERMISSIONS_FILE: Final[str] = (
-            f"{os.path.dirname(__file__)}/post_permissions.json"
+        self.POST_PERMISSIONS_FILE: Final[str] = os.path.join(
+            os.path.dirname(__file__), "post_permissions.json"
+        )
+        self.POST_STATS_FILE: Final[str] = os.path.join(BASE_DIR, "post_stats.json")
+        self.SELECTED_POSTS_FILE: Final[str] = os.path.join(
+            BASE_DIR, "selected_posts.json"
         )
         self.LOG_CHANNEL_ID: Final[int] = 1166627731916734504
         self.LOG_FORUM_ID: Final[int] = 1159097493875871784
@@ -312,13 +405,226 @@ class Posts(interactions.Extension):
             1185259262654562355,
             1183048643071180871,
         )
+        self.SELECTED_CHANNELS: Final[Tuple[int, ...]] = (
+            1152311220557320202,
+            1168209956802142360,
+            1230197011761074340,
+            1155914521907568740,
+            1169032829548630107,
+            1185259262654562355,
+            1183048643071180871,
+        )
+        self.message_count_threshold: int = 200
+        self.rotation_interval: timedelta = timedelta(hours=24)
         asyncio.create_task(self._initialize_data())
+        asyncio.create_task(self._rotate_selected_posts_periodically())
         self.url_cache: Final[TTLCache] = TTLCache(maxsize=1024, ttl=3600)
+        self.last_threshold_adjustment: datetime = datetime.now(
+            timezone.utc
+        ) - timedelta(days=8)
 
     async def _initialize_data(self) -> None:
         await asyncio.gather(
             self.model.load_banned_users(self.BANNED_USERS_FILE),
             self.model.load_post_permissions(self.POST_PERMISSIONS_FILE),
+            self.model.load_post_stats(self.POST_STATS_FILE),
+            self.model.load_selected_posts(self.SELECTED_POSTS_FILE),
+        )
+
+    async def _rotate_selected_posts_periodically(self) -> None:
+        while True:
+            try:
+                await self.adjust_thresholds()
+                await self.update_selected_posts_rotation()
+            except Exception as e:
+                logger.error(f"Error in rotating selected posts: {e}", exc_info=True)
+            await asyncio.sleep(self.rotation_interval.total_seconds())
+
+    # Tag operations
+
+    async def increment_message_count(self, post_id: str) -> None:
+        stats = self.model.post_stats.setdefault(post_id, PostStats())
+        stats.message_count += 1
+        stats.last_activity = datetime.now(timezone.utc)
+        await self.model.save_post_stats(self.POST_STATS_FILE)
+
+    async def update_selected_posts_tags(self) -> None:
+        tasks = [
+            (
+                self.add_tag_to_post(post_id, "精華")
+                if self.model.post_stats.get(post_id, PostStats()).message_count
+                >= self.message_count_threshold
+                else self.remove_tag_from_post(post_id, "精華")
+            )
+            for forum_id in self.SELECTED_CHANNELS
+            if (post_id := self.model.selected_posts.get(str(forum_id)))
+            and self.model.post_stats.get(post_id)
+        ]
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def add_tag_to_post(self, post_id: str, tag_name: str) -> None:
+        try:
+            post_id_int = int(post_id)
+            post: Final[interactions.GuildForumPost] = await self.bot.fetch_post(
+                post_id_int
+            )
+            if not isinstance(post, interactions.GuildForumPost):
+                logger.error(f"Fetched channel {post_id} is not a GuildForumPost.")
+                return
+            available_tags: Final[List[interactions.Tag]] = (
+                await self.fetch_available_tags(post.parent_id)
+            )
+            tag: Final[Optional[interactions.Tag]] = next(
+                (t for t in available_tags if t.name == tag_name), None
+            )
+
+            if tag and tag.id not in {t.id for t in post.applied_tags}:
+                new_tags: Final[List[int]] = [t.id for t in post.applied_tags] + [
+                    tag.id
+                ]
+                await post.edit(applied_tags=new_tags)
+                logger.info(f"Added tag `{tag_name}` to post {post_id}")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error adding tag `{tag_name}` to post {post_id}: {e}",
+                exc_info=True,
+            )
+
+    async def remove_tag_from_post(self, post_id: str, tag_name: str) -> None:
+        try:
+            post_id_int = int(post_id)
+            post: Final[interactions.GuildForumPost] = await self.bot.fetch_post(
+                post_id_int
+            )
+            if not isinstance(post, interactions.GuildForumPost):
+                logger.error(f"Fetched channel {post_id} is not a GuildForumPost.")
+                return
+            available_tags: Final[List[interactions.Tag]] = (
+                await self.fetch_available_tags(post.parent_id)
+            )
+            tag: Final[Optional[interactions.Tag]] = next(
+                (t for t in available_tags if t.name == tag_name), None
+            )
+
+            if tag and tag.id in {t.id for t in post.applied_tags}:
+                new_tags: Final[List[int]] = [
+                    t.id for t in post.applied_tags if t.id != tag.id
+                ]
+                await post.edit(applied_tags=new_tags)
+                logger.info(f"Removed tag `{tag_name}` from post {post_id}")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error removing tag `{tag_name}` from post {post_id}: {e}",
+                exc_info=True,
+            )
+
+    async def update_selected_posts_rotation(self) -> None:
+        tasks = []
+        for forum_id in self.SELECTED_CHANNELS:
+            top_post_id: Optional[str] = await self.get_top_post_id(forum_id)
+            current_selected_post_id: Optional[str] = self.model.selected_posts.get(
+                str(forum_id)
+            )
+
+            if top_post_id and current_selected_post_id != top_post_id:
+                self.model.selected_posts[str(forum_id)] = top_post_id
+                tasks.extend(
+                    [
+                        self.model.save_selected_posts(self.SELECTED_POSTS_FILE),
+                        self.update_selected_posts_tags(),
+                    ]
+                )
+                logger.info(
+                    f"Rotated featured post for forum {forum_id} to post {top_post_id}"
+                )
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def get_top_post_id(self, forum_id: int) -> Optional[str]:
+        try:
+            forum = await self.bot.fetch_channel(forum_id)
+            if not isinstance(forum, interactions.GuildForum):
+                logger.warning(f"Channel {forum_id} is not a forum channel")
+                return None
+
+            threads = await self.bot.http.list_active_threads(guild_id=self.GUILD_ID)
+
+            active_threads = threads.get("threads", [])
+
+            posts_in_forum = [
+                str(thread["id"])
+                for thread in active_threads
+                if str(thread["id"]) in self.model.post_stats
+                and str(thread["parent_id"]) == str(forum_id)
+            ]
+
+            if not posts_in_forum:
+                return None
+
+            top_post = max(
+                posts_in_forum,
+                key=lambda pid: self.model.post_stats.get(
+                    str(pid), PostStats()
+                ).message_count,
+                default=None,
+            )
+
+            return str(top_post) if top_post else None
+
+        except Exception as e:
+            logger.error(
+                f"Error getting top post for forum {forum_id}: {e}",
+                exc_info=True,
+            )
+            return None
+
+    async def adjust_thresholds(self) -> None:
+        current_time: datetime = datetime.now(timezone.utc)
+        post_stats: list[PostStats] = list(self.model.post_stats.values())
+
+        if not post_stats:
+            logger.info("No posts available to adjust thresholds.")
+            return
+
+        total_posts: int = len(post_stats)
+        total_messages: int = sum(stat.message_count for stat in post_stats)
+        average_messages: float = total_messages / total_posts
+
+        self.message_count_threshold = math.floor(average_messages)
+
+        one_day_ago: datetime = current_time - timedelta(days=1)
+        recent_activity: int = sum(
+            1 for stat in post_stats if stat.last_activity >= one_day_ago
+        )
+
+        self.rotation_interval = (
+            timedelta(hours=12)
+            if recent_activity > 100
+            else timedelta(hours=48) if recent_activity < 10 else timedelta(hours=24)
+        )
+
+        activity_threshold: Final[int] = 50
+        adjustment_period: Final[timedelta] = timedelta(days=7)
+        minimum_threshold: Final[int] = 10
+
+        if (
+            average_messages < activity_threshold
+            and (current_time - self.last_threshold_adjustment) > adjustment_period
+        ):
+
+            self.rotation_interval = timedelta(hours=12)
+            self.message_count_threshold = max(
+                minimum_threshold, self.message_count_threshold // 2
+            )
+            self.last_threshold_adjustment = current_time
+
+            logger.info(
+                f"Standards not met for over a week. Adjusted thresholds: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
+            )
+
+        logger.info(
+            f"Threshold adjustment complete: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
         )
 
     # View methods
@@ -1172,7 +1478,18 @@ class Posts(interactions.Extension):
     # Event methods
 
     @interactions.listen(MessageCreate)
-    async def on_message_create(self, event: MessageCreate) -> None:
+    async def on_message_create_for_stats(self, event: MessageCreate) -> None:
+        if (
+            event.message.guild is None
+            or not isinstance(event.message.channel, interactions.GuildForumPost)
+            or event.message.channel.parent_id not in self.SELECTED_CHANNELS
+        ):
+            return
+        post_id: Final[str] = str(event.message.channel.id)
+        await self.increment_message_count(post_id)
+
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_processing(self, event: MessageCreate) -> None:
         if not event.message.guild:
             return
 
@@ -1198,7 +1515,7 @@ class Posts(interactions.Extension):
             await asyncio.gather(*tasks)
 
     @interactions.listen(NewThreadCreate)
-    async def on_new_thread_create(self, event: NewThreadCreate) -> None:
+    async def on_new_thread_create_for_processing(self, event: NewThreadCreate) -> None:
         if not isinstance(event.thread, interactions.GuildPublicThread):
             return
         if event.thread.parent_id != self.POLL_FORUM_ID:
