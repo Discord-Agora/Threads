@@ -112,7 +112,7 @@ class Model:
         self.ban_cache: Final[Dict[Tuple[str, str, str], Tuple[bool, datetime]]] = {}
         self.CACHE_DURATION: Final[timedelta] = timedelta(minutes=5)
         self.post_stats: Final[Dict[str, PostStats]] = {}
-        self.selected_posts: Dict[str, str] = {}
+        self.featured_posts: Dict[str, str] = {}
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
@@ -253,10 +253,10 @@ class Model:
         except Exception as e:
             logger.error(f"Error saving post stats data: {e}", exc_info=True)
 
-    async def save_selected_posts(self, file_path: str) -> None:
+    async def save_featured_posts(self, file_path: str) -> None:
         try:
             json_data = orjson.dumps(
-                self.selected_posts, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+                self.featured_posts, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
             )
             async with aiofiles.open(file_path, mode="wb") as file:
                 await file.write(json_data)
@@ -266,17 +266,17 @@ class Model:
                 f"Error saving selected posts to {file_path}: {e}", exc_info=True
             )
 
-    async def load_selected_posts(self, file_path: str) -> None:
+    async def load_featured_posts(self, file_path: str) -> None:
         try:
             async with aiofiles.open(file_path, mode="rb") as file:
                 content = await file.read()
-                self.selected_posts = orjson.loads(content) if content else {}
+                self.featured_posts = orjson.loads(content) if content else {}
             logger.info(f"Successfully loaded selected posts from {file_path}")
         except FileNotFoundError:
             logger.warning(
                 f"Selected posts file not found: {file_path}. Creating a new one."
             )
-            await self.save_selected_posts(file_path)
+            await self.save_featured_posts(file_path)
         except orjson.JSONDecodeError as json_err:
             logger.error(f"JSON decoding error in selected posts: {json_err}")
         except Exception as e:
@@ -378,7 +378,7 @@ class Posts(interactions.Extension):
         )
         self.POST_STATS_FILE: Final[str] = os.path.join(BASE_DIR, "post_stats.json")
         self.SELECTED_POSTS_FILE: Final[str] = os.path.join(
-            BASE_DIR, "selected_posts.json"
+            BASE_DIR, "featured_posts.json"
         )
         self.LOG_CHANNEL_ID: Final[int] = 1166627731916734504
         self.LOG_FORUM_ID: Final[int] = 1159097493875871784
@@ -405,19 +405,11 @@ class Posts(interactions.Extension):
             1185259262654562355,
             1183048643071180871,
         )
-        self.SELECTED_CHANNELS: Final[Tuple[int, ...]] = (
-            1152311220557320202,
-            1168209956802142360,
-            1230197011761074340,
-            1155914521907568740,
-            1169032829548630107,
-            1185259262654562355,
-            1183048643071180871,
-        )
+        self.FEATURED_CHANNELS: Final[Tuple[int, ...]] = (1152311220557320202,)
         self.message_count_threshold: int = 200
         self.rotation_interval: timedelta = timedelta(hours=24)
         asyncio.create_task(self._initialize_data())
-        asyncio.create_task(self._rotate_selected_posts_periodically())
+        asyncio.create_task(self._rotate_featured_posts_periodically())
         self.url_cache: Final[TTLCache] = TTLCache(maxsize=1024, ttl=3600)
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
@@ -428,14 +420,14 @@ class Posts(interactions.Extension):
             self.model.load_banned_users(self.BANNED_USERS_FILE),
             self.model.load_post_permissions(self.POST_PERMISSIONS_FILE),
             self.model.load_post_stats(self.POST_STATS_FILE),
-            self.model.load_selected_posts(self.SELECTED_POSTS_FILE),
+            self.model.load_featured_posts(self.SELECTED_POSTS_FILE),
         )
 
-    async def _rotate_selected_posts_periodically(self) -> None:
+    async def _rotate_featured_posts_periodically(self) -> None:
         while True:
             try:
                 await self.adjust_thresholds()
-                await self.update_selected_posts_rotation()
+                await self.update_featured_posts_rotation()
             except Exception as e:
                 logger.error(f"Error in rotating selected posts: {e}", exc_info=True)
             await asyncio.sleep(self.rotation_interval.total_seconds())
@@ -448,7 +440,7 @@ class Posts(interactions.Extension):
         stats.last_activity = datetime.now(timezone.utc)
         await self.model.save_post_stats(self.POST_STATS_FILE)
 
-    async def update_selected_posts_tags(self) -> None:
+    async def update_featured_posts_tags(self) -> None:
         tasks = [
             (
                 self.add_tag_to_post(post_id, "精華")
@@ -456,8 +448,8 @@ class Posts(interactions.Extension):
                 >= self.message_count_threshold
                 else self.remove_tag_from_post(post_id, "精華")
             )
-            for forum_id in self.SELECTED_CHANNELS
-            if (post_id := self.model.selected_posts.get(str(forum_id)))
+            for forum_id in self.FEATURED_CHANNELS
+            if (post_id := self.model.featured_posts.get(str(forum_id)))
             and self.model.post_stats.get(post_id)
         ]
         if tasks:
@@ -519,20 +511,20 @@ class Posts(interactions.Extension):
                 exc_info=True,
             )
 
-    async def update_selected_posts_rotation(self) -> None:
+    async def update_featured_posts_rotation(self) -> None:
         tasks = []
-        for forum_id in self.SELECTED_CHANNELS:
+        for forum_id in self.FEATURED_CHANNELS:
             top_post_id: Optional[str] = await self.get_top_post_id(forum_id)
-            current_selected_post_id: Optional[str] = self.model.selected_posts.get(
+            current_selected_post_id: Optional[str] = self.model.featured_posts.get(
                 str(forum_id)
             )
 
             if top_post_id and current_selected_post_id != top_post_id:
-                self.model.selected_posts[str(forum_id)] = top_post_id
+                self.model.featured_posts[str(forum_id)] = top_post_id
                 tasks.extend(
                     [
-                        self.model.save_selected_posts(self.SELECTED_POSTS_FILE),
-                        self.update_selected_posts_tags(),
+                        self.model.save_featured_posts(self.SELECTED_POSTS_FILE),
+                        self.update_featured_posts_tags(),
                     ]
                 )
                 logger.info(
@@ -1482,7 +1474,7 @@ class Posts(interactions.Extension):
         if (
             event.message.guild is None
             or not isinstance(event.message.channel, interactions.GuildForumPost)
-            or event.message.channel.parent_id not in self.SELECTED_CHANNELS
+            or event.message.channel.parent_id not in self.FEATURED_CHANNELS
         ):
             return
         post_id: Final[str] = str(event.message.channel.id)
