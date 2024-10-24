@@ -1,27 +1,74 @@
+## 2024-10-25
+
+### Added
+- Message count tracking for post activity monitoring
+- Last activity timestamp monitoring system
+- Dynamic threshold adjustment based on forum metrics
+- Automated rotation system for featured content
+- Tag management system for featured/精華 posts
+- Activity-based featuring algorithms
+
+### Changed
+- Renamed selected posts to featured posts across codebase
+- Reduced featured channels list to single channel
+- Removed security manual link from privacy warning message
+
+## 2024-10-24
+
+### Added
+- Automatic tag management functionality
+- Updated documentation in README for version 2024.10.24
+
+## 2024-10-21
+
+### Added
+- New dependency: `loguru` for enhanced logging capabilities
+
+### Fixed
+- Corrected action type implementation
+- Updated logging and error handling mechanisms
+- Updated documentation in README for version 2024.10.21
+
+## 2024-10-19
+
+### Changed
+- Updated log directory structure for improved organization
+
+## 2024-10-17
+
+### Fixed
+- Removed typo in `fetch_oldest_message_url` method
+- Resolved coroutine reuse issue in `fetch_oldest_message_url`
+
 ## 2024-10-16
-### Major Changes
-- Architecture Overhaul: Implemented the Model-View-Controller (MVC) pattern.
-- Performance Optimization: Replaced several libraries with faster alternatives and optimized data structures.
-### Refactoring
-- Implemented the MVC pattern.
-- Organized the Controller into distinct sections: View methods, Command methods, Event methods, Check methods, and Utility methods.
-- Separated Model and Decorator from Controller (`interactions.Extension`).
-- Removed global logging configuration for better modularity.
-### Performance Improvements
-- Replaced `cysimdjson` with `orjson`.
-- Optimized performance across various components of the application.
-- Replaced built-in libraries with faster third-party alternatives.
-- Changed `banned_users` data structure from a list to a set.
-### Features
-- Added `requirements.txt`.
-- Implemented action logging with embeds.
-- Expanded the banned users data structure and storage.
-- Added additional error handling and logging.
-### Chores
-- Removed unnecessary files.
-- Fixed imports for `Forbidden` and `NotFound`.
-- Removed unused imports.
-- Used Final type hints for constants.
-- Renamed logging constants.
-### Commits
-- Initial commit with foundational changes and optimizations.
+
+### Added
+- MVC architecture pattern implementation
+- Action logging with rich embeds
+- Enhanced banned user management system
+- Comprehensive error handling system
+- New requirements.txt with version pins
+- Type hints using Final for constants
+- Standardized logging constants
+
+### Changed
+- Controller segmentation into specialized methods
+- Modular logging configuration
+- Separation of Model and Decorator from Controller
+- Replaced `cysimdjson` with `orjson` for better performance
+- Changed banned_users structure from list to set
+- Optimized performance with faster third-party libraries
+
+### Removed
+- Deprecated files and unused imports
+- Global logging configuration
+- Legacy code paths
+
+### Fixed
+- Import statements for `Forbidden` and `NotFound` exceptions
+- Type hint consistency
+- Documentation accuracy
+
+### Security
+- Enhanced banned user storage mechanism
+- Improved error handling for sensitive operations
