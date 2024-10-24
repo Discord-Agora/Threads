@@ -1672,8 +1672,4 @@ class Posts(interactions.Extension):
 
     @functools.lru_cache(maxsize=1)
     def get_warning_message(self) -> str:
-        return (
-            "The link you sent may expose your ID. "
-            "To protect the privacy of members, sending such links is prohibited. "
-            "Network Security Manual: https://discord.com/channels/1150630510696075404/1268017202397839493."
-        )
+        return "The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited."
