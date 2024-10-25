@@ -44,9 +44,9 @@ LOG_FILE: Final[str] = os.path.join(BASE_DIR, "posts.log")
 
 logger.remove()
 logger.add(
-    LOG_FILE,
+    sink=LOG_FILE,
     level="DEBUG",
-    format="{time:YYYY-MM-DD HH:mm:ss ZZ} | {level} | {message}",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | {process}:{thread} | {level: <8} | {name}:{function}:{line} | {message}",
     filter=None,
     colorize=None,
     serialize=False,
@@ -55,8 +55,11 @@ logger.add(
     enqueue=True,
     catch=True,
     rotation="1 MB",
-    compression="zip",
+    retention=1,
     encoding="utf-8",
+    mode="a",
+    delay=False,
+    errors="replace",
 )
 
 
