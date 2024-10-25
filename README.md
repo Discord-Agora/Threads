@@ -28,11 +28,11 @@ The **Threads** module is designed to manage thread-based conversations, user in
 ### Context Menus
 
 - Message Context Menu:
-  - **Message in Post**: Delete the selected message within a thread
+  - **Message in Thread**: Delete the selected message within a thread
   - **Tags in Post**: Manage tags associated with a post (add or remove).
 
 - User Context Menu:
-  - **User in Post**: Ban, unban, share permissions, or revoke permissions for a specific user within a thread
+  - **User in Thread**: Ban, unban, share permissions, or revoke permissions for a specific user within a thread
 
 ## Configuration
 
