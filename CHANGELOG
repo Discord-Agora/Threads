@@ -1,3 +1,17 @@
+## 2024-10-26
+
+### Added
+- Support for managing permissions in regular threads and public threads
+- New thread ID (1213345198147637268) to permitted list
+
+### Changed
+- Forum post management commands now work with all thread types
+- Renamed user context menu from `User in Post` to `User in Thread`
+- Renamed message context menu from `Message in Post` to `Message in Thread`
+- Updated feedback messages to use "thread" terminology instead of "post"
+- Updated internal permission handling to use thread terminology
+- Modified type hints to support ThreadChannel and related types
+
 ## 2024-10-25
 
 ### Added
