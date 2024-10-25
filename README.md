@@ -19,8 +19,6 @@ The **Posts** module is designed to manage forum posts, user interactions, and c
 
 ### Slash Commands
 
-The module responds to various slash commands to manage posts and user interactions:
-
 - `/posts top`: Navigate to the top of the current post.
 - `/posts lock`: Lock the current post.
   - Options: `reason` (string, required) - Reason for locking the post.
@@ -30,11 +28,11 @@ The module responds to various slash commands to manage posts and user interacti
 ### Context Menus
 
 - Message Context Menu:
-  - **Message in Post:** Delete the selected message within a post.
-  - **Tags in Post:** Manage tags associated with a post (add or remove).
+  - **Message in Post**: Delete the selected message within a post.
+  - **Tags in Post**: Manage tags associated with a post (add or remove).
 
 - User Context Menu:
-  - **User in Post:** Ban, unban, share permissions, or revoke permissions for a specific user within a post.
+  - **User in Post**: Ban, unban, share permissions, or revoke permissions for a specific user within a post.
 
 ## Configuration
 
