@@ -53,21 +53,19 @@ logger.add(
     sink=LOG_FILE,
     level="DEBUG",
     format=(
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSSSSS}</green> | "
-        "<cyan>{process.id}:{thread.id}</cyan> | "
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
         "<level>{level: <8}</level> | "
-        "<magenta>{name}:{function}:{line}</magenta> | "
-        "<white>{message}</white> | "
-        "Memory: {extra[memory_usage]:.2f}MB"
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
     ),
     filter=lambda record: (
         record["name"].startswith("extensions.github_d_com__kazuki388_s_Threads.main")
     ),
     colorize=True,
-    serialize=True,
+    serialize=False,
     backtrace=True,
     diagnose=True,
-    enqueue=True,
+    enqueue=False,
     catch=True,
     rotation="1 MB",
     retention=1,
@@ -75,15 +73,7 @@ logger.add(
     encoding="utf-8",
     mode="a",
     delay=False,
-    errors="replace",
-    buffering=4096,
-    atomic=True,
-    kwargs={
-        "memory_usage": lambda: int(open("/proc/self/statm").read().split()[1])
-        * 4096
-        / 1024
-        / 1024
-    },
+    buffering=1
 )
 
 # Model
