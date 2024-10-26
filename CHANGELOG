@@ -3,7 +3,8 @@
 ### Added
 - Support for managing permissions in regular threads and public threads
 - New channel ID (1183254117813071922) to permitted list
-- Add pin/unpin functionality to message actions
+- Pin/unpin functionality to message actions
+- List and debug commands with pagination
 
 ### Changed
 - Forum post management commands now work with all thread types
