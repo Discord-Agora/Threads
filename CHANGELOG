@@ -1,93 +1,107 @@
+## 2024-10-27
+
+### Added
+- Enhanced logging system with memory usage tracking via structured JSON format
+- Log compression and buffering mechanism
+- Type annotations for all logging-related functions and classes
+
+### Changed
+- Refactored `BASE_DIR` to use absolute paths
+- Migrated logging from `posts.log` to `threads.log`
+- Consolidated debug subcommands under unified interface with type parameter
+- Renamed `Posts` class to `Threads`
+- Optimized message author validation logic
+
 ## 2024-10-26
 
 ### Added
-- Support for managing permissions in regular threads and public threads
-- New channel ID (1183254117813071922) to permitted list
-- Pin/unpin functionality to message actions
-- List and debug commands with pagination
-- Validation to prevent banning thread owners
+- Thread permission management system supporting both regular and public threads
+- Whitelist entry: Channel ID 1183254117813071922
+- Message pin/unpin functionality with role-based access control
+- Paginated list and debug commands with configurable page size
+- Thread owner protection in ban system
 
 ### Changed
-- Forum post management commands now work with all thread types
-- Renamed user context menu from `User in Post` to `User in Thread`
-- Renamed message context menu from `Message in Post` to `Message in Thread`
-- Updated feedback messages to use "thread" terminology instead of "post"
-- Updated internal permission handling to use thread terminology
-- Modified type hints to support ThreadChannel and related types
-- Changed the regex patterns for callbacks to accept any number of digits instead of strictly 19 digits
-- Translated petition voting options to Chinese
+- Extended forum management commands to support all thread types
+- Updated context menu labels
+- Standardized terminology from "post" to "thread"
+- Refactored permission handling with thread-centric architecture
+- Enhanced type system to properly handle `ThreadChannel` and related types
+- Optimized callback regex patterns to support variable-length IDs
+- Localized petition voting options to Chinese
 
 ## 2024-10-25
 
 ### Added
-- Message count tracking for post activity monitoring
-- Last activity timestamp monitoring system
-- Dynamic threshold adjustment based on forum metrics
-- Automated rotation system for featured content
-- Tag management system for featured/精華 posts
-- Activity-based featuring algorithms
+- Message volume analytics system for activity monitoring
+- Last activity timestamp tracking
+- Dynamic threshold calculation based on forum metrics
+- Automated content rotation system with configurable intervals
+- Comprehensive tag management for featured posts
+- Activity-based content promotion algorithms
 
 ### Changed
-- Renamed selected posts to featured posts across codebase
-- Reduced featured channels list to single channel
-- Removed security manual link from privacy warning message
+- Standardized terminology from "selected" to "featured"
+- Simplified featured channel configuration to single channel
+- Removed deprecated security manual reference from privacy warning
 
 ## 2024-10-24
 
 ### Added
-- Automatic tag management functionality
-- Updated documentation in README for version 2024.10.24
+- Automated tag management system with hierarchical organization
 
 ## 2024-10-21
 
 ### Added
-- New dependency: `loguru` for enhanced logging capabilities
+- Integrated `loguru`
+- Type hints for logging configuration
 
 ### Fixed
-- Corrected action type implementation
-- Updated logging and error handling mechanisms
-- Updated documentation in README for version 2024.10.21
+- Action type implementation conformance
+- Logging and error handling architecture
+- Documentation accuracy and completeness
 
 ## 2024-10-19
 
 ### Changed
-- Updated log directory structure for improved organization
+- Restructured log directory hierarchy
 
 ## 2024-10-17
 
 ### Fixed
-- Removed typo in `fetch_oldest_message_url` method
-- Resolved coroutine reuse issue in `fetch_oldest_message_url`
+- Eliminated syntax error in `fetch_oldest_message_url` implementation
+- Resolved coroutine reuse antipattern in message URL fetching
 
 ## 2024-10-16
 
 ### Added
-- MVC architecture pattern implementation
-- Action logging with rich embeds
-- Enhanced banned user management system
-- Comprehensive error handling system
-- New requirements.txt with version pins
-- Type hints using Final for constants
-- Standardized logging constants
+- MVC architectural pattern with clear separation of concerns
+- Action logging system using rich Discord embeds
+- Enhanced banned user management with O(1) lookup
+- Comprehensive error handling with custom exception hierarchy
+- Dependencies in requirements.txt
+- Type hints using `typing.Final` for immutable constants
+- Standardized logging configuration constants
 
 ### Changed
-- Controller segmentation into specialized methods
-- Modular logging configuration
-- Separation of Model and Decorator from Controller
-- Replaced `cysimdjson` with `orjson` for better performance
-- Changed banned_users structure from list to set
-- Optimized performance with faster third-party libraries
+- Segmented controller logic into specialized methods
+- Implemented modular logging configuration
+- Separated Model and Decorator concerns from Controller
+- Performance optimization: replaced `cysimdjson` with `orjson`
+- Data structure optimization: from List to Set for banned users
+- Integrated high-performance third-party libraries
 
 ### Removed
-- Deprecated files and unused imports
+- Deprecated file cleanup
+- Unused import statements
 - Global logging configuration
 - Legacy code paths
 
 ### Fixed
-- Import statements for `Forbidden` and `NotFound` exceptions
-- Type hint consistency
-- Documentation accuracy
+- Import resolution for Discord exceptions
+- Type hint consistency and coverage
+- Documentation accuracy and completeness
 
 ### Security
-- Enhanced banned user storage mechanism
-- Improved error handling for sensitive operations
+- Hardened banned user storage mechanism
+- Enhanced error handling for privileged operations
