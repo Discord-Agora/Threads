@@ -18,23 +18,28 @@ The **Threads** module is designed to manage thread-based conversations, user in
 - Automatically feature high-activity posts
 - Pin and unpin messages within threads
 - View comprehensive statistics for posts and forums
+- Dynamic threshold adjustment based on server activity
 
 ## Usage
 
 ### Slash Commands
 
-- `/posts top`: Navigate to the top of the current thread
-- `/posts lock`: Lock the current thread
+- `/threads top`: Navigate to the top of the current thread
+- `/threads lock`: Lock the current thread
   - Options: `reason` (string, required) - Reason for locking the thread
-- `/posts unlock`: Unlock the current thread
+- `/threads unlock`: Unlock the current thread
   - Options: `reason` (string, required) - Reason for unlocking the thread
-- `/posts list banned`: View banned users in current thread
-- `/posts list permissions`: View users with special permissions in current thread
-- `/posts list stats`: View statistics for current post
-- `/posts debug featured`: View all featured threads (requires Threads role)
-- `/posts debug stats`: View post activity statistics (requires Threads role)
-- `/posts debug banned`: View all banned users across threads (requires Threads role)
-- `/posts debug permissions`: View all thread permission assignments (requires Threads role)
+- `/threads list`: List information for current thread
+  - Options: `type` (choice, required) - Select data type to view:
+    - `Banned Users`: View banned users in current thread
+    - `Thread Permissions`: View users with special permissions in current thread
+    - `Post Statistics`: View statistics for current post
+- `/threads view`: View configuration data (requires Threads role)
+  - Options: `type` (choice, required) - Select data type to view:
+    - `Banned Users`: View all banned users across threads
+    - `Thread Permissions`: View all thread permission assignments
+    - `Post Statistics`: View post activity statistics
+    - `Featured Threads`: View featured threads and their metrics
 
 ### Context Menus
 
@@ -47,22 +52,20 @@ The **Threads** module is designed to manage thread-based conversations, user in
 
 ## Configuration
 
-Customize the module by adjusting the configuration variables and constants defined in `Posts.py`. Key configuration options include:
+Customize the module by adjusting the configuration variables and constants defined in `main.py`. Key configuration options include:
 
 - `LOG_CHANNEL_ID`: ID of the channel where logs will be sent
 - `LOG_FORUM_ID`: ID of the forum channel for logging purposes
 - `POLL_FORUM_ID`: ID of the forum channel where polls are created
-- `TAIWAN_ROLE_ID`: ID of the role to be assigned dynamic permissions
+- `TAIWAN_ROLE_ID`: ID of the role exempt from link transformation
 - `THREADS_ROLE_ID`: ID of the role required for debug commands
 - `GUILD_ID`: ID of your Discord server
 - `ROLE_CHANNEL_PERMISSIONS`: Defines roles and their associated channels for permission management
 - `ALLOWED_CHANNELS`: Tuple of channel IDs where the module is active
 - `FEATURED_CHANNELS`: Channels where featured posts are selected
-- `message_count_threshold`: Minimum number of messages required for a post to be considered featured
-- `rotation_interval`: Time interval for rotating featured posts
+- `message_count_threshold`: Dynamic threshold for featuring posts (auto-adjusted)
+- `rotation_interval`: Dynamic interval for rotating featured posts (auto-adjusted)
 - `BANNED_USERS_FILE`: Path to the JSON file storing banned users
 - `THREAD_PERMISSIONS_FILE`: Path to the JSON file storing thread permissions
 - `POST_STATS_FILE`: Path to the JSON file storing post statistics
 - `FEATURED_POSTS_FILE`: Path to the JSON file storing featured posts
-
-The module automatically adjusts thresholds and rotation intervals based on server activity to maintain optimal engagement.
