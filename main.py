@@ -383,7 +383,7 @@ class Posts(interactions.Extension):
             os.path.dirname(__file__), "thread_permissions.json"
         )
         self.POST_STATS_FILE: Final[str] = os.path.join(BASE_DIR, "post_stats.json")
-        self.SELECTED_POSTS_FILE: Final[str] = os.path.join(
+        self.FEATURED_POSTS_FILE: Final[str] = os.path.join(
             BASE_DIR, "featured_posts.json"
         )
         self.LOG_CHANNEL_ID: Final[int] = 1166627731916734504
@@ -431,7 +431,7 @@ class Posts(interactions.Extension):
             self.model.load_banned_users(self.BANNED_USERS_FILE),
             self.model.load_thread_permissions(self.THREAD_PERMISSIONS_FILE),
             self.model.load_post_stats(self.POST_STATS_FILE),
-            self.model.load_featured_posts(self.SELECTED_POSTS_FILE),
+            self.model.load_featured_posts(self.FEATURED_POSTS_FILE),
         )
 
     async def _rotate_featured_posts_periodically(self) -> None:
@@ -548,7 +548,7 @@ class Posts(interactions.Extension):
                 self.model.featured_posts[str(forum_id)] = top_post_id
                 tasks.extend(
                     [
-                        self.model.save_featured_posts(self.SELECTED_POSTS_FILE),
+                        self.model.save_featured_posts(self.FEATURED_POSTS_FILE),
                         self.update_featured_posts_tags(),
                     ]
                 )
@@ -1087,9 +1087,7 @@ class Posts(interactions.Extension):
     @module_group_list.subcommand(
         "banned", sub_cmd_description="View banned users in current thread"
     )
-    async def list_current_thread_banned_users(
-        self, ctx: interactions.SlashContext
-    ) -> None:
+    async def list_current_thread_banned_users(self, ctx: interactions.SlashContext) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(ctx, "This command can only be used in threads.")
             return
@@ -1137,9 +1135,7 @@ class Posts(interactions.Extension):
         "permissions",
         sub_cmd_description="View users with special permissions in current thread",
     )
-    async def list_current_thread_permissions(
-        self, ctx: interactions.SlashContext
-    ) -> None:
+    async def list_current_thread_permissions(self, ctx: interactions.SlashContext) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(ctx, "This command can only be used in threads.")
             return
