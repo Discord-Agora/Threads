@@ -73,6 +73,8 @@ class ActionType(Enum):
     UNBAN = auto()
     DELETE = auto()
     EDIT = auto()
+    PIN = auto()
+    UNPIN = auto()
     SHARE_PERMISSIONS = auto()
     REVOKE_PERMISSIONS = auto()
 
@@ -886,7 +888,7 @@ class Posts(interactions.Extension):
 
     @interactions.message_context_menu(name="Message in Thread")
     @log_action
-    async def delete_message(
+    async def message_actions(
         self, ctx: interactions.ContextMenuContext
     ) -> Optional[ActionDetails]:
         if not isinstance(ctx.channel, interactions.ThreadChannel):
@@ -896,51 +898,40 @@ class Posts(interactions.Extension):
         post: Final[interactions.ThreadChannel] = ctx.channel
         message: Final[interactions.Message] = ctx.target
 
-        if not await self.can_delete_message(post, ctx.author, message):
+        if not await self.can_manage_message(post, ctx.author, message):
             await self.send_error(
-                ctx, "You don't have permission to delete this message."
+                ctx, "You don't have permission to manage this message."
             )
             return None
 
-        async def execute_deletion() -> Optional[ActionDetails]:
-            try:
-                deletion_task = asyncio.create_task(message.delete())
-                success_message_task = asyncio.create_task(
-                    self.send_success(ctx, "Message deleted successfully.")
-                )
+        options: Final[Tuple[interactions.StringSelectOption, ...]] = (
+            interactions.StringSelectOption(
+                label="Delete Message",
+                value="delete",
+                description="Delete this message",
+            ),
+            interactions.StringSelectOption(
+                label=f"{'Unpin' if message.pinned else 'Pin'} Message",
+                value=f"{'unpin' if message.pinned else 'pin'}",
+                description=f"{'Unpin' if message.pinned else 'Pin'} this message",
+            ),
+        )
 
-                await asyncio.gather(deletion_task, success_message_task)
+        select_menu: Final[interactions.StringSelectMenu] = (
+            interactions.StringSelectMenu(
+                *options,
+                placeholder="Select action for message",
+                custom_id=f"message_action:{message.id}",
+            )
+        )
 
-                return ActionDetails(
-                    action=ActionType.DELETE,
-                    reason="User-initiated message deletion",
-                    post_name=post.name,
-                    actor=ctx.author,
-                    channel=post,
-                    target=message.author,
-                    additional_info={
-                        "deleted_message_id": message.id,
-                        "deleted_message_content": (
-                            message.content[:1000] if message.content else "N/A"
-                        ),
-                        "deleted_message_attachments": [
-                            att.url for att in message.attachments
-                        ],
-                    },
-                )
-            except asyncio.CancelledError:
-                await self.send_error(
-                    ctx, "The deletion operation was cancelled. Please try again."
-                )
-            except Exception as e:
-                logger.exception(f"Failed to delete message: {e}")
-                await self.send_error(
-                    ctx,
-                    "An error occurred while deleting the message. Please try again later.",
-                )
-            return None
+        embed: Final[interactions.Embed] = await self.create_embed(
+            title="Message Actions",
+            description="Select an action to perform on this message.",
+            color=EmbedColor.INFO,
+        )
 
-        return await asyncio.wait_for(execute_deletion(), timeout=10.0)
+        await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
 
     @interactions.message_context_menu(name="Tags in Post")
     @log_action
@@ -1306,6 +1297,122 @@ class Posts(interactions.Extension):
             },
         )
 
+    message_action_regex_pattern = re.compile(r"message_action:(\d{19})")
+
+    @interactions.component_callback(message_action_regex_pattern)
+    @log_action
+    async def on_message_action(
+        self, ctx: interactions.ComponentContext
+    ) -> Optional[ActionDetails]:
+        if not (match := self.message_action_regex_pattern.match(ctx.custom_id)):
+            await self.send_error(ctx, "Invalid message action format.")
+            return None
+
+        message_id: int = int(match.group(1))
+        action: str = ctx.values[0].lower()
+
+        try:
+            message = await ctx.channel.fetch_message(message_id)
+        except NotFound:
+            await self.send_error(ctx, "Message not found.")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching message {message_id}: {e}", exc_info=True)
+            await self.send_error(ctx, "Failed to retrieve the message.")
+            return None
+
+        if not isinstance(ctx.channel, interactions.ThreadChannel):
+            await self.send_error(ctx, "This command can only be used within threads.")
+            return None
+
+        post = ctx.channel
+
+        match action:
+            case "delete":
+                return await self.delete_message_action(ctx, post, message)
+            case "pin" | "unpin":
+                return await self.pin_message_action(
+                    ctx, post, message, action == "pin"
+                )
+            case _:
+                await self.send_error(ctx, "Invalid action selected.")
+                return None
+
+    async def delete_message_action(
+        self,
+        ctx: interactions.ComponentContext,
+        post: interactions.ThreadChannel,
+        message: interactions.Message,
+    ) -> Optional[ActionDetails]:
+        try:
+            await message.delete()
+            await self.send_success(ctx, "Message deleted successfully.")
+
+            return ActionDetails(
+                action=ActionType.DELETE,
+                reason=f"User-initiated message deletion by {ctx.author.mention}",
+                post_name=post.name,
+                actor=ctx.author,
+                channel=post,
+                target=message.author,
+                additional_info={
+                    "deleted_message_id": str(message.id),
+                    "deleted_message_content": (
+                        message.content[:1000] if message.content else "N/A"
+                    ),
+                    "deleted_message_attachments": [
+                        attachment.url for attachment in message.attachments
+                    ],
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to delete message {message.id}: {e}", exc_info=True)
+            await self.send_error(ctx, "Failed to delete the message.")
+            return None
+
+    async def pin_message_action(
+        self,
+        ctx: interactions.ComponentContext,
+        post: interactions.ThreadChannel,
+        message: interactions.Message,
+        pin: bool,
+    ) -> Optional[ActionDetails]:
+        try:
+            if pin:
+                await message.pin()
+                action_type = ActionType.PIN
+                action_desc = "pinned"
+            else:
+                await message.unpin()
+                action_type = ActionType.UNPIN
+                action_desc = "unpinned"
+
+            await self.send_success(ctx, f"Message {action_desc} successfully.")
+
+            return ActionDetails(
+                action=action_type,
+                reason=f"User-initiated message {action_desc} by {ctx.author.mention}",
+                post_name=post.name,
+                actor=ctx.author,
+                channel=post,
+                target=message.author,
+                additional_info={
+                    f"{action_desc}_message_id": str(message.id),
+                    f"{action_desc}_message_content": (
+                        message.content[:1000] if message.content else "N/A"
+                    ),
+                },
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to {'pin' if pin else 'unpin'} message {message.id}: {e}",
+                exc_info=True,
+            )
+            await self.send_error(
+                ctx, f"Failed to {'pin' if pin else 'unpin'} the message."
+            )
+            return None
+
     manage_tags_regex_pattern = re.compile(r"manage_tags:(\d{19})")
 
     @interactions.component_callback(manage_tags_regex_pattern)
@@ -1606,16 +1713,15 @@ class Posts(interactions.Extension):
             and bool(event.message.content)
         )
 
-    async def can_delete_message(
+    async def can_manage_message(
         self,
-        post: interactions.ThreadChannel,
-        author: interactions.Member,
+        thread: interactions.ThreadChannel,
+        user: interactions.Member,
         message: interactions.Message,
     ) -> bool:
-        if message.author.id == author.id:
+        if message.author.id == user.id:
             return True
-
-        return await self.can_manage_post(post, author)
+        return await self.can_manage_post(thread, user)
 
     def should_process_link(self, event: MessageCreate) -> bool:
         if not event.message.guild or event.message.guild.id != self.GUILD_ID:
