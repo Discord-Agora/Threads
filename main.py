@@ -45,29 +45,46 @@ from interactions.ext.paginators import Paginator
 from loguru import logger
 from yarl import URL
 
-BASE_DIR: Final[str] = os.path.dirname(__file__)
-LOG_FILE: Final[str] = os.path.join(BASE_DIR, "posts.log")
+BASE_DIR: Final[str] = os.path.abspath(os.path.dirname(__file__))
+LOG_FILE: Final[str] = os.path.join(BASE_DIR, "threads.log")
 
 logger.remove()
 logger.add(
     sink=LOG_FILE,
     level="DEBUG",
-    format="{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | {process}:{thread} | {level: <8} | {name}:{function}:{line} | {message}",
-    filter=None,
-    colorize=None,
-    serialize=False,
+    format=(
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSSSSS}</green> | "
+        "<cyan>{process.id}:{thread.id}</cyan> | "
+        "<level>{level: <8}</level> | "
+        "<magenta>{name}:{function}:{line}</magenta> | "
+        "<white>{message}</white> | "
+        "Memory: {extra[memory_usage]:.2f}MB"
+    ),
+    filter=lambda record: (
+        record["name"].startswith("extensions.github_d_com__kazuki388_s_Threads.main")
+    ),
+    colorize=True,
+    serialize=True,
     backtrace=True,
     diagnose=True,
     enqueue=True,
     catch=True,
     rotation="1 MB",
     retention=1,
+    compression="gz",
     encoding="utf-8",
     mode="a",
     delay=False,
     errors="replace",
+    buffering=4096,
+    atomic=True,
+    kwargs={
+        "memory_usage": lambda: int(open("/proc/self/statm").read().split()[1])
+        * 4096
+        / 1024
+        / 1024
+    },
 )
-
 
 # Model
 
@@ -377,7 +394,7 @@ def log_action(func):
 # Controller
 
 
-class Posts(interactions.Extension):
+class Threads(interactions.Extension):
     def __init__(self, bot: interactions.Client) -> None:
         self.bot: Final[interactions.Client] = bot
         self.model: Final[Model] = Model()
@@ -924,7 +941,7 @@ class Posts(interactions.Extension):
     # Command methods
 
     module_base: Final[interactions.SlashCommand] = interactions.SlashCommand(
-        name="posts", description="Posts commands"
+        name="threads", description="Threads commands"
     )
 
     @module_base.subcommand("top", sub_cmd_description="Return to the top")
@@ -1298,41 +1315,50 @@ class Posts(interactions.Extension):
         )
 
     @module_group_debug.subcommand(
-        "banned", sub_cmd_description="View all banned users across threads"
+        "view", sub_cmd_description="View configuration files"
+    )
+    @interactions.slash_option(
+        name="type",
+        description="Configuration type to view",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(name="Banned Users", value="banned"),
+            interactions.SlashCommandChoice(
+                name="Thread Permissions", value="permissions"
+            ),
+            interactions.SlashCommandChoice(name="Post Statistics", value="stats"),
+            interactions.SlashCommandChoice(name="Featured Threads", value="featured"),
+        ],
     )
     @interactions.check(has_threads_role)
-    async def list_all_banned_users(self, ctx: interactions.SlashContext) -> None:
-        banned_users = await self._get_merged_banned_users()
-        embeds = await self._create_banned_user_embeds(banned_users)
-        await self._send_paginated_response(ctx, embeds, "No banned users found.")
-
-    @module_group_debug.subcommand(
-        "permissions", sub_cmd_description="View all thread permission assignments"
-    )
-    @interactions.check(has_threads_role)
-    async def list_all_thread_permissions(self, ctx: interactions.SlashContext) -> None:
-        permissions = await self._get_merged_permissions()
-        embeds = await self._create_permission_embeds(permissions)
-        await self._send_paginated_response(ctx, embeds, "No thread permissions found.")
-
-    @module_group_debug.subcommand(
-        "stats", sub_cmd_description="View post activity statistics"
-    )
-    @interactions.check(has_threads_role)
-    async def list_all_post_stats(self, ctx: interactions.SlashContext) -> None:
-        stats = await self._get_merged_stats()
-        embeds = await self._create_stats_embeds(stats)
-        await self._send_paginated_response(ctx, embeds, "No post statistics found.")
-
-    @module_group_debug.subcommand(
-        "featured", sub_cmd_description="View featured threads"
-    )
-    @interactions.check(has_threads_role)
-    async def list_all_featured_posts(self, ctx: interactions.SlashContext) -> None:
-        featured_posts = await self._get_merged_featured_posts()
-        stats = await self._get_merged_stats()
-        embeds = await self._create_featured_embeds(featured_posts, stats)
-        await self._send_paginated_response(ctx, embeds, "No featured threads found.")
+    async def list_debug_info(self, ctx: interactions.SlashContext, type: str) -> None:
+        match type:
+            case "banned":
+                banned_users = await self._get_merged_banned_users()
+                embeds = await self._create_banned_user_embeds(banned_users)
+                await self._send_paginated_response(
+                    ctx, embeds, "No banned users found."
+                )
+            case "permissions":
+                permissions = await self._get_merged_permissions()
+                embeds = await self._create_permission_embeds(permissions)
+                await self._send_paginated_response(
+                    ctx, embeds, "No thread permissions found."
+                )
+            case "stats":
+                stats = await self._get_merged_stats()
+                embeds = await self._create_stats_embeds(stats)
+                await self._send_paginated_response(
+                    ctx, embeds, "No post statistics found."
+                )
+            case "featured":
+                featured_posts = await self._get_merged_featured_posts()
+                stats = await self._get_merged_stats()
+                embeds = await self._create_featured_embeds(featured_posts, stats)
+                await self._send_paginated_response(
+                    ctx, embeds, "No featured threads found."
+                )
 
     async def _get_merged_banned_users(self) -> Set[Tuple[str, str, str]]:
         try:
@@ -2264,8 +2290,6 @@ class Posts(interactions.Extension):
         user: interactions.Member,
         message: interactions.Message,
     ) -> bool:
-        if message.author.id == user.id:
-            return True
         return await self.can_manage_post(thread, user)
 
     def should_process_link(self, event: MessageCreate) -> bool:
