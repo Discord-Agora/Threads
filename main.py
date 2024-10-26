@@ -53,15 +53,16 @@ logger.add(
     sink=LOG_FILE,
     level="DEBUG",
     format=(
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-        "<level>{level: <8}</level> | "
-        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-        "<level>{message}</level>"
+        "{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | "
+        "{process}:{thread} | "
+        "{level: <8} | "
+        "{name}:{function}:{line} - "
+        "{message}"
     ),
     filter=lambda record: (
         record["name"].startswith("extensions.github_d_com__kazuki388_s_Threads.main")
     ),
-    colorize=True,
+    colorize=False,
     serialize=False,
     backtrace=True,
     diagnose=True,
