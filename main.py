@@ -34,8 +34,13 @@ import aiofiles.os
 import interactions
 import orjson
 from cachetools import TTLCache
-from interactions.api.events import MessageCreate, NewThreadCreate
-from interactions.client.errors import NotFound
+from interactions.api.events import (
+    ExtensionLoad,
+    ExtensionUnload,
+    MessageCreate,
+    NewThreadCreate,
+)
+from interactions.client.errors import HTTPException, NotFound
 from interactions.ext.paginators import Paginator
 from loguru import logger
 from yarl import URL
@@ -119,6 +124,7 @@ class Model:
         self.CACHE_DURATION: Final[timedelta] = timedelta(minutes=5)
         self.post_stats: Final[Dict[str, PostStats]] = {}
         self.featured_posts: Dict[str, str] = {}
+        self.current_pinned_post: Optional[str] = None
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
@@ -418,9 +424,8 @@ class Posts(interactions.Extension):
         )
         self.FEATURED_CHANNELS: Final[Tuple[int, ...]] = (1152311220557320202,)
         self.message_count_threshold: int = 200
-        self.rotation_interval: timedelta = timedelta(hours=24)
+        self.rotation_interval: timedelta = timedelta(hours=23)
         asyncio.create_task(self._initialize_data())
-        asyncio.create_task(self._rotate_featured_posts_periodically())
         self.url_cache: Final[TTLCache] = TTLCache(maxsize=1024, ttl=3600)
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
@@ -434,15 +439,6 @@ class Posts(interactions.Extension):
             self.model.load_featured_posts(self.FEATURED_POSTS_FILE),
         )
 
-    async def _rotate_featured_posts_periodically(self) -> None:
-        while True:
-            try:
-                await self.adjust_thresholds()
-                await self.update_featured_posts_rotation()
-            except Exception as e:
-                logger.error(f"Error in rotating selected posts: {e}", exc_info=True)
-            await asyncio.sleep(self.rotation_interval.total_seconds())
-
     # Tag operations
 
     async def increment_message_count(self, post_id: str) -> None:
@@ -452,17 +448,17 @@ class Posts(interactions.Extension):
         await self.model.save_post_stats(self.POST_STATS_FILE)
 
     async def update_featured_posts_tags(self) -> None:
+        logger.info(f"Current message threshold: {self.message_count_threshold}")
+        logger.info(f"Current featured posts: {self.model.featured_posts}")
+
         tasks = [
-            (
-                self.add_tag_to_post(post_id, "精華")
-                if self.model.post_stats.get(post_id, PostStats()).message_count
-                >= self.message_count_threshold
-                else self.remove_tag_from_post(post_id, "精華")
-            )
+            self.add_tag_to_post(post_id, "精華帖子 Top Picks")
             for forum_id in self.FEATURED_CHANNELS
             if (post_id := self.model.featured_posts.get(str(forum_id)))
-            and self.model.post_stats.get(post_id)
+            and (stats := self.model.post_stats.get(post_id))
+            and stats.message_count >= self.message_count_threshold
         ]
+
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -471,127 +467,195 @@ class Posts(interactions.Extension):
             post_id_int = int(post_id)
             channel = await self.bot.fetch_channel(post_id_int)
             if not isinstance(channel, interactions.GuildForumPost):
-                logger.error(f"Fetched channel {post_id} is not a post.")
+                logger.error(f"Channel {post_id} is not a forum post.")
                 return
 
             forum = await self.bot.fetch_channel(channel.parent_id)
             if not isinstance(forum, interactions.GuildForum):
-                logger.error(f"Parent channel {channel.parent_id} is not a forum")
+                logger.error(f"Parent channel {channel.parent_id} is not a forum.")
                 return
 
-            post: Final[interactions.GuildForumPost] = await forum.fetch_post(
-                post_id_int
-            )
-            available_tags: Final[List[interactions.Tag]] = (
-                await self.fetch_available_tags(post.parent_id)
-            )
-            tag: Final[Optional[interactions.Tag]] = next(
-                (t for t in available_tags if t.name == tag_name), None
-            )
+            current_tag_ids = {tag.id for tag in channel.applied_tags}
+            available_tags = await self.fetch_available_tags(forum.id)
 
-            if tag and tag.id not in {t.id for t in post.applied_tags}:
-                new_tags: Final[List[int]] = [t.id for t in post.applied_tags] + [
-                    tag.id
-                ]
-                await post.edit(applied_tags=new_tags)
-                logger.info(f"Added tag `{tag_name}` to post {post_id}")
+            tag = next((tag for tag in available_tags if tag.name == tag_name), None)
+
+            if tag and tag.id not in current_tag_ids:
+                updated_tags = (*current_tag_ids, tag.id)
+                await channel.edit(applied_tags=list(updated_tags))
+                logger.info(f"Added tag '{tag_name}' to post {post_id}.")
+            else:
+                logger.debug(
+                    f"Tag '{tag_name}' already exists on post {post_id} or not found."
+                )
+
+        except ValueError:
+            logger.error(f"Invalid post ID format: {post_id}")
         except Exception as e:
             logger.error(
-                f"Unexpected error adding tag `{tag_name}` to post {post_id}: {e}",
+                f"Unexpected error adding tag '{tag_name}' to post {post_id}: {e}",
                 exc_info=True,
             )
 
-    async def remove_tag_from_post(self, post_id: str, tag_name: str) -> None:
+    async def pin_featured_post(self, new_post_id: str) -> None:
         try:
-            post_id_int = int(post_id)
-            channel = await self.bot.fetch_channel(post_id_int)
-            if not isinstance(channel, interactions.GuildForumPost):
-                logger.error(f"Fetched channel {post_id} is not a post.")
+            new_post = await self.bot.fetch_channel(int(new_post_id))
+            if not isinstance(new_post, interactions.GuildForumPost):
+                logger.error(f"Channel {new_post_id} is not a forum post.")
                 return
 
-            forum = await self.bot.fetch_channel(channel.parent_id)
-            if not isinstance(forum, interactions.GuildForum):
-                logger.error(f"Parent channel {channel.parent_id} is not a forum")
-                return
+            if self.model.current_pinned_post:
+                try:
+                    old_post = await self.bot.fetch_channel(
+                        int(self.model.current_pinned_post)
+                    )
+                    if (
+                        isinstance(old_post, interactions.GuildForumPost)
+                        and old_post.pinned
+                    ):
+                        try:
+                            await old_post.unpin(reason="Rotating featured posts.")
+                            logger.info(
+                                f"Unpinned old thread {self.model.current_pinned_post}."
+                            )
+                        except HTTPException as e:
+                            logger.error(f"Failed to unpin old thread: {e}")
+                            return
 
-            post: Final[interactions.GuildForumPost] = await forum.fetch_post(
-                post_id_int
-            )
-            available_tags: Final[List[interactions.Tag]] = (
-                await self.fetch_available_tags(post.parent_id)
-            )
-            tag: Final[Optional[interactions.Tag]] = next(
-                (t for t in available_tags if t.name == tag_name), None
-            )
+                        for attempt in range(5):
+                            try:
+                                updated_old_post = await self.bot.fetch_channel(
+                                    int(self.model.current_pinned_post)
+                                )
+                                if not updated_old_post.pinned:
+                                    logger.info(
+                                        f"Confirmed unpinning of old thread {self.model.current_pinned_post}."
+                                    )
+                                    break
+                                await asyncio.sleep(1)
+                            except Exception as e:
+                                logger.error(f"Error checking pin status: {e}")
+                                await asyncio.sleep(1)
+                        else:
+                            logger.error(
+                                "Failed to unpin the old thread after several attempts."
+                            )
+                            return
+                except ValueError:
+                    logger.error(
+                        f"Invalid current pinned post ID: {self.model.current_pinned_post}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected error unpinning old thread {self.model.current_pinned_post}: {e}",
+                        exc_info=True,
+                    )
 
-            if tag and tag.id in {t.id for t in post.applied_tags}:
-                new_tags: Final[List[int]] = [
-                    t.id for t in post.applied_tags if t.id != tag.id
+            if not new_post.pinned:
+                try:
+                    await new_post.pin(reason="New featured post.")
+                    await asyncio.sleep(1)
+
+                    updated_post = await self.bot.fetch_channel(int(new_post_id))
+                    if (
+                        isinstance(updated_post, interactions.GuildForumPost)
+                        and updated_post.pinned
+                    ):
+                        self.model.current_pinned_post = new_post_id
+                        logger.info(f"Successfully pinned new thread {new_post_id}.")
+                    else:
+                        logger.error(f"Failed to pin new thread {new_post_id}.")
+                except HTTPException as e:
+                    logger.error(f"Failed to pin new thread: {e}")
+                    return
+            else:
+                self.model.current_pinned_post = new_post_id
+                logger.info(f"Thread {new_post_id} was already pinned.")
+
+            try:
+                active_threads = await self.bot.http.list_active_threads(
+                    guild_id=self.GUILD_ID
+                )
+                pinned_threads = [
+                    thread
+                    for thread in active_threads.get("threads", [])
+                    if thread.get("parent_id") == str(new_post.parent_id)
+                    and thread.get("pinned", False)
                 ]
-                await post.edit(applied_tags=new_tags)
-                logger.info(f"Removed tag `{tag_name}` from post {post_id}")
+
+                if len(pinned_threads) > 1:
+                    logger.warning(
+                        f"Multiple threads pinned in channel {new_post.parent_id}."
+                    )
+            except Exception as e:
+                logger.error(f"Error checking active threads: {e}")
+
+        except ValueError:
+            logger.error(f"Invalid post ID format: {new_post_id}")
+        except NotFound:
+            logger.error(f"Post not found: {new_post_id}")
         except Exception as e:
-            logger.error(
-                f"Unexpected error removing tag `{tag_name}` from post {post_id}: {e}",
-                exc_info=True,
-            )
+            logger.error(f"Unexpected error pinning new thread: {e}", exc_info=True)
 
     async def update_featured_posts_rotation(self) -> None:
-        tasks = []
-        for forum_id in self.FEATURED_CHANNELS:
-            top_post_id: Optional[str] = await self.get_top_post_id(forum_id)
-            current_selected_post_id: Optional[str] = self.model.featured_posts.get(
-                str(forum_id)
-            )
+        forum_ids = list(self.FEATURED_CHANNELS)
+        tasks = [self.get_top_post_id(forum_id) for forum_id in forum_ids]
+        new_posts = await asyncio.gather(*tasks)
 
-            if top_post_id and current_selected_post_id != top_post_id:
-                self.model.featured_posts[str(forum_id)] = top_post_id
-                tasks.extend(
+        rotation_tasks = []
+        updated = False
+
+        for forum_id, new_top_post_id in zip(forum_ids, new_posts):
+            current_featured_post_id = self.model.featured_posts.get(str(forum_id))
+
+            if new_top_post_id and current_featured_post_id != new_top_post_id:
+                logger.info(
+                    f"Rotating featured post for forum {forum_id} from {current_featured_post_id} to {new_top_post_id}."
+                )
+                self.model.featured_posts[str(forum_id)] = new_top_post_id
+                rotation_tasks.extend(
                     [
                         self.model.save_featured_posts(self.FEATURED_POSTS_FILE),
                         self.update_featured_posts_tags(),
+                        self.pin_featured_post(new_top_post_id),
                     ]
                 )
-                logger.info(
-                    f"Rotated featured post for forum {forum_id} to post {top_post_id}"
-                )
-        if tasks:
-            await asyncio.gather(*tasks)
+                updated = True
+
+        if rotation_tasks and updated:
+            await asyncio.gather(*rotation_tasks)
+            logger.info("Completed featured posts rotation.")
 
     async def get_top_post_id(self, forum_id: int) -> Optional[str]:
         try:
-            forum = await self.bot.fetch_channel(forum_id)
-            if not isinstance(forum, interactions.GuildForum):
-                logger.warning(f"Channel {forum_id} is not a forum channel")
+            forum_channel = await self.bot.fetch_channel(forum_id)
+            if not isinstance(forum_channel, interactions.GuildForum):
+                logger.warning(f"Channel ID {forum_id} is not a forum channel.")
                 return None
 
-            threads = await self.bot.http.list_active_threads(guild_id=self.GUILD_ID)
+            threads_response = await self.bot.http.list_active_threads(
+                guild_id=self.GUILD_ID
+            )
+            active_threads = threads_response.get("threads", [])
 
-            active_threads = threads.get("threads", [])
-
-            posts_in_forum = [
-                str(thread["id"])
+            valid_threads = (
+                thread
                 for thread in active_threads
-                if str(thread["id"]) in self.model.post_stats
-                and str(thread["parent_id"]) == str(forum_id)
-            ]
+                if str(thread.get("id")) in self.model.post_stats
+                and str(thread.get("parent_id")) == str(forum_id)
+            )
 
-            if not posts_in_forum:
-                return None
-
-            top_post = max(
-                posts_in_forum,
-                key=lambda pid: self.model.post_stats.get(
-                    str(pid), PostStats()
-                ).message_count,
+            top_thread = max(
+                valid_threads,
+                key=lambda t: self.model.post_stats[str(t["id"])].message_count,
                 default=None,
             )
 
-            return str(top_post) if top_post else None
+            return str(top_thread["id"]) if top_thread else None
 
         except Exception as e:
             logger.error(
-                f"Error getting top post for forum {forum_id}: {e}",
+                f"Unexpected error fetching top post for forum {forum_id}: {e}",
                 exc_info=True,
             )
             return None
@@ -1087,7 +1151,9 @@ class Posts(interactions.Extension):
     @module_group_list.subcommand(
         "banned", sub_cmd_description="View banned users in current thread"
     )
-    async def list_current_thread_banned_users(self, ctx: interactions.SlashContext) -> None:
+    async def list_current_thread_banned_users(
+        self, ctx: interactions.SlashContext
+    ) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(ctx, "This command can only be used in threads.")
             return
@@ -1113,7 +1179,7 @@ class Posts(interactions.Extension):
                 user = await self.bot.fetch_user(int(user_id))
                 current_embed.add_field(
                     name="Banned User",
-                    value=f"User: {user.mention if user else user_id}",
+                    value=f"- User: {user.mention if user else user_id}",
                     inline=True,
                 )
 
@@ -1135,7 +1201,9 @@ class Posts(interactions.Extension):
         "permissions",
         sub_cmd_description="View users with special permissions in current thread",
     )
-    async def list_current_thread_permissions(self, ctx: interactions.SlashContext) -> None:
+    async def list_current_thread_permissions(
+        self, ctx: interactions.SlashContext
+    ) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(ctx, "This command can only be used in threads.")
             return
@@ -1165,7 +1233,7 @@ class Posts(interactions.Extension):
                 user = await self.bot.fetch_user(int(user_id))
                 current_embed.add_field(
                     name="User with Permissions",
-                    value=f"User: {user.mention if user else user_id}",
+                    value=f"- User: {user.mention if user else user_id}",
                     inline=True,
                 )
 
@@ -1209,9 +1277,9 @@ class Posts(interactions.Extension):
         embed = await self.create_embed(
             title=f"Statistics for <#{post_id}>",
             description=(
-                f"Message Count: {stats.message_count}\n"
-                f"Last Activity: {stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-                f"Post Created: <t:{int(ctx.channel.created_at.timestamp())}:F>"
+                f"- Message Count: {stats.message_count}\n"
+                f"- Last Activity: {stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+                f"- Post Created: <t:{int(ctx.channel.created_at.timestamp())}:F>"
             ),
         )
 
@@ -1317,19 +1385,19 @@ class Posts(interactions.Extension):
 
                 field_value = []
                 if post:
-                    field_value.append(f"Thread: <#{post_id}>")
+                    field_value.append(f"- Thread: <#{post_id}>")
                 else:
-                    field_value.append(f"Thread ID: {post_id}")
+                    field_value.append(f"- Thread ID: {post_id}")
 
                 if user:
-                    field_value.append(f"User: {user.mention}")
+                    field_value.append(f"- User: {user.mention}")
                 else:
-                    field_value.append(f"User ID: {user_id}")
+                    field_value.append(f"- User ID: {user_id}")
 
                 if channel:
-                    field_value.append(f"Channel: <#{channel_id}>")
+                    field_value.append(f"- Channel: <#{channel_id}>")
                 else:
-                    field_value.append(f"Channel ID: {channel_id}")
+                    field_value.append(f"- Channel ID: {channel_id}")
 
                 current_embed.add_field(
                     name="Ban Entry",
@@ -1345,7 +1413,12 @@ class Posts(interactions.Extension):
                 logger.error(f"Error fetching ban info: {e}", exc_info=True)
                 current_embed.add_field(
                     name="Ban Entry",
-                    value=f"Channel: <#{channel_id}>\nPost: <#{post_id}>\nUser: {user_id}\n(Unable to fetch complete information)",
+                    value=(
+                        f"- Channel: <#{channel_id}>\n"
+                        f"- Post: <#{post_id}>\n"
+                        f"- User: {user_id}\n"
+                        "(Unable to fetch complete information)"
+                    ),
                     inline=True,
                 )
 
@@ -1375,7 +1448,9 @@ class Posts(interactions.Extension):
 
                         current_embed.add_field(
                             name="Permission Entry",
-                            value=(f"Thread: <#{post_id}>\n" f"User: {user.mention}"),
+                            value=(
+                                f"- Thread: <#{post_id}>\n" f"- User: {user.mention}"
+                            ),
                             inline=True,
                         )
 
@@ -1392,7 +1467,10 @@ class Posts(interactions.Extension):
                 logger.error(f"Error fetching thread {post_id}: {e}")
                 current_embed.add_field(
                     name="Permission Entry",
-                    value=f"Thread: <#{post_id}>\nUnable to fetch complete information",
+                    value=(
+                        f"- Thread: <#{post_id}>\n"
+                        "(Unable to fetch complete information)"
+                    ),
                     inline=True,
                 )
 
@@ -1415,9 +1493,9 @@ class Posts(interactions.Extension):
                 current_embed.add_field(
                     name="Post Stats",
                     value=(
-                        f"Post: <#{post_id}>\n"
-                        f"Messages: {post_stats.message_count}\n"
-                        f"Last Active: {last_active}"
+                        f"- Post: <#{post_id}>\n"
+                        f"- Messages: {post_stats.message_count}\n"
+                        f"- Last Active: {last_active}"
                     ),
                     inline=True,
                 )
@@ -1452,10 +1530,10 @@ class Posts(interactions.Extension):
                 current_embed.add_field(
                     name="Featured Post",
                     value=(
-                        f"Forum: <#{forum_id}>\n"
-                        f"Post: <#{post_id}>\n"
-                        f"Messages: {post_stats.message_count}\n"
-                        f"Last Active: {post_stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                        f"- Forum: <#{forum_id}>\n"
+                        f"- Post: <#{post_id}>\n"
+                        f"- Messages: {post_stats.message_count}\n"
+                        f"- Last Active: {post_stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}"
                     ),
                     inline=True,
                 )
@@ -2007,6 +2085,45 @@ class Posts(interactions.Extension):
         return None
 
     # Event methods
+
+    @interactions.Task.create(interactions.IntervalTrigger(hours=1))
+    async def rotate_featured_posts_periodically(self) -> None:
+        try:
+            while True:
+                try:
+                    await self.adjust_thresholds()
+                    await self.update_featured_posts_rotation()
+                except Exception as e:
+                    logger.error(
+                        f"Error in rotating selected posts: {e}", exc_info=True
+                    )
+                await asyncio.sleep(self.rotation_interval.total_seconds())
+        except asyncio.CancelledError:
+            logger.info("Featured posts rotation task cancelled")
+            raise
+        except Exception as e:
+            logger.error(
+                f"Fatal error in featured posts rotation task: {e}", exc_info=True
+            )
+            raise
+
+    @interactions.listen(ExtensionLoad)
+    async def on_extension_load(self, event: ExtensionLoad) -> None:
+        self.rotate_featured_posts_periodically.start()
+
+    @interactions.listen(ExtensionUnload)
+    async def on_extension_unload(self, event: ExtensionUnload) -> None:
+        tasks_to_stop: Final[tuple] = (self.rotate_featured_posts_periodically,)
+        for task in tasks_to_stop:
+            task.stop()
+
+        pending_tasks = [
+            task for task in asyncio.all_tasks() if task.get_name().startswith("Task-")
+        ]
+        await asyncio.gather(
+            *map(functools.partial(asyncio.wait_for, timeout=10.0), pending_tasks),
+            return_exceptions=True,
+        )
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_stats(self, event: MessageCreate) -> None:
