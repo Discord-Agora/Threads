@@ -1755,6 +1755,10 @@ class Posts(interactions.Extension):
             )
             return None
 
+        if member.id == thread.owner_id:
+            await self.send_error(ctx, "You cannot ban the thread owner.")
+            return None
+
         channel_id, thread_id, user_id = map(
             str, (thread.parent_id, thread.id, member.id)
         )
@@ -2009,10 +2013,10 @@ class Posts(interactions.Extension):
             await thread.edit(name=new_title)
 
             poll: Final[interactions.Poll] = interactions.Poll.create(
-                question="Do you support this petition?",
+                question="您对此请愿持何意见？What is your position regarding this petition?",
                 duration=48,
                 allow_multiselect=False,
-                answers=["Support", "Oppose", "Abstain"],
+                answers=["正  In Favor", "反  Opposed", "无  Abstain"],
             )
             await thread.send(poll=poll)
 
