@@ -5,6 +5,7 @@
 - New channel ID (1183254117813071922) to permitted list
 - Pin/unpin functionality to message actions
 - List and debug commands with pagination
+- Validation to prevent banning thread owners
 
 ### Changed
 - Forum post management commands now work with all thread types
@@ -14,6 +15,7 @@
 - Updated internal permission handling to use thread terminology
 - Modified type hints to support ThreadChannel and related types
 - Changed the regex patterns for callbacks to accept any number of digits instead of strictly 19 digits
+- Translated petition voting options to Chinese
 
 ## 2024-10-25
 
