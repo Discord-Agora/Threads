@@ -36,6 +36,7 @@ import orjson
 from cachetools import TTLCache
 from interactions.api.events import MessageCreate, NewThreadCreate
 from interactions.client.errors import NotFound
+from interactions.ext.paginators import Paginator
 from loguru import logger
 from yarl import URL
 
@@ -390,6 +391,7 @@ class Posts(interactions.Extension):
         self.LOG_POST_ID: Final[int] = 1279118293936111707
         self.POLL_FORUM_ID: Final[int] = 1155914521907568740
         self.TAIWAN_ROLE_ID: Final[int] = 1261328929013108778
+        self.THREADS_ROLE_ID: Final[int] = 1223635198327914639
         self.GUILD_ID: Final[int] = 1150630510696075404
         self.ROLE_CHANNEL_PERMISSIONS: Final[Dict[int, Tuple[int, ...]]] = {
             1223635198327914639: (
@@ -1075,6 +1077,418 @@ class Posts(interactions.Extension):
         )
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
+
+    # List commands
+
+    module_group_list: Final[interactions.SlashCommand] = module_base.group(
+        name="list", description="List commands for current thread"
+    )
+
+    @module_group_list.subcommand(
+        "banned", sub_cmd_description="View banned users in current thread"
+    )
+    async def list_current_thread_banned_users(
+        self, ctx: interactions.SlashContext
+    ) -> None:
+        if not await self.validate_channel(ctx):
+            await self.send_error(ctx, "This command can only be used in threads.")
+            return
+
+        if not await self.can_manage_post(ctx.channel, ctx.author):
+            await self.send_error(
+                ctx, "You don't have permission to view banned users in this thread."
+            )
+            return
+
+        channel_id, post_id = str(ctx.channel.parent_id), str(ctx.channel.id)
+        banned_users = self.model.banned_users[channel_id][post_id]
+
+        if not banned_users:
+            await self.send_success(ctx, "No banned users in this thread.")
+            return
+
+        embeds = []
+        current_embed = await self.create_embed(title=f"Banned Users in <#{post_id}>")
+
+        for user_id in banned_users:
+            try:
+                user = await self.bot.fetch_user(int(user_id))
+                current_embed.add_field(
+                    name="Banned User",
+                    value=f"User: {user.mention if user else user_id}",
+                    inline=True,
+                )
+
+                if len(current_embed.fields) >= 5:
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(
+                        title=f"Banned Users in <#{post_id}>"
+                    )
+            except Exception as e:
+                logger.error(f"Error fetching user {user_id}: {e}")
+                continue
+
+        if current_embed.fields:
+            embeds.append(current_embed)
+
+        await self._send_paginated_response(ctx, embeds, "No banned users found.")
+
+    @module_group_list.subcommand(
+        "permissions",
+        sub_cmd_description="View users with special permissions in current thread",
+    )
+    async def list_current_thread_permissions(
+        self, ctx: interactions.SlashContext
+    ) -> None:
+        if not await self.validate_channel(ctx):
+            await self.send_error(ctx, "This command can only be used in threads.")
+            return
+
+        if not await self.can_manage_post(ctx.channel, ctx.author):
+            await self.send_error(
+                ctx, "You don't have permission to view permissions in this thread."
+            )
+            return
+
+        post_id = str(ctx.channel.id)
+        users_with_permissions = self.model.thread_permissions[post_id]
+
+        if not users_with_permissions:
+            await self.send_success(
+                ctx, "No users with special permissions in this thread."
+            )
+            return
+
+        embeds = []
+        current_embed = await self.create_embed(
+            title=f"Users with Permissions in <#{post_id}>"
+        )
+
+        for user_id in users_with_permissions:
+            try:
+                user = await self.bot.fetch_user(int(user_id))
+                current_embed.add_field(
+                    name="User with Permissions",
+                    value=f"User: {user.mention if user else user_id}",
+                    inline=True,
+                )
+
+                if len(current_embed.fields) >= 5:
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(
+                        title=f"Users with Permissions in <#{post_id}>"
+                    )
+            except Exception as e:
+                logger.error(f"Error fetching user {user_id}: {e}")
+                continue
+
+        if current_embed.fields:
+            embeds.append(current_embed)
+
+        await self._send_paginated_response(
+            ctx, embeds, "No users with permissions found."
+        )
+
+    @module_group_list.subcommand(
+        "stats", sub_cmd_description="View statistics for current post"
+    )
+    async def list_current_post_stats(self, ctx: interactions.SlashContext) -> None:
+        if not await self.validate_channel(ctx):
+            await self.send_error(ctx, "This command can only be used in posts.")
+            return
+
+        if not await self.can_manage_post(ctx.channel, ctx.author):
+            await self.send_error(
+                ctx, "You don't have permission to view statistics in this post."
+            )
+            return
+
+        post_id = str(ctx.channel.id)
+        stats = self.model.post_stats.get(post_id)
+
+        if not stats:
+            await self.send_success(ctx, "No statistics available for this post.")
+            return
+
+        embed = await self.create_embed(
+            title=f"Statistics for <#{post_id}>",
+            description=(
+                f"Message Count: {stats.message_count}\n"
+                f"Last Activity: {stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+                f"Post Created: <t:{int(ctx.channel.created_at.timestamp())}:F>"
+            ),
+        )
+
+        await ctx.send(embeds=[embed])
+
+    # Debug commands
+
+    module_group_debug: Final[interactions.SlashCommand] = module_base.group(
+        name="debug", description="List commands for thread management"
+    )
+
+    async def has_threads_role(ctx: interactions.BaseContext) -> bool:
+        return any(
+            role.id == ctx.command.extension.THREADS_ROLE_ID
+            for role in ctx.author.roles
+        )
+
+    @module_group_debug.subcommand(
+        "banned", sub_cmd_description="View all banned users across threads"
+    )
+    @interactions.check(has_threads_role)
+    async def list_all_banned_users(self, ctx: interactions.SlashContext) -> None:
+        banned_users = await self._get_merged_banned_users()
+        embeds = await self._create_banned_user_embeds(banned_users)
+        await self._send_paginated_response(ctx, embeds, "No banned users found.")
+
+    @module_group_debug.subcommand(
+        "permissions", sub_cmd_description="View all thread permission assignments"
+    )
+    @interactions.check(has_threads_role)
+    async def list_all_thread_permissions(self, ctx: interactions.SlashContext) -> None:
+        permissions = await self._get_merged_permissions()
+        embeds = await self._create_permission_embeds(permissions)
+        await self._send_paginated_response(ctx, embeds, "No thread permissions found.")
+
+    @module_group_debug.subcommand(
+        "stats", sub_cmd_description="View post activity statistics"
+    )
+    @interactions.check(has_threads_role)
+    async def list_all_post_stats(self, ctx: interactions.SlashContext) -> None:
+        stats = await self._get_merged_stats()
+        embeds = await self._create_stats_embeds(stats)
+        await self._send_paginated_response(ctx, embeds, "No post statistics found.")
+
+    @module_group_debug.subcommand(
+        "featured", sub_cmd_description="View featured threads"
+    )
+    @interactions.check(has_threads_role)
+    async def list_all_featured_posts(self, ctx: interactions.SlashContext) -> None:
+        featured_posts = await self._get_merged_featured_posts()
+        stats = await self._get_merged_stats()
+        embeds = await self._create_featured_embeds(featured_posts, stats)
+        await self._send_paginated_response(ctx, embeds, "No featured threads found.")
+
+    async def _get_merged_banned_users(self) -> Set[Tuple[str, str, str]]:
+        try:
+            await self.model.load_banned_users(self.BANNED_USERS_FILE)
+            return {
+                (channel_id, post_id, user_id)
+                for channel_id, channel_data in self.model.banned_users.items()
+                for post_id, user_set in channel_data.items()
+                for user_id in user_set
+            }
+        except Exception as e:
+            logger.error(f"Error loading banned users: {e}", exc_info=True)
+            return set()
+
+    async def _get_merged_permissions(self) -> Set[Tuple[str, str]]:
+        try:
+            await self.model.load_thread_permissions(self.THREAD_PERMISSIONS_FILE)
+            return self.model.thread_permissions
+        except Exception as e:
+            logger.error(f"Error loading thread permissions: {e}", exc_info=True)
+            return set()
+
+    async def _get_merged_stats(self) -> Dict[str, PostStats]:
+        try:
+            await self.model.load_post_stats(self.POST_STATS_FILE)
+            return self.model.post_stats
+        except Exception as e:
+            logger.error(f"Error loading post stats: {e}", exc_info=True)
+            return {}
+
+    async def _get_merged_featured_posts(self) -> Dict[str, str]:
+        try:
+            await self.model.load_featured_posts(self.FEATURED_POSTS_FILE)
+            return self.model.featured_posts
+        except Exception as e:
+            logger.error(f"Error loading featured posts: {e}", exc_info=True)
+            return {}
+
+    async def _create_banned_user_embeds(
+        self, banned_users: Set[Tuple[str, str, str]]
+    ) -> List[interactions.Embed]:
+        embeds: List[interactions.Embed] = []
+        current_embed = await self.create_embed(title="Banned Users List")
+
+        for channel_id, post_id, user_id in banned_users:
+            try:
+                channel = await self.bot.fetch_channel(int(channel_id))
+                post = await self.bot.fetch_channel(int(post_id))
+                user = await self.bot.fetch_user(int(user_id))
+
+                field_value = []
+                if post:
+                    field_value.append(f"Thread: <#{post_id}>")
+                else:
+                    field_value.append(f"Thread ID: {post_id}")
+
+                if user:
+                    field_value.append(f"User: {user.mention}")
+                else:
+                    field_value.append(f"User ID: {user_id}")
+
+                if channel:
+                    field_value.append(f"Channel: <#{channel_id}>")
+                else:
+                    field_value.append(f"Channel ID: {channel_id}")
+
+                current_embed.add_field(
+                    name="Ban Entry",
+                    value="\n".join(field_value),
+                    inline=True,
+                )
+
+                if len(current_embed.fields) >= 5:
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(title="Banned Users List")
+
+            except Exception as e:
+                logger.error(f"Error fetching ban info: {e}", exc_info=True)
+                current_embed.add_field(
+                    name="Ban Entry",
+                    value=f"Channel: <#{channel_id}>\nPost: <#{post_id}>\nUser: {user_id}\n(Unable to fetch complete information)",
+                    inline=True,
+                )
+
+        if current_embed.fields:
+            embeds.append(current_embed)
+
+        return embeds
+
+    async def _create_permission_embeds(
+        self, permissions: DefaultDict[str, Set[str]]
+    ) -> List[interactions.Embed]:
+        embeds: List[interactions.Embed] = []
+        current_embed = await self.create_embed(title="Thread Permissions List")
+
+        for post_id, user_ids in permissions.items():
+            try:
+                post = await self.bot.fetch_channel(int(post_id))
+                if not post:
+                    logger.warning(f"Could not fetch channel {post_id}")
+                    continue
+
+                for user_id in user_ids:
+                    try:
+                        user = await self.bot.fetch_user(int(user_id))
+                        if not user:
+                            continue
+
+                        current_embed.add_field(
+                            name="Permission Entry",
+                            value=(f"Thread: <#{post_id}>\n" f"User: {user.mention}"),
+                            inline=True,
+                        )
+
+                        if len(current_embed.fields) >= 5:
+                            embeds.append(current_embed)
+                            current_embed = await self.create_embed(
+                                title="Thread Permissions List"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error fetching user {user_id}: {e}")
+                        continue
+
+            except Exception as e:
+                logger.error(f"Error fetching thread {post_id}: {e}")
+                current_embed.add_field(
+                    name="Permission Entry",
+                    value=f"Thread: <#{post_id}>\nUnable to fetch complete information",
+                    inline=True,
+                )
+
+        if current_embed.fields:
+            embeds.append(current_embed)
+
+        return embeds
+
+    async def _create_stats_embeds(
+        self, stats: Dict[str, PostStats]
+    ) -> List[interactions.Embed]:
+        embeds: List[interactions.Embed] = []
+        current_embed = await self.create_embed(title="Post Statistics")
+
+        for post_id, post_stats in stats.items():
+            try:
+                post = await self.bot.fetch_channel(int(post_id))
+                last_active = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+                current_embed.add_field(
+                    name="Post Stats",
+                    value=(
+                        f"Post: <#{post_id}>\n"
+                        f"Messages: {post_stats.message_count}\n"
+                        f"Last Active: {last_active}"
+                    ),
+                    inline=True,
+                )
+
+                if len(current_embed.fields) >= 5:
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(title="Post Statistics")
+
+            except Exception as e:
+                logger.error(f"Error fetching post stats: {e}", exc_info=True)
+                continue
+
+        if current_embed.fields:
+            embeds.append(current_embed)
+
+        return embeds
+
+    async def _create_featured_embeds(
+        self, featured_posts: Dict[str, str], stats: Dict[str, PostStats]
+    ) -> List[interactions.Embed]:
+        embeds: List[interactions.Embed] = []
+        current_embed = await self.create_embed(title="Featured Posts")
+
+        for forum_id, post_id in featured_posts.items():
+            try:
+                forum, post = await asyncio.gather(
+                    self.bot.fetch_channel(int(forum_id)),
+                    self.bot.fetch_channel(int(post_id)),
+                )
+                post_stats = stats.get(post_id, PostStats())
+
+                current_embed.add_field(
+                    name="Featured Post",
+                    value=(
+                        f"Forum: <#{forum_id}>\n"
+                        f"Post: <#{post_id}>\n"
+                        f"Messages: {post_stats.message_count}\n"
+                        f"Last Active: {post_stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                    ),
+                    inline=True,
+                )
+
+                if len(current_embed.fields) >= 5:
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(title="Featured Posts")
+
+            except Exception as e:
+                logger.error(f"Error fetching featured post info: {e}", exc_info=True)
+                continue
+
+        if current_embed.fields:
+            embeds.append(current_embed)
+
+        return embeds
+
+    async def _send_paginated_response(
+        self,
+        ctx: interactions.SlashContext,
+        embeds: List[interactions.Embed],
+        empty_message: str,
+    ) -> None:
+        if not embeds:
+            await self.send_success(ctx, empty_message)
+            return
+
+        paginator = Paginator.create_from_embeds(self.bot, *embeds, timeout=120)
+        await paginator.send(ctx)
 
     # Serve
 
