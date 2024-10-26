@@ -12,6 +12,7 @@
 - Updated feedback messages to use "thread" terminology instead of "post"
 - Updated internal permission handling to use thread terminology
 - Modified type hints to support ThreadChannel and related types
+- Changed the regex patterns for callbacks to accept any number of digits instead of strictly 19 digits
 
 ## 2024-10-25
 
