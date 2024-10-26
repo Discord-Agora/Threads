@@ -467,12 +467,19 @@ class Posts(interactions.Extension):
     async def add_tag_to_post(self, post_id: str, tag_name: str) -> None:
         try:
             post_id_int = int(post_id)
-            post: Final[interactions.GuildForumPost] = await self.bot.fetch_post(
-                post_id_int
-            )
-            if not isinstance(post, interactions.GuildForumPost):
+            channel = await self.bot.fetch_channel(post_id_int)
+            if not isinstance(channel, interactions.GuildForumPost):
                 logger.error(f"Fetched channel {post_id} is not a post.")
                 return
+
+            forum = await self.bot.fetch_channel(channel.parent_id)
+            if not isinstance(forum, interactions.GuildForum):
+                logger.error(f"Parent channel {channel.parent_id} is not a forum")
+                return
+
+            post: Final[interactions.GuildForumPost] = await forum.fetch_post(
+                post_id_int
+            )
             available_tags: Final[List[interactions.Tag]] = (
                 await self.fetch_available_tags(post.parent_id)
             )
@@ -495,12 +502,19 @@ class Posts(interactions.Extension):
     async def remove_tag_from_post(self, post_id: str, tag_name: str) -> None:
         try:
             post_id_int = int(post_id)
-            post: Final[interactions.GuildForumPost] = await self.bot.fetch_post(
-                post_id_int
-            )
-            if not isinstance(post, interactions.GuildForumPost):
+            channel = await self.bot.fetch_channel(post_id_int)
+            if not isinstance(channel, interactions.GuildForumPost):
                 logger.error(f"Fetched channel {post_id} is not a post.")
                 return
+
+            forum = await self.bot.fetch_channel(channel.parent_id)
+            if not isinstance(forum, interactions.GuildForum):
+                logger.error(f"Parent channel {channel.parent_id} is not a forum")
+                return
+
+            post: Final[interactions.GuildForumPost] = await forum.fetch_post(
+                post_id_int
+            )
             available_tags: Final[List[interactions.Tag]] = (
                 await self.fetch_available_tags(post.parent_id)
             )
@@ -1175,7 +1189,7 @@ class Posts(interactions.Extension):
             },
         )
 
-    manage_user_regex_pattern = re.compile(r"manage_user:(\d{19}):(\d{19}):(\d{19})")
+    manage_user_regex_pattern = re.compile(r"manage_user:(\d+):(\d+):(\d+)")
 
     @interactions.component_callback(manage_user_regex_pattern)
     @log_action
@@ -1297,7 +1311,7 @@ class Posts(interactions.Extension):
             },
         )
 
-    message_action_regex_pattern = re.compile(r"message_action:(\d{19})")
+    message_action_regex_pattern = re.compile(r"message_action:(\d+)")
 
     @interactions.component_callback(message_action_regex_pattern)
     @log_action
@@ -1413,7 +1427,7 @@ class Posts(interactions.Extension):
             )
             return None
 
-    manage_tags_regex_pattern = re.compile(r"manage_tags:(\d{19})")
+    manage_tags_regex_pattern = re.compile(r"manage_tags:(\d+)")
 
     @interactions.component_callback(manage_tags_regex_pattern)
     @log_action
