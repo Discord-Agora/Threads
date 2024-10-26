@@ -11,6 +11,7 @@
 - Consolidated debug subcommands under unified interface with type parameter
 - Renamed `Posts` class to `Threads`
 - Optimized message author validation logic
+- Consolidated the `list` group subcommands into a single command with a `type` option
 
 ## 2024-10-26
 
