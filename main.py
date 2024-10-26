@@ -1152,152 +1152,123 @@ class Threads(interactions.Extension):
 
     # List commands
 
-    module_group_list: Final[interactions.SlashCommand] = module_base.group(
-        name="list", description="List commands for current thread"
+    @module_base.subcommand("list", sub_cmd_description="List information for current thread")
+    @interactions.slash_option(
+        name="type",
+        description="Type of information to list",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(name="Banned Users", value="banned"),
+            interactions.SlashCommandChoice(name="Thread Permissions", value="permissions"), 
+            interactions.SlashCommandChoice(name="Post Statistics", value="stats")
+        ]
     )
-
-    @module_group_list.subcommand(
-        "banned", sub_cmd_description="View banned users in current thread"
-    )
-    async def list_current_thread_banned_users(
-        self, ctx: interactions.SlashContext
-    ) -> None:
+    async def list_thread_info(self, ctx: interactions.SlashContext, type: str) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(ctx, "This command can only be used in threads.")
             return
 
         if not await self.can_manage_post(ctx.channel, ctx.author):
             await self.send_error(
-                ctx, "You don't have permission to view banned users in this thread."
+                ctx, "You don't have permission to view information in this thread."
             )
             return
 
         channel_id, post_id = str(ctx.channel.parent_id), str(ctx.channel.id)
-        banned_users = self.model.banned_users[channel_id][post_id]
 
-        if not banned_users:
-            await self.send_success(ctx, "No banned users in this thread.")
-            return
+        match type:
+            case "banned":
+                banned_users = self.model.banned_users[channel_id][post_id]
 
-        embeds = []
-        current_embed = await self.create_embed(title=f"Banned Users in <#{post_id}>")
+                if not banned_users:
+                    await self.send_success(ctx, "No banned users in this thread.")
+                    return
 
-        for user_id in banned_users:
-            try:
-                user = await self.bot.fetch_user(int(user_id))
-                current_embed.add_field(
-                    name="Banned User",
-                    value=f"- User: {user.mention if user else user_id}",
-                    inline=True,
+                embeds = []
+                current_embed = await self.create_embed(title=f"Banned Users in <#{post_id}>")
+
+                for user_id in banned_users:
+                    try:
+                        user = await self.bot.fetch_user(int(user_id))
+                        current_embed.add_field(
+                            name="Banned User",
+                            value=f"- User: {user.mention if user else user_id}",
+                            inline=True,
+                        )
+
+                        if len(current_embed.fields) >= 5:
+                            embeds.append(current_embed)
+                            current_embed = await self.create_embed(
+                                title=f"Banned Users in <#{post_id}>"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error fetching user {user_id}: {e}")
+                        continue
+
+                if current_embed.fields:
+                    embeds.append(current_embed)
+
+                await self._send_paginated_response(ctx, embeds, "No banned users found.")
+
+            case "permissions":
+                users_with_permissions = self.model.thread_permissions[post_id]
+
+                if not users_with_permissions:
+                    await self.send_success(
+                        ctx, "No users with special permissions in this thread."
+                    )
+                    return
+
+                embeds = []
+                current_embed = await self.create_embed(
+                    title=f"Users with Permissions in <#{post_id}>"
                 )
 
-                if len(current_embed.fields) >= 5:
+                for user_id in users_with_permissions:
+                    try:
+                        user = await self.bot.fetch_user(int(user_id))
+                        current_embed.add_field(
+                            name="User with Permissions",
+                            value=f"- User: {user.mention if user else user_id}",
+                            inline=True,
+                        )
+
+                        if len(current_embed.fields) >= 5:
+                            embeds.append(current_embed)
+                            current_embed = await self.create_embed(
+                                title=f"Users with Permissions in <#{post_id}>"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error fetching user {user_id}: {e}")
+                        continue
+
+                if current_embed.fields:
                     embeds.append(current_embed)
-                    current_embed = await self.create_embed(
-                        title=f"Banned Users in <#{post_id}>"
-                    )
-            except Exception as e:
-                logger.error(f"Error fetching user {user_id}: {e}")
-                continue
 
-        if current_embed.fields:
-            embeds.append(current_embed)
-
-        await self._send_paginated_response(ctx, embeds, "No banned users found.")
-
-    @module_group_list.subcommand(
-        "permissions",
-        sub_cmd_description="View users with special permissions in current thread",
-    )
-    async def list_current_thread_permissions(
-        self, ctx: interactions.SlashContext
-    ) -> None:
-        if not await self.validate_channel(ctx):
-            await self.send_error(ctx, "This command can only be used in threads.")
-            return
-
-        if not await self.can_manage_post(ctx.channel, ctx.author):
-            await self.send_error(
-                ctx, "You don't have permission to view permissions in this thread."
-            )
-            return
-
-        post_id = str(ctx.channel.id)
-        users_with_permissions = self.model.thread_permissions[post_id]
-
-        if not users_with_permissions:
-            await self.send_success(
-                ctx, "No users with special permissions in this thread."
-            )
-            return
-
-        embeds = []
-        current_embed = await self.create_embed(
-            title=f"Users with Permissions in <#{post_id}>"
-        )
-
-        for user_id in users_with_permissions:
-            try:
-                user = await self.bot.fetch_user(int(user_id))
-                current_embed.add_field(
-                    name="User with Permissions",
-                    value=f"- User: {user.mention if user else user_id}",
-                    inline=True,
+                await self._send_paginated_response(
+                    ctx, embeds, "No users with permissions found."
                 )
 
-                if len(current_embed.fields) >= 5:
-                    embeds.append(current_embed)
-                    current_embed = await self.create_embed(
-                        title=f"Users with Permissions in <#{post_id}>"
-                    )
-            except Exception as e:
-                logger.error(f"Error fetching user {user_id}: {e}")
-                continue
+            case "stats":
+                stats = self.model.post_stats.get(post_id)
 
-        if current_embed.fields:
-            embeds.append(current_embed)
+                if not stats:
+                    await self.send_success(ctx, "No statistics available for this post.")
+                    return
 
-        await self._send_paginated_response(
-            ctx, embeds, "No users with permissions found."
-        )
+                embed = await self.create_embed(
+                    title=f"Statistics for <#{post_id}>",
+                    description=(
+                        f"- Message Count: {stats.message_count}\n"
+                        f"- Last Activity: {stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+                        f"- Post Created: <t:{int(ctx.channel.created_at.timestamp())}:F>"
+                    ),
+                )
 
-    @module_group_list.subcommand(
-        "stats", sub_cmd_description="View statistics for current post"
-    )
-    async def list_current_post_stats(self, ctx: interactions.SlashContext) -> None:
-        if not await self.validate_channel(ctx):
-            await self.send_error(ctx, "This command can only be used in posts.")
-            return
-
-        if not await self.can_manage_post(ctx.channel, ctx.author):
-            await self.send_error(
-                ctx, "You don't have permission to view statistics in this post."
-            )
-            return
-
-        post_id = str(ctx.channel.id)
-        stats = self.model.post_stats.get(post_id)
-
-        if not stats:
-            await self.send_success(ctx, "No statistics available for this post.")
-            return
-
-        embed = await self.create_embed(
-            title=f"Statistics for <#{post_id}>",
-            description=(
-                f"- Message Count: {stats.message_count}\n"
-                f"- Last Activity: {stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-                f"- Post Created: <t:{int(ctx.channel.created_at.timestamp())}:F>"
-            ),
-        )
-
-        await ctx.send(embeds=[embed])
+                await ctx.send(embeds=[embed])
 
     # Debug commands
-
-    module_group_debug: Final[interactions.SlashCommand] = module_base.group(
-        name="debug", description="List commands for thread management"
-    )
 
     async def has_threads_role(ctx: interactions.BaseContext) -> bool:
         return any(
@@ -1305,7 +1276,7 @@ class Threads(interactions.Extension):
             for role in ctx.author.roles
         )
 
-    @module_group_debug.subcommand(
+    @module_base.subcommand(
         "view", sub_cmd_description="View configuration files"
     )
     @interactions.slash_option(
