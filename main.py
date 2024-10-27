@@ -74,7 +74,7 @@ logger.add(
     encoding="utf-8",
     mode="a",
     delay=False,
-    buffering=1
+    buffering=1,
 )
 
 # Model
@@ -407,6 +407,9 @@ class Threads(interactions.Extension):
         self.TAIWAN_ROLE_ID: Final[int] = 1261328929013108778
         self.THREADS_ROLE_ID: Final[int] = 1223635198327914639
         self.GUILD_ID: Final[int] = 1150630510696075404
+        self.CONGRESS_ID: Final[int] = 1196707789859459132
+        self.CONGRESS_MEMBER_ROLE: Final[int] = 1200254783110525010
+        self.CONGRESS_MOD_ROLE: Final[int] = 1261328613236801536
         self.ROLE_CHANNEL_PERMISSIONS: Final[Dict[int, Tuple[int, ...]]] = {
             1223635198327914639: (
                 1152311220557320202,
@@ -1101,42 +1104,54 @@ class Threads(interactions.Extension):
             )
             return
 
-        post: Final[interactions.ThreadChannel] = ctx.channel
-        target_user: Final[interactions.Member] = ctx.target
+        thread = ctx.channel
+        target_user = ctx.target
 
-        if target_user.id in {ctx.author.id, self.bot.user.id}:
-            await self.send_error(ctx, "You cannot manage yourself or the bot.")
+        if target_user.id == self.bot.user.id:
+            await self.send_error(ctx, "You cannot manage the bot.")
             return
 
-        if not await self.can_manage_post(post, ctx.author):
+        if target_user.id == ctx.author.id and self.CONGRESS_MEMBER_ROLE not in {
+            role.id for role in ctx.author.roles
+        }:
+            await self.send_error(ctx, "Only Congress members can manage themselves.")
+            return
+
+        if not await self.can_manage_post(thread, ctx.author):
             await self.send_error(
-                ctx, "You don't have permission to manage users in this thread."
+                ctx,
+                "You don't have permission to manage users in this thread.",
             )
             return
 
-        channel_id, post_id, user_id = map(
-            str, (post.parent_id, post.id, target_user.id)
+        channel_id, thread_id, user_id = map(
+            str, (thread.parent_id, thread.id, target_user.id)
         )
-        is_banned: Final[bool] = await self.is_user_banned(channel_id, post_id, user_id)
+        is_banned: Final[bool] = await self.is_user_banned(
+            channel_id, thread_id, user_id
+        )
         has_permissions: Final[bool] = self.model.has_thread_permissions(
-            post_id, user_id
+            thread_id, user_id
         )
 
-        options: Final[Tuple[interactions.StringSelectOption, ...]] = (
-            interactions.StringSelectOption(label="Ban", value="ban"),
-            interactions.StringSelectOption(label="Unban", value="unban"),
+        options = (
             interactions.StringSelectOption(
-                label="Share Permissions", value="share_permissions"
+                label=f"{'Unban' if is_banned else 'Ban'} User",
+                value=f"{'unban' if is_banned else 'ban'}",
+                description=f"Currently {'banned' if is_banned else 'not banned'}",
             ),
             interactions.StringSelectOption(
-                label="Revoke Permissions", value="revoke_permissions"
+                label=f"{'Revoke' if has_permissions else 'Share'} Permissions",
+                value=f"{'revoke_permissions' if has_permissions else 'share_permissions'}",
+                description=f"Currently has {'shared' if has_permissions else 'no special'} permissions",
             ),
         )
+
         select_menu: Final[interactions.StringSelectMenu] = (
             interactions.StringSelectMenu(
                 *options,
                 placeholder="Select action for user",
-                custom_id=f"manage_user:{channel_id}:{post_id}:{user_id}",
+                custom_id=f"manage_user:{channel_id}:{thread_id}:{user_id}",
             )
         )
 
@@ -1152,7 +1167,9 @@ class Threads(interactions.Extension):
 
     # List commands
 
-    @module_base.subcommand("list", sub_cmd_description="List information for current thread")
+    @module_base.subcommand(
+        "list", sub_cmd_description="List information for current thread"
+    )
     @interactions.slash_option(
         name="type",
         description="Type of information to list",
@@ -1160,9 +1177,11 @@ class Threads(interactions.Extension):
         opt_type=interactions.OptionType.STRING,
         choices=[
             interactions.SlashCommandChoice(name="Banned Users", value="banned"),
-            interactions.SlashCommandChoice(name="Thread Permissions", value="permissions"), 
-            interactions.SlashCommandChoice(name="Post Statistics", value="stats")
-        ]
+            interactions.SlashCommandChoice(
+                name="Thread Permissions", value="permissions"
+            ),
+            interactions.SlashCommandChoice(name="Post Statistics", value="stats"),
+        ],
     )
     async def list_thread_info(self, ctx: interactions.SlashContext, type: str) -> None:
         if not await self.validate_channel(ctx):
@@ -1186,7 +1205,9 @@ class Threads(interactions.Extension):
                     return
 
                 embeds = []
-                current_embed = await self.create_embed(title=f"Banned Users in <#{post_id}>")
+                current_embed = await self.create_embed(
+                    title=f"Banned Users in <#{post_id}>"
+                )
 
                 for user_id in banned_users:
                     try:
@@ -1209,7 +1230,9 @@ class Threads(interactions.Extension):
                 if current_embed.fields:
                     embeds.append(current_embed)
 
-                await self._send_paginated_response(ctx, embeds, "No banned users found.")
+                await self._send_paginated_response(
+                    ctx, embeds, "No banned users found."
+                )
 
             case "permissions":
                 users_with_permissions = self.model.thread_permissions[post_id]
@@ -1254,7 +1277,9 @@ class Threads(interactions.Extension):
                 stats = self.model.post_stats.get(post_id)
 
                 if not stats:
-                    await self.send_success(ctx, "No statistics available for this post.")
+                    await self.send_success(
+                        ctx, "No statistics available for this post."
+                    )
                     return
 
                 embed = await self.create_embed(
@@ -1276,9 +1301,7 @@ class Threads(interactions.Extension):
             for role in ctx.author.roles
         )
 
-    @module_base.subcommand(
-        "view", sub_cmd_description="View configuration files"
-    )
+    @module_base.subcommand("view", sub_cmd_description="View configuration files")
     @interactions.slash_option(
         name="type",
         description="Configuration type to view",
@@ -1566,7 +1589,31 @@ class Threads(interactions.Extension):
             return None
 
         thread = ctx.channel
-        if not await self.can_manage_post(thread, ctx.author):
+
+        if thread.parent_id == self.CONGRESS_ID:
+            author_roles = {role.id for role in ctx.author.roles}
+            target_roles = {role.id for role in member.roles}
+
+            if self.CONGRESS_MEMBER_ROLE in target_roles:
+                await self.send_error(
+                    ctx, "Cannot modify permissions for Congress members."
+                )
+                return None
+
+            if self.CONGRESS_MEMBER_ROLE in author_roles:
+                await self.send_error(
+                    ctx, "Congress members cannot manage thread permissions."
+                )
+                return None
+
+            if self.CONGRESS_MOD_ROLE not in author_roles:
+                await self.send_error(
+                    ctx,
+                    "You don't have permission to manage thread permissions in this forum.",
+                )
+                return None
+
+        elif not await self.can_manage_post(thread, ctx.author):
             await self.send_error(
                 ctx,
                 f"You can only {action.name.lower()} permissions for threads you manage.",
@@ -1736,7 +1783,33 @@ class Threads(interactions.Extension):
             return None
 
         thread = ctx.channel
-        if not await self.can_manage_post(thread, ctx.author):
+
+        if thread.parent_id == self.CONGRESS_ID:
+            author_roles = {role.id for role in ctx.author.roles}
+
+            target_roles = {role.id for role in member.roles}
+            if self.CONGRESS_MEMBER_ROLE in target_roles:
+                await self.send_error(
+                    ctx, "Congress members cannot be banned or unbanned."
+                )
+                return None
+
+            if self.CONGRESS_MEMBER_ROLE in author_roles:
+                if action == ActionType.BAN or (
+                    action == ActionType.UNBAN and member.id != ctx.author.id
+                ):
+                    await self.send_error(
+                        ctx, "Congress members can only unban themselves."
+                    )
+                    return None
+
+            elif self.CONGRESS_MOD_ROLE not in author_roles:
+                await self.send_error(
+                    ctx, "You don't have permission to manage bans in this forum."
+                )
+                return None
+
+        elif not await self.can_manage_post(thread, ctx.author):
             await self.send_error(
                 ctx,
                 f"You can only {action.name.lower()} users from threads you manage.",
@@ -2197,12 +2270,20 @@ class Threads(interactions.Extension):
         thread: interactions.ThreadChannel,
         user: interactions.Member,
     ) -> bool:
+        user_roles = {role.id for role in user.roles}
+
+        if thread.parent_id == self.CONGRESS_ID:
+            return (
+                thread.owner_id == user.id
+                or self.CONGRESS_MOD_ROLE in user_roles
+                or self.model.has_thread_permissions(str(thread.id), str(user.id))
+            )
+
         return (
             thread.owner_id == user.id
             or self.model.has_thread_permissions(str(thread.id), str(user.id))
             or any(
-                role_id in (role.id for role in user.roles)
-                and thread.parent_id in channels
+                role_id in user_roles and thread.parent_id in channels
                 for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
             )
         )
