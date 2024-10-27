@@ -1593,13 +1593,6 @@ class Threads(interactions.Extension):
 
         if thread.parent_id == self.CONGRESS_ID:
             author_roles = {role.id for role in ctx.author.roles}
-            target_roles = {role.id for role in member.roles}
-
-            if self.CONGRESS_MEMBER_ROLE in target_roles:
-                await self.send_error(
-                    ctx, "Cannot modify permissions for Congress members."
-                )
-                return None
 
             if self.CONGRESS_MEMBER_ROLE in author_roles:
                 await self.send_error(
@@ -1607,7 +1600,7 @@ class Threads(interactions.Extension):
                 )
                 return None
 
-            if self.CONGRESS_MOD_ROLE not in author_roles:
+            elif self.CONGRESS_MOD_ROLE not in author_roles:
                 await self.send_error(
                     ctx,
                     "You don't have permission to manage thread permissions in this forum.",
@@ -1787,13 +1780,6 @@ class Threads(interactions.Extension):
 
         if thread.parent_id == self.CONGRESS_ID:
             author_roles = {role.id for role in ctx.author.roles}
-
-            target_roles = {role.id for role in member.roles}
-            if self.CONGRESS_MEMBER_ROLE in target_roles:
-                await self.send_error(
-                    ctx, "Congress members cannot be banned or unbanned."
-                )
-                return None
 
             if self.CONGRESS_MEMBER_ROLE in author_roles:
                 if action == ActionType.BAN or (
@@ -2275,9 +2261,8 @@ class Threads(interactions.Extension):
 
         if thread.parent_id == self.CONGRESS_ID:
             return (
-                thread.owner_id == user.id
-                or self.CONGRESS_MOD_ROLE in user_roles
-                or self.model.has_thread_permissions(str(thread.id), str(user.id))
+                self.CONGRESS_MOD_ROLE in user_roles
+                or self.CONGRESS_MEMBER_ROLE in user_roles
             )
 
         return (
