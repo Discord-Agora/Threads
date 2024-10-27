@@ -409,7 +409,7 @@ class Threads(interactions.Extension):
         self.GUILD_ID: Final[int] = 1150630510696075404
         self.CONGRESS_ID: Final[int] = 1196707789859459132
         self.CONGRESS_MEMBER_ROLE: Final[int] = 1200254783110525010
-        self.CONGRESS_MOD_ROLE: Final[int] = 1261328613236801536
+        self.CONGRESS_MOD_ROLE: Final[int] = 1300132191883235368
         self.ROLE_CHANNEL_PERMISSIONS: Final[Dict[int, Tuple[int, ...]]] = {
             1223635198327914639: (
                 1152311220557320202,
@@ -432,6 +432,7 @@ class Threads(interactions.Extension):
             1183048643071180871,
             1213345198147637268,
             1183254117813071922,
+            1196707789859459132,
         )
         self.FEATURED_CHANNELS: Final[Tuple[int, ...]] = (1152311220557320202,)
         self.message_count_threshold: int = 200
