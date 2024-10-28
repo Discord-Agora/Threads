@@ -1,7 +1,10 @@
 ## 2024-10-28
 
 ### Added
-Implemented role-based permissions for Congress members
+- Implemented role-based permissions for Congress members
+
+### Changed
+- Refined action message handling for `ActionType.EDIT`
 
 ## 2024-10-27
 
