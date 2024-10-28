@@ -63,10 +63,11 @@ logger.add(
     filter=lambda record: (
         record["name"].startswith("extensions.github_d_com__kazuki388_s_Threads.main")
     ),
-    colorize=False,
+    colorize=None,
     serialize=False,
     backtrace=True,
     diagnose=True,
+    context=None,
     enqueue=False,
     catch=True,
     rotation="1 MB",
@@ -74,8 +75,6 @@ logger.add(
     compression="gz",
     encoding="utf-8",
     mode="a",
-    delay=False,
-    buffering=1,
 )
 
 # Model
@@ -623,9 +622,10 @@ class Threads(interactions.Extension):
         forum_ids: Sequence[int] = tuple(self.FEATURED_CHANNELS)
 
         top_posts: list[Optional[str]] = []
-        async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(self.get_top_post_id(fid)) for fid in forum_ids]
-            top_posts.extend(t.result() for t in tasks)
+        tasks = [self.get_top_post_id(fid) for fid in forum_ids]
+        for task in asyncio.as_completed(tasks):
+            result = await task
+            top_posts.append(result)
 
         updates: tuple[tuple[int, str], ...] = tuple(
             (forum_id, new_post_id)
@@ -921,16 +921,30 @@ class Threads(interactions.Extension):
     def get_notification_message(details: ActionDetails) -> str:
         cm = details.channel.mention if details.channel else "the thread"
         a = details.action
-        m = {
+
+        base_messages = {
             ActionType.LOCK: f"{cm} has been locked.",
             ActionType.UNLOCK: f"{cm} has been unlocked.",
             ActionType.DELETE: f"Your message has been deleted from {cm}.",
-            ActionType.EDIT: f"A tag has been {details.additional_info['tag_action'] if details.additional_info else 'modified'} {'to' if details.additional_info and details.additional_info['tag_action'] == 'add' else 'from'} {cm}.",
             ActionType.BAN: f"You have been banned from {cm}. If you continue to attempt to post, your comments will be deleted.",
             ActionType.UNBAN: f"You have been unbanned from {cm}.",
             ActionType.SHARE_PERMISSIONS: f"You have been granted permissions to {cm}.",
             ActionType.REVOKE_PERMISSIONS: f"Your permissions for {cm} have been revoked.",
-        }.get(a, f"An action ({a.name.lower()}) has been performed in {cm}.")
+        }
+
+        if a == ActionType.EDIT:
+            if details.additional_info and "tag_updates" in details.additional_info:
+                updates = details.additional_info["tag_updates"]
+                actions = [
+                    f"{update['Action']}ed tag '{update['Tag']}'" for update in updates
+                ]
+                return f"Tags have been modified in {cm}: {', '.join(actions)}."
+            return f"Changes have been made to {cm}."
+
+        m = base_messages.get(
+            a, f"An action ({a.name.lower()}) has been performed in {cm}."
+        )
+
         if a not in {
             ActionType.BAN,
             ActionType.UNBAN,
@@ -938,6 +952,7 @@ class Threads(interactions.Extension):
             ActionType.REVOKE_PERMISSIONS,
         }:
             m += f" Reason: {details.reason}"
+
         return m
 
     @staticmethod
@@ -2287,16 +2302,16 @@ class Threads(interactions.Extension):
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_stats(self, event: MessageCreate) -> None:
-        if any(
+        if not all(
             (
-                not (msg := event.message).guild,
-                not isinstance((chan := msg.channel), interactions.GuildForumPost),
-                (parent_id := chan.parent_id) not in self.FEATURED_CHANNELS,
+                event.message.guild,
+                isinstance(event.message.channel, interactions.GuildForumPost),
+                event.message.channel.parent_id in self.FEATURED_CHANNELS,
             )
         ):
             return
 
-        await self.increment_message_count(f"{chan.id}")
+        await self.increment_message_count("{}".format(event.message.channel.id))
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_processing(self, event: MessageCreate) -> None:
