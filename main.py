@@ -1034,8 +1034,10 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, "This command can only be used in forum posts.")
             return
 
-        if not await self.check_permissions(ctx):
+        has_perm, error_message = await self.check_permissions(ctx)
+        if not has_perm:
             logger.warning(f"Insufficient permissions for user {ctx.author.id}")
+            await self.send_error(ctx, error_message)
             return
 
         post: Final[interactions.GuildForumPost] = ctx.channel
@@ -1497,7 +1499,11 @@ class Threads(interactions.Extension):
         embeds: List[interactions.Embed] = []
         current_embed = await self.create_embed(title="Post Statistics")
 
-        for post_id, post_stats in stats.items():
+        sorted_stats = sorted(
+            stats.items(), key=lambda item: item[1].message_count, reverse=True
+        )
+
+        for post_id, post_stats in sorted_stats:
             try:
                 post = await self.bot.fetch_channel(int(post_id))
                 last_active = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1590,54 +1596,63 @@ class Threads(interactions.Extension):
             return None
 
         thread = ctx.channel
+        author = ctx.author
+
+        if thread.parent_id != self.CONGRESS_ID and thread.owner_id != author.id:
+            await self.send_error(
+                ctx, "Only the thread owner can manage thread permissions."
+            )
+            return None
 
         if thread.parent_id == self.CONGRESS_ID:
-            author_roles = {role.id for role in ctx.author.roles}
+            author_roles = {role.id for role in author.roles}
 
             if self.CONGRESS_MEMBER_ROLE in author_roles:
                 await self.send_error(
-                    ctx, "Congress members cannot manage thread permissions."
+                    ctx,
+                    f"<@&{self.CONGRESS_MEMBER_ROLE}> cannot manage thread permissions.",
                 )
                 return None
 
-            elif self.CONGRESS_MOD_ROLE not in author_roles:
+            if self.CONGRESS_MOD_ROLE not in author_roles:
                 await self.send_error(
                     ctx,
                     "You don't have permission to manage thread permissions in this forum.",
                 )
                 return None
+        else:
+            if not await self.can_manage_post(thread, author):
+                await self.send_error(
+                    ctx,
+                    f"You can only {action.name.lower()} permissions for threads you manage.",
+                )
+                return None
 
-        elif not await self.can_manage_post(thread, ctx.author):
-            await self.send_error(
-                ctx,
-                f"You can only {action.name.lower()} permissions for threads you manage.",
-            )
-            return None
-
-        thread_id, user_id = map(str, (thread.id, member.id))
+        thread_id = str(thread.id)
+        user_id = str(member.id)
 
         match action:
             case ActionType.SHARE_PERMISSIONS:
-                self.model.thread_permissions[thread_id].add(user_id)
+                self.model.thread_permissions.setdefault(thread_id, set()).add(user_id)
                 action_name = "shared"
             case ActionType.REVOKE_PERMISSIONS:
-                self.model.thread_permissions[thread_id].discard(user_id)
+                if thread_id in self.model.thread_permissions:
+                    self.model.thread_permissions[thread_id].discard(user_id)
                 action_name = "revoked"
             case _:
                 await self.send_error(ctx, "Invalid action.")
                 return None
 
         await self.model.save_thread_permissions(self.THREAD_PERMISSIONS_FILE)
-
         await self.send_success(
             ctx, f"Permissions have been {action_name} successfully."
         )
 
         return ActionDetails(
             action=action,
-            reason=f"Permissions {action_name} by {ctx.author.mention}",
+            reason=f"Permissions {action_name} by {author.mention}",
             post_name=thread.name,
-            actor=ctx.author,
+            actor=author,
             target=member,
             channel=thread,
             additional_info={
@@ -1776,40 +1791,51 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, "This command can only be used in threads.")
             return None
 
-        thread = ctx.channel
+        thread: interactions.ThreadChannel = ctx.channel
+        author_roles: Set[int] = {role.id for role in ctx.author.roles}
+        member_roles: Set[int] = {role.id for role in member.roles}
+
+        has_management_permission = any(
+            role_id in member_roles and thread.parent_id in channels
+            for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
+        )
+
+        if has_management_permission:
+            await self.send_error(
+                ctx, "You cannot ban users with management permissions."
+            )
+            return None
 
         if thread.parent_id == self.CONGRESS_ID:
-            author_roles = {role.id for role in ctx.author.roles}
-
             if self.CONGRESS_MEMBER_ROLE in author_roles:
                 if action == ActionType.BAN or (
                     action == ActionType.UNBAN and member.id != ctx.author.id
                 ):
                     await self.send_error(
-                        ctx, "Congress members can only unban themselves."
+                        ctx,
+                        f"<@&{self.CONGRESS_MEMBER_ROLE}> can only unban themselves.",
                     )
                     return None
-
             elif self.CONGRESS_MOD_ROLE not in author_roles:
                 await self.send_error(
                     ctx, "You don't have permission to manage bans in this forum."
                 )
                 return None
-
-        elif not await self.can_manage_post(thread, ctx.author):
-            await self.send_error(
-                ctx,
-                f"You can only {action.name.lower()} users from threads you manage.",
-            )
-            return None
+        else:
+            if not await self.can_manage_post(thread, ctx.author):
+                await self.send_error(
+                    ctx,
+                    f"You can only {action.name.lower()} users from threads you manage.",
+                )
+                return None
 
         if member.id == thread.owner_id:
             await self.send_error(ctx, "You cannot ban the thread owner.")
             return None
 
-        channel_id, thread_id, user_id = map(
-            str, (thread.parent_id, thread.id, member.id)
-        )
+        channel_id: str = str(thread.parent_id)
+        thread_id: str = str(thread.id)
+        user_id: str = str(member.id)
 
         async with self.ban_lock:
             banned_users = self.model.banned_users
@@ -1834,7 +1860,7 @@ class Threads(interactions.Extension):
 
         await self.model.invalidate_ban_cache(channel_id, thread_id, user_id)
 
-        action_name: Final[str] = "banned" if action == ActionType.BAN else "unbanned"
+        action_name: Final[str] = "banned" if action is ActionType.BAN else "unbanned"
         await self.send_success(ctx, f"User has been {action_name} successfully.")
 
         return ActionDetails(
@@ -2344,7 +2370,6 @@ class Threads(interactions.Extension):
             self.model.is_user_banned, channel_id, post_id, author_id
         )
 
-    @functools.lru_cache(maxsize=32)
     async def fetch_available_tags(
         self, parent_id: int
     ) -> tuple[interactions.ForumTag, ...]:
