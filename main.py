@@ -24,6 +24,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -45,8 +46,8 @@ from interactions.ext.paginators import Paginator
 from loguru import logger
 from yarl import URL
 
-BASE_DIR: Final[str] = os.path.abspath(os.path.dirname(__file__))
-LOG_FILE: Final[str] = os.path.join(BASE_DIR, "threads.log")
+BASE_DIR: str = os.path.abspath(os.path.dirname(__file__))
+LOG_FILE: str = os.path.join(BASE_DIR, "threads.log")
 
 logger.remove()
 logger.add(
@@ -106,14 +107,14 @@ class EmbedColor(Enum):
 
 @dataclass
 class ActionDetails:
-    action: Final[ActionType]
-    reason: Final[str]
-    post_name: Final[str]
-    actor: Final[interactions.Member]
-    target: Final[Optional[interactions.Member]] = None
-    result: Final[str] = "successful"
-    channel: Final[Optional[interactions.GuildForumPost]] = None
-    additional_info: Final[Optional[Mapping[str, Any]]] = None
+    action: ActionType
+    reason: str
+    post_name: str
+    actor: interactions.Member
+    target: Optional[interactions.Member] = None
+    result: str = "successful"
+    channel: Optional[interactions.GuildForumPost] = None
+    additional_info: Optional[Mapping[str, Any]] = None
 
 
 @dataclass
@@ -124,13 +125,13 @@ class PostStats:
 
 class Model:
     def __init__(self) -> None:
-        self.banned_users: Final[DefaultDict[str, DefaultDict[str, Set[str]]]] = (
-            defaultdict(lambda: defaultdict(set))
+        self.banned_users: DefaultDict[str, DefaultDict[str, Set[str]]] = defaultdict(
+            lambda: defaultdict(set)
         )
-        self.thread_permissions: Final[DefaultDict[str, Set[str]]] = defaultdict(set)
-        self.ban_cache: Final[Dict[Tuple[str, str, str], Tuple[bool, datetime]]] = {}
-        self.CACHE_DURATION: Final[timedelta] = timedelta(minutes=5)
-        self.post_stats: Final[Dict[str, PostStats]] = {}
+        self.thread_permissions: DefaultDict[str, Set[str]] = defaultdict(set)
+        self.ban_cache: Dict[Tuple[str, str, str], Tuple[bool, datetime]] = {}
+        self.CACHE_DURATION: timedelta = timedelta(minutes=5)
+        self.post_stats: Dict[str, PostStats] = {}
         self.featured_posts: Dict[str, str] = {}
         self.current_pinned_post: Optional[str] = None
 
@@ -157,7 +158,7 @@ class Model:
             )
         except FileNotFoundError:
             logger.warning(
-                f"Banned users file not found: {file_path}. Creating a new one."
+                f"Banned users file not found: {file_path}. Creating a new one"
             )
             await self.save_banned_users(file_path)
         except orjson.JSONDecodeError as e:
@@ -219,7 +220,7 @@ class Model:
             logger.info(f"Successfully loaded thread permissions from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Post permissions file not found: {file_path}. Creating a new one."
+                f"Thread permissions file not found: {file_path}. Creating a new one"
             )
             await self.save_thread_permissions(file_path)
         except Exception as e:
@@ -230,7 +231,7 @@ class Model:
             async with aiofiles.open(file_path, "rb") as file:
                 content: bytes = await file.read()
                 if not content.strip():
-                    loaded_data = {}
+                    loaded_data: Dict[str, Dict[str, Any]] = {}
                 else:
                     loaded_data: Dict[str, Dict[str, Any]] = orjson.loads(content)
 
@@ -244,7 +245,7 @@ class Model:
             logger.info(f"Successfully loaded post stats from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Post stats file not found: {file_path}. Creating a new one."
+                f"Thread stats file not found: {file_path}. Creating a new one"
             )
             await self.save_post_stats(file_path)
         except orjson.JSONDecodeError as e:
@@ -294,7 +295,7 @@ class Model:
             logger.info(f"Successfully loaded selected posts from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Selected posts file not found: {file_path}. Creating a new one."
+                f"Selected posts file not found: {file_path}. Creating a new one"
             )
             await self.save_featured_posts(file_path)
         except orjson.JSONDecodeError as json_err:
@@ -305,8 +306,8 @@ class Model:
             )
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
-        cache_key: Final[Tuple[str, str, str]] = (channel_id, post_id, user_id)
-        current_time: Final[datetime] = datetime.now()
+        cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
+        current_time: datetime = datetime.now()
 
         if cache_key in self.ban_cache:
             is_banned, timestamp = self.ban_cache[cache_key]
@@ -387,30 +388,28 @@ def log_action(func):
 
 class Threads(interactions.Extension):
     def __init__(self, bot: interactions.Client) -> None:
-        self.bot: Final[interactions.Client] = bot
-        self.model: Final[Model] = Model()
-        self.ban_lock: Final[asyncio.Lock] = asyncio.Lock()
-        self.BANNED_USERS_FILE: Final[str] = os.path.join(
+        self.bot: interactions.Client = bot
+        self.model: Model = Model()
+        self.ban_lock: asyncio.Lock = asyncio.Lock()
+        self.BANNED_USERS_FILE: str = os.path.join(
             os.path.dirname(__file__), "banned_users.json"
         )
-        self.THREAD_PERMISSIONS_FILE: Final[str] = os.path.join(
+        self.THREAD_PERMISSIONS_FILE: str = os.path.join(
             os.path.dirname(__file__), "thread_permissions.json"
         )
-        self.POST_STATS_FILE: Final[str] = os.path.join(BASE_DIR, "post_stats.json")
-        self.FEATURED_POSTS_FILE: Final[str] = os.path.join(
-            BASE_DIR, "featured_posts.json"
-        )
-        self.LOG_CHANNEL_ID: Final[int] = 1166627731916734504
-        self.LOG_FORUM_ID: Final[int] = 1159097493875871784
-        self.LOG_POST_ID: Final[int] = 1279118293936111707
-        self.POLL_FORUM_ID: Final[int] = 1155914521907568740
-        self.TAIWAN_ROLE_ID: Final[int] = 1261328929013108778
-        self.THREADS_ROLE_ID: Final[int] = 1223635198327914639
-        self.GUILD_ID: Final[int] = 1150630510696075404
-        self.CONGRESS_ID: Final[int] = 1196707789859459132
-        self.CONGRESS_MEMBER_ROLE: Final[int] = 1200254783110525010
-        self.CONGRESS_MOD_ROLE: Final[int] = 1300132191883235368
-        self.ROLE_CHANNEL_PERMISSIONS: Final[Dict[int, Tuple[int, ...]]] = {
+        self.POST_STATS_FILE: str = os.path.join(BASE_DIR, "post_stats.json")
+        self.FEATURED_POSTS_FILE: str = os.path.join(BASE_DIR, "featured_posts.json")
+        self.LOG_CHANNEL_ID: int = 1166627731916734504
+        self.LOG_FORUM_ID: int = 1159097493875871784
+        self.LOG_POST_ID: int = 1279118293936111707
+        self.POLL_FORUM_ID: int = 1155914521907568740
+        self.TAIWAN_ROLE_ID: int = 1261328929013108778
+        self.THREADS_ROLE_ID: int = 1223635198327914639
+        self.GUILD_ID: int = 1150630510696075404
+        self.CONGRESS_ID: int = 1196707789859459132
+        self.CONGRESS_MEMBER_ROLE: int = 1200254783110525010
+        self.CONGRESS_MOD_ROLE: int = 1300132191883235368
+        self.ROLE_CHANNEL_PERMISSIONS: Dict[int, Tuple[int, ...]] = {
             1223635198327914639: (
                 1152311220557320202,
                 1168209956802142360,
@@ -422,7 +421,7 @@ class Threads(interactions.Extension):
             ),
             1213490790341279754: (1185259262654562355,),
         }
-        self.ALLOWED_CHANNELS: Final[Tuple[int, ...]] = (
+        self.ALLOWED_CHANNELS: Tuple[int, ...] = (
             1152311220557320202,
             1168209956802142360,
             1230197011761074340,
@@ -434,11 +433,11 @@ class Threads(interactions.Extension):
             1183254117813071922,
             1196707789859459132,
         )
-        self.FEATURED_CHANNELS: Final[Tuple[int, ...]] = (1152311220557320202,)
+        self.FEATURED_CHANNELS: Tuple[int, ...] = (1152311220557320202,)
         self.message_count_threshold: int = 200
         self.rotation_interval: timedelta = timedelta(hours=23)
         asyncio.create_task(self._initialize_data())
-        self.url_cache: Final[TTLCache] = TTLCache(maxsize=1024, ttl=3600)
+        self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
         ) - timedelta(days=8)
@@ -460,66 +459,82 @@ class Threads(interactions.Extension):
         await self.model.save_post_stats(self.POST_STATS_FILE)
 
     async def update_featured_posts_tags(self) -> None:
-        logger.info(f"Current message threshold: {self.message_count_threshold}")
-        logger.info(f"Current featured posts: {self.model.featured_posts}")
+        logger.info(
+            "Updating featured posts tags with threshold: %d",
+            self.message_count_threshold,
+        )
+        logger.debug("Current featured posts: %s", self.model.featured_posts)
 
-        tasks = [
-            self.add_tag_to_post(post_id, "精華帖子 Top Picks")
+        eligible_posts = {
+            post_id
             for forum_id in self.FEATURED_CHANNELS
             if (post_id := self.model.featured_posts.get(str(forum_id)))
             and (stats := self.model.post_stats.get(post_id))
             and stats.message_count >= self.message_count_threshold
-        ]
+        }
 
-        if tasks:
-            await asyncio.gather(*tasks)
+        for post_id in eligible_posts:
+            try:
+                await self.add_tag_to_post(post_id, "精華帖子 Top Picks")
+            except Exception as e:
+                logger.error("Failed to add tag to post %s: %s", post_id, e)
+                continue
+
+        logger.info("Featured posts tags update completed successfully")
 
     async def add_tag_to_post(self, post_id: str, tag_name: str) -> None:
         try:
-            post_id_int = int(post_id)
-            channel = await self.bot.fetch_channel(post_id_int)
+            channel: interactions.GuildForumPost = await self.bot.fetch_channel(
+                int(post_id)
+            )
             if not isinstance(channel, interactions.GuildForumPost):
                 logger.error(f"Channel {post_id} is not a forum post.")
                 return
 
-            forum = await self.bot.fetch_channel(channel.parent_id)
+            forum: interactions.GuildForum = await self.bot.fetch_channel(
+                channel.parent_id
+            )
             if not isinstance(forum, interactions.GuildForum):
                 logger.error(f"Parent channel {channel.parent_id} is not a forum.")
                 return
 
-            current_tag_ids = {tag.id for tag in channel.applied_tags}
-            available_tags = await self.fetch_available_tags(forum.id)
+            current_tag_ids: frozenset[int] = frozenset(
+                tag.id for tag in channel.applied_tags
+            )
+            available_tags: list[Any] = list(await self.fetch_available_tags(forum.id))
 
-            tag = next((tag for tag in available_tags if tag.name == tag_name), None)
+            if tag := next(filter(lambda t: t.name == tag_name, available_tags), None):
+                if tag.id not in current_tag_ids:
+                    await channel.edit(applied_tags=[*current_tag_ids, tag.id])
+                    logger.info(f"Added tag `{tag_name}` to post {post_id}.")
+                    return
+            logger.debug(
+                f"Tag `{tag_name}` already exists on post {post_id} or not found."
+            )
 
-            if tag and tag.id not in current_tag_ids:
-                updated_tags = (*current_tag_ids, tag.id)
-                await channel.edit(applied_tags=list(updated_tags))
-                logger.info(f"Added tag '{tag_name}' to post {post_id}.")
-            else:
-                logger.debug(
-                    f"Tag '{tag_name}' already exists on post {post_id} or not found."
-                )
-
-        except ValueError:
+        except ValueError as e:
             logger.error(f"Invalid post ID format: {post_id}")
         except Exception as e:
             logger.error(
-                f"Unexpected error adding tag '{tag_name}' to post {post_id}: {e}",
+                f"Unexpected error adding tag `{tag_name}` to post {post_id}: {e}",
                 exc_info=True,
             )
 
     async def pin_featured_post(self, new_post_id: str) -> None:
         try:
-            new_post = await self.bot.fetch_channel(int(new_post_id))
+            new_post: interactions.GuildForumPost = await self.bot.fetch_channel(
+                int(new_post_id)
+            )
             if not isinstance(new_post, interactions.GuildForumPost):
                 logger.error(f"Channel {new_post_id} is not a forum post.")
                 return
 
             if self.model.current_pinned_post:
                 try:
-                    old_post = await self.bot.fetch_channel(
-                        int(self.model.current_pinned_post)
+                    old_post: interactions.GuildForumPost = (
+                        await self.bot.fetch_channel(
+                            int(self.model.current_pinned_post)
+                        )
                     )
                     if (
                         isinstance(old_post, interactions.GuildForumPost)
@@ -534,25 +549,24 @@ class Threads(interactions.Extension):
                             logger.error(f"Failed to unpin old thread: {e}")
                             return
 
-                        for attempt in range(5):
-                            try:
-                                updated_old_post = await self.bot.fetch_channel(
+                        for _ in range(5):
+                            updated_old_post: interactions.GuildForumPost = (
+                                await self.bot.fetch_channel(
                                     int(self.model.current_pinned_post)
                                 )
-                                if not updated_old_post.pinned:
-                                    logger.info(
-                                        f"Confirmed unpinning of old thread {self.model.current_pinned_post}."
-                                    )
-                                    break
-                                await asyncio.sleep(1)
-                            except Exception as e:
-                                logger.error(f"Error checking pin status: {e}")
-                                await asyncio.sleep(1)
+                            )
+                            if not updated_old_post.pinned:
+                                logger.info(
+                                    f"Confirmed unpinning of old thread {self.model.current_pinned_post}."
+                                )
+                                break
+                            await asyncio.sleep(1)
                         else:
                             logger.error(
                                 "Failed to unpin the old thread after several attempts."
                             )
                             return
+
                 except ValueError:
                     logger.error(
                         f"Invalid current pinned post ID: {self.model.current_pinned_post}"
@@ -564,43 +578,39 @@ class Threads(interactions.Extension):
                     )
 
             if not new_post.pinned:
-                try:
-                    await new_post.pin(reason="New featured post.")
-                    await asyncio.sleep(1)
+                await new_post.pin(reason="New featured post.")
+                await asyncio.sleep(1)
 
-                    updated_post = await self.bot.fetch_channel(int(new_post_id))
-                    if (
-                        isinstance(updated_post, interactions.GuildForumPost)
-                        and updated_post.pinned
-                    ):
-                        self.model.current_pinned_post = new_post_id
-                        logger.info(f"Successfully pinned new thread {new_post_id}.")
-                    else:
-                        logger.error(f"Failed to pin new thread {new_post_id}.")
-                except HTTPException as e:
-                    logger.error(f"Failed to pin new thread: {e}")
+                updated_post: interactions.GuildForumPost = (
+                    await self.bot.fetch_channel(int(new_post_id))
+                )
+                if (
+                    isinstance(updated_post, interactions.GuildForumPost)
+                    and updated_post.pinned
+                ):
+                    self.model.current_pinned_post = new_post_id
+                    logger.info(f"Successfully pinned new thread {new_post_id}.")
+                else:
+                    logger.error(f"Failed to pin new thread {new_post_id}.")
                     return
             else:
                 self.model.current_pinned_post = new_post_id
-                logger.info(f"Thread {new_post_id} was already pinned.")
+                logger.info(f"Thread {new_post_id} was already pinned")
 
-            try:
-                active_threads = await self.bot.http.list_active_threads(
-                    guild_id=self.GUILD_ID
+            active_threads: dict = await self.bot.http.list_active_threads(
+                guild_id=self.GUILD_ID
+            )
+            pinned_threads: list = [
+                thread
+                for thread in active_threads.get("threads", [])
+                if thread.get("parent_id") == str(new_post.parent_id)
+                and thread.get("pinned", False)
+            ]
+
+            if len(pinned_threads) > 1:
+                logger.warning(
+                    f"Multiple threads pinned in channel {new_post.parent_id}"
                 )
-                pinned_threads = [
-                    thread
-                    for thread in active_threads.get("threads", [])
-                    if thread.get("parent_id") == str(new_post.parent_id)
-                    and thread.get("pinned", False)
-                ]
-
-                if len(pinned_threads) > 1:
-                    logger.warning(
-                        f"Multiple threads pinned in channel {new_post.parent_id}."
-                    )
-            except Exception as e:
-                logger.error(f"Error checking active threads: {e}")
 
         except ValueError:
             logger.error(f"Invalid post ID format: {new_post_id}")
@@ -610,60 +620,89 @@ class Threads(interactions.Extension):
             logger.error(f"Unexpected error pinning new thread: {e}", exc_info=True)
 
     async def update_featured_posts_rotation(self) -> None:
-        forum_ids = list(self.FEATURED_CHANNELS)
-        tasks = [self.get_top_post_id(forum_id) for forum_id in forum_ids]
-        new_posts = await asyncio.gather(*tasks)
+        forum_ids: Sequence[int] = tuple(self.FEATURED_CHANNELS)
 
-        rotation_tasks = []
-        updated = False
+        top_posts: list[Optional[str]] = []
+        async with asyncio.TaskGroup() as tg:
+            tasks = [tg.create_task(self.get_top_post_id(fid)) for fid in forum_ids]
+            top_posts.extend(t.result() for t in tasks)
 
-        for forum_id, new_top_post_id in zip(forum_ids, new_posts):
-            current_featured_post_id = self.model.featured_posts.get(str(forum_id))
+        updates: tuple[tuple[int, str], ...] = tuple(
+            (forum_id, new_post_id)
+            for forum_id, new_post_id in zip(forum_ids, top_posts)
+            if new_post_id
+            and new_post_id != self.model.featured_posts.get(str(forum_id))
+        )
 
-            if new_top_post_id and current_featured_post_id != new_top_post_id:
-                logger.info(
-                    f"Rotating featured post for forum {forum_id} from {current_featured_post_id} to {new_top_post_id}."
-                )
-                self.model.featured_posts[str(forum_id)] = new_top_post_id
-                rotation_tasks.extend(
+        if not updates:
+            return
+
+        featured_posts_update = {
+            str(forum_id): new_post_id for forum_id, new_post_id in updates
+        }
+        self.model.featured_posts.update(featured_posts_update)
+
+        for forum_id, new_post_id in updates:
+            current = self.model.featured_posts.get(str(forum_id))
+            logger.info(
+                "".join(
                     [
-                        self.model.save_featured_posts(self.FEATURED_POSTS_FILE),
-                        self.update_featured_posts_tags(),
-                        self.pin_featured_post(new_top_post_id),
+                        "Rotating featured post for forum ",
+                        str(forum_id),
+                        " from ",
+                        str(current),
+                        " to ",
+                        new_post_id,
                     ]
                 )
-                updated = True
+            )
 
-        if rotation_tasks and updated:
-            await asyncio.gather(*rotation_tasks)
-            logger.info("Completed featured posts rotation.")
+        try:
+            await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
+            await self.update_featured_posts_tags()
+
+            for _, post_id in updates:
+                await self.pin_featured_post(post_id)
+
+            logger.info("Completed featured posts rotation successfully")
+
+        except Exception as e:
+            logger.error(
+                f"Failed to complete featured posts rotation: {e}", exc_info=True
+            )
+            raise
 
     async def get_top_post_id(self, forum_id: int) -> Optional[str]:
         try:
-            forum_channel = await self.bot.fetch_channel(forum_id)
+            forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
+                forum_id
+            )
             if not isinstance(forum_channel, interactions.GuildForum):
-                logger.warning(f"Channel ID {forum_id} is not a forum channel.")
+                logger.warning(f"Channel ID {forum_id} is not a forum channel")
                 return None
 
-            threads_response = await self.bot.http.list_active_threads(
+            threads_response: Dict[str, Any] = await self.bot.http.list_active_threads(
                 guild_id=self.GUILD_ID
             )
-            active_threads = threads_response.get("threads", [])
 
-            valid_threads = (
+            forum_id_str = str(forum_id)
+            stats_dict: Dict[str, PostStats] = self.model.post_stats
+
+            valid_threads: List[Dict[str, Any]] = [
                 thread
-                for thread in active_threads
-                if str(thread.get("id")) in self.model.post_stats
-                and str(thread.get("parent_id")) == str(forum_id)
+                for thread in threads_response.get("threads", [])
+                if (thread_id := str(thread.get("id"))) in stats_dict
+                and str(thread.get("parent_id")) == forum_id_str
+            ]
+
+            if not valid_threads:
+                return None
+
+            top_thread: Dict[str, Any] = max(
+                valid_threads, key=(lambda t: stats_dict[str(t["id"])].message_count)
             )
 
-            top_thread = max(
-                valid_threads,
-                key=lambda t: self.model.post_stats[str(t["id"])].message_count,
-                default=None,
-            )
-
-            return str(top_thread["id"]) if top_thread else None
+            return str(top_thread["id"])
 
         except Exception as e:
             logger.error(
@@ -674,7 +713,7 @@ class Threads(interactions.Extension):
 
     async def adjust_thresholds(self) -> None:
         current_time: datetime = datetime.now(timezone.utc)
-        post_stats: list[PostStats] = list(self.model.post_stats.values())
+        post_stats: tuple[PostStats, ...] = tuple(self.model.post_stats.values())
 
         if not post_stats:
             logger.info("No posts available to adjust thresholds.")
@@ -684,11 +723,11 @@ class Threads(interactions.Extension):
         total_messages: int = sum(stat.message_count for stat in post_stats)
         average_messages: float = total_messages / total_posts
 
-        self.message_count_threshold = math.floor(average_messages)
+        self.message_count_threshold = int(average_messages)
 
         one_day_ago: datetime = current_time - timedelta(days=1)
         recent_activity: int = sum(
-            1 for stat in post_stats if stat.last_activity >= one_day_ago
+            stat.last_activity >= one_day_ago for stat in post_stats
         )
 
         self.rotation_interval = (
@@ -697,18 +736,17 @@ class Threads(interactions.Extension):
             else timedelta(hours=48) if recent_activity < 10 else timedelta(hours=24)
         )
 
-        activity_threshold: Final[int] = 50
-        adjustment_period: Final[timedelta] = timedelta(days=7)
-        minimum_threshold: Final[int] = 10
+        activity_threshold: int = 50
+        adjustment_period: timedelta = timedelta(days=7)
+        minimum_threshold: int = 10
 
         if (
             average_messages < activity_threshold
             and (current_time - self.last_threshold_adjustment) > adjustment_period
         ):
-
             self.rotation_interval = timedelta(hours=12)
             self.message_count_threshold = max(
-                minimum_threshold, self.message_count_threshold // 2
+                minimum_threshold, self.message_count_threshold >> 1
             )
             self.last_threshold_adjustment = current_time
 
@@ -728,11 +766,9 @@ class Threads(interactions.Extension):
         description: str = "",
         color: Union[EmbedColor, int] = EmbedColor.INFO,
     ) -> interactions.Embed:
-        color_value: Final[int] = (
-            color.value if isinstance(color, EmbedColor) else color
-        )
+        color_value: int = color.value if isinstance(color, EmbedColor) else color
 
-        embed: Final[interactions.Embed] = interactions.Embed(
+        embed: interactions.Embed = interactions.Embed(
             title=title, description=description, color=color_value
         )
 
@@ -768,85 +804,83 @@ class Threads(interactions.Extension):
 
     async def log_action_internal(self, details: ActionDetails) -> None:
         logger.debug(f"log_action_internal called for action: {details.action}")
-        timestamp: Final[int] = int(datetime.now(timezone.utc).timestamp())
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        action_name = details.action.name.capitalize()
 
-        log_embed: Final[interactions.Embed] = await self.create_embed(
-            title=f"Action Log: {details.action.name.capitalize()}",
+        log_embed = await self.create_embed(
+            title=f"Action Log: {action_name}",
             color=self.get_action_color(details.action),
         )
 
-        log_embed.add_field(name="Actor", value=details.actor.mention, inline=True)
-        log_embed.add_field(
-            name="Post",
-            value=f"{details.channel.mention}",
-            inline=True,
+        fields = [
+            ("Actor", details.actor.mention if details.actor else "Unknown", True),
+            (
+                "Thread",
+                f"{details.channel.mention if details.channel else 'Unknown'}",
+                True,
+            ),
+            ("Time", f"<t:{timestamp}:F> (<t:{timestamp}:R>)", True),
+            *(
+                [
+                    (
+                        "Target",
+                        details.target.mention if details.target else "Unknown",
+                        True,
+                    )
+                ]
+                if details.target
+                else []
+            ),
+            ("Result", details.result.capitalize(), True),
+            ("Reason", details.reason, False),
+        ] + (
+            [
+                (
+                    "Additional Info",
+                    self.format_additional_info(details.additional_info),
+                    False,
+                )
+            ]
+            if details.additional_info
+            else []
         )
-        log_embed.add_field(
-            name="Time", value=f"<t:{timestamp}:F> (<t:{timestamp}:R>)", inline=True
-        )
+        for name, value, inline in fields:
+            log_embed.add_field(name=name, value=value, inline=inline)
 
-        if details.target:
-            log_embed.add_field(
-                name="Target", value=details.target.mention, inline=True
-            )
+        log_channel = await self.bot.fetch_channel(self.LOG_CHANNEL_ID)
+        log_forum = await self.bot.fetch_channel(self.LOG_FORUM_ID)
+        log_post = await log_forum.fetch_post(self.LOG_POST_ID)
 
-        log_embed.add_field(
-            name="Result", value=details.result.capitalize(), inline=True
-        )
-        log_embed.add_field(name="Reason", value=details.reason, inline=False)
-
-        if details.additional_info:
-            formatted_info: Final[str] = self.format_additional_info(
-                details.additional_info
-            )
-            log_embed.add_field(
-                name="Additional Info", value=formatted_info, inline=False
-            )
-
-        tasks: List[Coroutine] = []
-
-        log_channel, log_forum = await asyncio.gather(
-            self.bot.fetch_channel(self.LOG_CHANNEL_ID),
-            self.bot.fetch_channel(self.LOG_FORUM_ID),
-        )
-        log_post: Final[interactions.GuildForumPost] = await log_forum.fetch_post(
-            self.LOG_POST_ID
-        )
-
-        if log_post.archived:
-            tasks.append(log_post.edit(archived=False))
-
-        log_key: Final[str] = f"{details.action}_{details.post_name}_{timestamp}"
-        if hasattr(self, "_last_log_key") and self._last_log_key == log_key:
+        log_key = f"{details.action}_{details.post_name}_{timestamp}"
+        if getattr(self, "_last_log_key", None) == log_key:
             logger.warning(f"Duplicate log detected: {log_key}")
             return
-
         self._last_log_key = log_key
 
-        tasks.extend(
-            [
-                log_post.send(embeds=[log_embed]),
-                log_channel.send(embeds=[log_embed]),
-            ]
-        )
+        if log_post.archived:
+            await log_post.edit(archived=False)
+
+        await log_post.send(embeds=[log_embed])
+        await log_channel.send(embeds=[log_embed])
 
         if details.target and not details.target.bot:
-            dm_embed: Final[interactions.Embed] = await self.create_embed(
-                title=f"{details.action.name.capitalize()} Notification",
+            dm_embed = await self.create_embed(
+                title=f"{action_name} Notification",
                 description=self.get_notification_message(details),
                 color=self.get_action_color(details.action),
             )
-
-            components: List[interactions.Button] = []
-            if details.action == ActionType.LOCK:
-                appeal_button: Final[interactions.Button] = interactions.Button(
-                    style=interactions.ButtonStyle.URL,
-                    label="Appeal",
-                    url="https://discord.com/channels/1150630510696075404/1230132503273013358",
-                )
-                components.append(appeal_button)
-
-            if details.action in {
+            components = (
+                [
+                    interactions.Button(
+                        style=interactions.ButtonStyle.URL,
+                        label="Appeal",
+                        url="https://discord.com/channels/1150630510696075404/1230132503273013358",
+                    )
+                ]
+                if details.action == ActionType.LOCK
+                else []
+            )
+            actions_set = {
                 ActionType.LOCK,
                 ActionType.UNLOCK,
                 ActionType.DELETE,
@@ -854,14 +888,13 @@ class Threads(interactions.Extension):
                 ActionType.UNBAN,
                 ActionType.SHARE_PERMISSIONS,
                 ActionType.REVOKE_PERMISSIONS,
-            }:
-                tasks.append(self.send_dm(details.target, dm_embed, components))
-
-        await asyncio.gather(*tasks)
+            }
+            if details.action in actions_set:
+                await self.send_dm(details.target, dm_embed, components)
 
     @staticmethod
     def get_action_color(action: ActionType) -> int:
-        color_mapping: Final[Dict[ActionType, EmbedColor]] = {
+        color_mapping: Dict[ActionType, EmbedColor] = {
             ActionType.LOCK: EmbedColor.WARN,
             ActionType.BAN: EmbedColor.ERROR,
             ActionType.DELETE: EmbedColor.WARN,
@@ -886,62 +919,48 @@ class Threads(interactions.Extension):
 
     @staticmethod
     def get_notification_message(details: ActionDetails) -> str:
-        channel_mention: Final[str] = (
-            details.channel.mention if details.channel else "the thread"
-        )
-
-        notification_messages: Final[Dict[ActionType, Callable[[], str]]] = {
-            ActionType.LOCK: lambda: f"{channel_mention} has been locked.",
-            ActionType.UNLOCK: lambda: f"{channel_mention} has been unlocked.",
-            ActionType.DELETE: lambda: f"Your message has been deleted from {channel_mention}.",
-            ActionType.EDIT: lambda: (
-                f"A tag has been {details.additional_info.get('tag_action', 'modified')} "
-                f"{'to' if details.additional_info.get('tag_action') == 'add' else 'from'} "
-                f"{channel_mention}."
-            ),
-            ActionType.BAN: lambda: f"You have been banned from {channel_mention}. If you continue to attempt to post, your comments will be deleted.",
-            ActionType.UNBAN: lambda: f"You have been unbanned from {channel_mention}.",
-            ActionType.SHARE_PERMISSIONS: lambda: f"You have been granted permissions to {channel_mention}.",
-            ActionType.REVOKE_PERMISSIONS: lambda: f"Your permissions for {channel_mention} have been revoked.",
-        }
-
-        message: str = notification_messages.get(
-            details.action,
-            lambda: f"An action ({details.action.name.lower()}) has been performed in {channel_mention}.",
-        )()
-
-        if details.action not in {
+        cm = details.channel.mention if details.channel else "the thread"
+        a = details.action
+        m = {
+            ActionType.LOCK: f"{cm} has been locked.",
+            ActionType.UNLOCK: f"{cm} has been unlocked.",
+            ActionType.DELETE: f"Your message has been deleted from {cm}.",
+            ActionType.EDIT: f"A tag has been {details.additional_info['tag_action'] if details.additional_info else 'modified'} {'to' if details.additional_info and details.additional_info['tag_action'] == 'add' else 'from'} {cm}.",
+            ActionType.BAN: f"You have been banned from {cm}. If you continue to attempt to post, your comments will be deleted.",
+            ActionType.UNBAN: f"You have been unbanned from {cm}.",
+            ActionType.SHARE_PERMISSIONS: f"You have been granted permissions to {cm}.",
+            ActionType.REVOKE_PERMISSIONS: f"Your permissions for {cm} have been revoked.",
+        }.get(a, f"An action ({a.name.lower()}) has been performed in {cm}.")
+        if a not in {
             ActionType.BAN,
             ActionType.UNBAN,
             ActionType.SHARE_PERMISSIONS,
             ActionType.REVOKE_PERMISSIONS,
         }:
-            message += f" Reason: {details.reason}"
-
-        return message
+            m += f" Reason: {details.reason}"
+        return m
 
     @staticmethod
     def format_additional_info(info: Mapping[str, Any]) -> str:
-        formatted: List[str] = []
-        for key, value in info.items():
-            if isinstance(value, list) and value and isinstance(value[0], dict):
-                formatted.append(f"**{key.replace('_', ' ').title()}**:")
-                formatted.extend(
-                    f"• {k}: {v}" for item in value for k, v in item.items()
-                )
-            else:
-                formatted.append(f"**{key.replace('_', ' ').title()}**: {value}")
-        return "\n".join(formatted)
+        return "\n".join(
+            (
+                f"**{k.replace('_', ' ').title()}**:\n"
+                + "\n".join(f"- {ik}: {iv}" for d in v for ik, iv in d.items())
+                if isinstance(v, list) and v and isinstance(v[0], dict)
+                else f"**{k.replace('_', ' ').title()}**: {v}"
+            )
+            for k, v in info.items()
+        )
 
     # Command methods
 
-    module_base: Final[interactions.SlashCommand] = interactions.SlashCommand(
+    module_base: interactions.SlashCommand = interactions.SlashCommand(
         name="threads", description="Threads commands"
     )
 
     @module_base.subcommand("top", sub_cmd_description="Return to the top")
     async def navigate_to_top_post(self, ctx: interactions.SlashContext) -> None:
-        thread: Final[Union[interactions.TextChannel, interactions.ThreadChannel]] = (
+        thread: Union[interactions.TextChannel, interactions.ThreadChannel] = (
             ctx.channel
         )
         if message_url := await self.fetch_oldest_message_url(thread):
@@ -984,19 +1003,23 @@ class Threads(interactions.Extension):
         self, ctx: interactions.ContextMenuContext
     ) -> Optional[ActionDetails]:
         if not isinstance(ctx.channel, interactions.ThreadChannel):
-            await self.send_error(ctx, "This command can only be used in threads.")
-            return None
-
-        post: Final[interactions.ThreadChannel] = ctx.channel
-        message: Final[interactions.Message] = ctx.target
-
-        if not await self.can_manage_message(post, ctx.author, message):
             await self.send_error(
-                ctx, "You don't have permission to manage this message."
+                ctx,
+                "This command can only be used in threads. Please try this action in a thread channel instead.",
             )
             return None
 
-        options: Final[Tuple[interactions.StringSelectOption, ...]] = (
+        post: interactions.ThreadChannel = ctx.channel
+        message: interactions.Message = ctx.target
+
+        if not await self.can_manage_message(post, ctx.author, message):
+            await self.send_error(
+                ctx,
+                "You don't have sufficient permissions to manage this message. You need to be either a moderator or the message author.",
+            )
+            return None
+
+        options: Tuple[interactions.StringSelectOption, ...] = (
             interactions.StringSelectOption(
                 label="Delete Message",
                 value="delete",
@@ -1009,21 +1032,20 @@ class Threads(interactions.Extension):
             ),
         )
 
-        select_menu: Final[interactions.StringSelectMenu] = (
-            interactions.StringSelectMenu(
-                *options,
-                placeholder="Select action for message",
-                custom_id=f"message_action:{message.id}",
-            )
+        select_menu: interactions.StringSelectMenu = interactions.StringSelectMenu(
+            *options,
+            placeholder="Select action for message",
+            custom_id=f"message_action:{message.id}",
         )
 
-        embed: Final[interactions.Embed] = await self.create_embed(
+        embed: interactions.Embed = await self.create_embed(
             title="Message Actions",
             description="Select an action to perform on this message.",
             color=EmbedColor.INFO,
         )
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
+        return None
 
     @interactions.message_context_menu(name="Tags in Post")
     @log_action
@@ -1040,9 +1062,9 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, error_message)
             return
 
-        post: Final[interactions.GuildForumPost] = ctx.channel
+        post: interactions.GuildForumPost = ctx.channel
         try:
-            available_tags: Final[Tuple[interactions.ForumTag, ...]] = (
+            available_tags: Tuple[interactions.ForumTag, ...] = (
                 await self.fetch_available_tags(post.parent_id)
             )
             logger.info(f"Available tags for post {post.id}: {available_tags}")
@@ -1053,10 +1075,10 @@ class Threads(interactions.Extension):
             )
             return
 
-        current_tag_ids: Final[Set[int]] = {tag.id for tag in post.applied_tags}
+        current_tag_ids: Set[int] = {tag.id for tag in post.applied_tags}
         logger.info(f"Current tag IDs for post {post.id}: {current_tag_ids}")
 
-        options: Final[Tuple[interactions.StringSelectOption, ...]] = tuple(
+        options: Tuple[interactions.StringSelectOption, ...] = tuple(
             interactions.StringSelectOption(
                 label=f"{'Remove' if tag.id in current_tag_ids else 'Add'}: {tag.name}",
                 value=f"{'remove' if tag.id in current_tag_ids else 'add'}:{tag.id}",
@@ -1066,18 +1088,16 @@ class Threads(interactions.Extension):
         )
         logger.info(f"Created {len(options)} options for select menu")
 
-        select_menu: Final[interactions.StringSelectMenu] = (
-            interactions.StringSelectMenu(
-                *options,
-                placeholder="Select tags to add or remove",
-                custom_id=f"manage_tags:{post.id}",
-                min_values=1,
-                max_values=len(options),
-            )
+        select_menu: interactions.StringSelectMenu = interactions.StringSelectMenu(
+            *options,
+            placeholder="Select tags to add or remove",
+            custom_id=f"manage_tags:{post.id}",
+            min_values=1,
+            max_values=len(options),
         )
         logger.info(f"Created select menu with custom_id: manage_tags:{post.id}")
 
-        embed: Final[interactions.Embed] = await self.create_embed(
+        embed: interactions.Embed = await self.create_embed(
             title="Tags in Post",
             description="Select tags to add or remove from this post. You can select multiple tags at once.",
             color=EmbedColor.INFO,
@@ -1103,7 +1123,8 @@ class Threads(interactions.Extension):
     ) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(
-                ctx, "This command can only be used in specific threads."
+                ctx,
+                "This command can only be used in specific forum threads. Please try this command in a valid thread.",
             )
             return
 
@@ -1111,31 +1132,33 @@ class Threads(interactions.Extension):
         target_user = ctx.target
 
         if target_user.id == self.bot.user.id:
-            await self.send_error(ctx, "You cannot manage the bot.")
+            await self.send_error(
+                ctx,
+                "You cannot manage the bot's permissions or status in threads.",
+            )
             return
 
         if target_user.id == ctx.author.id and self.CONGRESS_MEMBER_ROLE not in {
             role.id for role in ctx.author.roles
         }:
-            await self.send_error(ctx, "Only Congress members can manage themselves.")
+            await self.send_error(
+                ctx,
+                f"Only <@&{self.CONGRESS_MEMBER_ROLE}> have permission to manage their own status in threads. Please contact a <@&{self.CONGRESS_MEMBER_ROLE}> for assistance.",
+            )
             return
 
         if not await self.can_manage_post(thread, ctx.author):
             await self.send_error(
                 ctx,
-                "You don't have permission to manage users in this thread.",
+                "You do not have the required permissions to manage users in this thread. Please ensure you have the correct role or permissions.",
             )
             return
 
         channel_id, thread_id, user_id = map(
             str, (thread.parent_id, thread.id, target_user.id)
         )
-        is_banned: Final[bool] = await self.is_user_banned(
-            channel_id, thread_id, user_id
-        )
-        has_permissions: Final[bool] = self.model.has_thread_permissions(
-            thread_id, user_id
-        )
+        is_banned = await self.is_user_banned(channel_id, thread_id, user_id)
+        has_permissions = self.model.has_thread_permissions(thread_id, user_id)
 
         options = (
             interactions.StringSelectOption(
@@ -1150,18 +1173,16 @@ class Threads(interactions.Extension):
             ),
         )
 
-        select_menu: Final[interactions.StringSelectMenu] = (
-            interactions.StringSelectMenu(
-                *options,
-                placeholder="Select action for user",
-                custom_id=f"manage_user:{channel_id}:{thread_id}:{user_id}",
-            )
+        select_menu: interactions.StringSelectMenu = interactions.StringSelectMenu(
+            *options,
+            placeholder="Select action for user",
+            custom_id=f"manage_user:{channel_id}:{thread_id}:{user_id}",
         )
 
-        embed: Final[interactions.Embed] = await self.create_embed(
-            title="User in Post",
+        embed: interactions.Embed = await self.create_embed(
+            title="User in Thread",
             description=f"Select action for {target_user.mention}:\n"
-            f"Current status: {'Banned' if is_banned else 'Not banned'} in this post.\n"
+            f"Current status: {'Banned' if is_banned else 'Not banned'} in this thread.\n"
             f"Permissions: {'Shared' if has_permissions else 'Not shared'}",
             color=EmbedColor.INFO,
         )
@@ -1188,12 +1209,16 @@ class Threads(interactions.Extension):
     )
     async def list_thread_info(self, ctx: interactions.SlashContext, type: str) -> None:
         if not await self.validate_channel(ctx):
-            await self.send_error(ctx, "This command can only be used in threads.")
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
             return
 
         if not await self.can_manage_post(ctx.channel, ctx.author):
             await self.send_error(
-                ctx, "You don't have permission to view information in this thread."
+                ctx,
+                "You don't have permission to view information in this thread. Please contact a thread owner or moderator for access.",
             )
             return
 
@@ -1204,7 +1229,10 @@ class Threads(interactions.Extension):
                 banned_users = self.model.banned_users[channel_id][post_id]
 
                 if not banned_users:
-                    await self.send_success(ctx, "No banned users in this thread.")
+                    await self.send_success(
+                        ctx,
+                        "There are currently no banned users in this thread. The thread is open to all permitted users.",
+                    )
                     return
 
                 embeds = []
@@ -1234,7 +1262,7 @@ class Threads(interactions.Extension):
                     embeds.append(current_embed)
 
                 await self._send_paginated_response(
-                    ctx, embeds, "No banned users found."
+                    ctx, embeds, "No banned users were found in this thread."
                 )
 
             case "permissions":
@@ -1242,7 +1270,8 @@ class Threads(interactions.Extension):
 
                 if not users_with_permissions:
                     await self.send_success(
-                        ctx, "No users with special permissions in this thread."
+                        ctx,
+                        "No users currently have special permissions in this thread. Only default access rules apply.",
                     )
                     return
 
@@ -1273,7 +1302,9 @@ class Threads(interactions.Extension):
                     embeds.append(current_embed)
 
                 await self._send_paginated_response(
-                    ctx, embeds, "No users with permissions found."
+                    ctx,
+                    embeds,
+                    "No users with special permissions were found in this thread.",
                 )
 
             case "stats":
@@ -1281,7 +1312,8 @@ class Threads(interactions.Extension):
 
                 if not stats:
                     await self.send_success(
-                        ctx, "No statistics available for this post."
+                        ctx,
+                        "No statistics are currently available for this thread. This may be a new thread or statistics tracking may be disabled.",
                     )
                     return
 
@@ -1330,7 +1362,10 @@ class Threads(interactions.Extension):
                 )
             case "permissions":
                 permissions = await self._get_merged_permissions()
-                embeds = await self._create_permission_embeds(permissions)
+                permissions_dict = defaultdict(set)
+                for thread_id, user_id in permissions:
+                    permissions_dict[thread_id].add(user_id)
+                embeds = await self._create_permission_embeds(permissions_dict)
                 await self._send_paginated_response(
                     ctx, embeds, "No thread permissions found."
                 )
@@ -1364,7 +1399,11 @@ class Threads(interactions.Extension):
     async def _get_merged_permissions(self) -> Set[Tuple[str, str]]:
         try:
             await self.model.load_thread_permissions(self.THREAD_PERMISSIONS_FILE)
-            return self.model.thread_permissions
+            return {
+                (thread_id, user_id)
+                for thread_id, users in self.model.thread_permissions.items()
+                for user_id in users
+            }
         except Exception as e:
             logger.error(f"Error loading thread permissions: {e}", exc_info=True)
             return set()
@@ -1535,25 +1574,27 @@ class Threads(interactions.Extension):
         self, featured_posts: Dict[str, str], stats: Dict[str, PostStats]
     ) -> List[interactions.Embed]:
         embeds: List[interactions.Embed] = []
-        current_embed = await self.create_embed(title="Featured Posts")
+        current_embed: interactions.Embed = await self.create_embed(
+            title="Featured Posts"
+        )
 
         for forum_id, post_id in featured_posts.items():
             try:
-                forum, post = await asyncio.gather(
-                    self.bot.fetch_channel(int(forum_id)),
-                    self.bot.fetch_channel(int(post_id)),
-                )
+                forum = await self.bot.fetch_channel(int(forum_id))
+                post = await self.bot.fetch_channel(int(post_id))
+
                 post_stats = stats.get(post_id, PostStats())
+                timestamp = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+                field_value = (
+                    f"- Forum: <#{forum_id}>\n"
+                    f"- Post: <#{post_id}>\n"
+                    f"- Messages: {post_stats.message_count}\n"
+                    f"- Last Active: {timestamp}"
+                )
 
                 current_embed.add_field(
-                    name="Featured Post",
-                    value=(
-                        f"- Forum: <#{forum_id}>\n"
-                        f"- Post: <#{post_id}>\n"
-                        f"- Messages: {post_stats.message_count}\n"
-                        f"- Last Active: {post_stats.last_activity.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-                    ),
-                    inline=True,
+                    name="Featured Post", value=field_value, inline=True
                 )
 
                 if len(current_embed.fields) >= 5:
@@ -1592,7 +1633,10 @@ class Threads(interactions.Extension):
         action: ActionType,
     ) -> Optional[ActionDetails]:
         if not await self.validate_channel(ctx):
-            await self.send_error(ctx, "This command can only be used in threads.")
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
             return None
 
         thread = ctx.channel
@@ -1600,7 +1644,8 @@ class Threads(interactions.Extension):
 
         if thread.parent_id != self.CONGRESS_ID and thread.owner_id != author.id:
             await self.send_error(
-                ctx, "Only the thread owner can manage thread permissions."
+                ctx,
+                "Only the thread owner can manage thread permissions. If you need to modify permissions, please contact the thread owner.",
             )
             return None
 
@@ -1610,21 +1655,21 @@ class Threads(interactions.Extension):
             if self.CONGRESS_MEMBER_ROLE in author_roles:
                 await self.send_error(
                     ctx,
-                    f"<@&{self.CONGRESS_MEMBER_ROLE}> cannot manage thread permissions.",
+                    f"Members with the <@&{self.CONGRESS_MEMBER_ROLE}> role cannot manage thread permissions. This is a restricted action.",
                 )
                 return None
 
             if self.CONGRESS_MOD_ROLE not in author_roles:
                 await self.send_error(
                     ctx,
-                    "You don't have permission to manage thread permissions in this forum.",
+                    f"You need the <@&{self.CONGRESS_MOD_ROLE}> role to manage thread permissions in this forum. Please contact a moderator for assistance.",
                 )
                 return None
         else:
             if not await self.can_manage_post(thread, author):
                 await self.send_error(
                     ctx,
-                    f"You can only {action.name.lower()} permissions for threads you manage.",
+                    f"You can only {action.name.lower()} permissions for threads you manage. Please ensure you have the correct permissions or contact a moderator.",
                 )
                 return None
 
@@ -1640,12 +1685,16 @@ class Threads(interactions.Extension):
                     self.model.thread_permissions[thread_id].discard(user_id)
                 action_name = "revoked"
             case _:
-                await self.send_error(ctx, "Invalid action.")
+                await self.send_error(
+                    ctx,
+                    "Invalid action type detected. Please try again with a valid permission action.",
+                )
                 return None
 
         await self.model.save_thread_permissions(self.THREAD_PERMISSIONS_FILE)
         await self.send_success(
-            ctx, f"Permissions have been {action_name} successfully."
+            ctx,
+            f"Permissions have been {action_name} successfully for {member.mention}. They will be notified of this change.",
         )
 
         return ActionDetails(
@@ -1667,21 +1716,24 @@ class Threads(interactions.Extension):
         self, ctx: interactions.SlashContext, action: ActionType, reason: str
     ) -> Optional[ActionDetails]:
         if not await self.validate_channel(ctx):
-            await self.send_error(ctx, "This command can only be used in threads.")
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
             return None
 
         thread = ctx.channel
-        desired_state: Final[bool] = action == ActionType.LOCK
-        action_name: Final[str] = action.name.lower()
-        action_past_tense: Final[Literal["locked", "unlocked"]] = (
+        desired_state = action == ActionType.LOCK
+        action_name = action.name.lower()
+        action_past_tense: Literal["locked", "unlocked"] = (
             "locked" if desired_state else "unlocked"
         )
 
         async def check_conditions() -> Optional[str]:
             if thread.archived:
-                return f"{thread.mention} is archived and cannot be {action_name}ed."
+                return f"Unable to {action_name} {thread.mention} because it is archived. Please unarchive the thread first."
             if thread.locked == desired_state:
-                return f"The thread is already {action_name}ed."
+                return f"This thread is already {action_name}ed. No changes were made."
             permissions_check, error_message = await self.check_permissions(ctx)
             return error_message if not permissions_check else None
 
@@ -1694,19 +1746,21 @@ class Threads(interactions.Extension):
         except asyncio.TimeoutError:
             logger.warning(f"Timeout while trying to {action_name} thread {thread.id}")
             await self.send_error(
-                ctx, f"Operation timed out while trying to {action_name} the thread."
+                ctx,
+                f"The request to {action_name} the thread timed out. Please try again. If the issue persists, contact a moderator.",
             )
             return None
         except Exception as e:
             logger.exception(f"Failed to {action_name} thread {thread.id}")
             await self.send_error(
                 ctx,
-                f"An error occurred while trying to {action_name} the thread: {str(e)}",
+                f"Failed to {action_name} the thread due to an error: {str(e)}. Please try again or contact a moderator if the issue persists.",
             )
             return None
 
         await self.send_success(
-            ctx, f"Thread has been {action_past_tense} successfully."
+            ctx,
+            f"Thread has been successfully {action_past_tense}. All members will be notified of this change.",
         )
 
         return ActionDetails(
@@ -1733,7 +1787,8 @@ class Threads(interactions.Extension):
         if not (match := self.manage_user_regex_pattern.match(ctx.custom_id)):
             logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
             await self.send_error(
-                ctx, "Invalid custom ID format. Please try the action again."
+                ctx,
+                "There was an issue processing your request due to an invalid format. Please try the action again, or contact a moderator if the issue persists.",
             )
             return None
 
@@ -1744,7 +1799,10 @@ class Threads(interactions.Extension):
 
         if not ctx.values:
             logger.warning("No action selected")
-            await self.send_error(ctx, "No action selected. Please try again.")
+            await self.send_error(
+                ctx,
+                "No action was selected from the menu. Please select an action (ban/unban or share/revoke permissions) and try again.",
+            )
             return None
 
         try:
@@ -1752,7 +1810,8 @@ class Threads(interactions.Extension):
         except KeyError:
             logger.warning(f"Invalid action: {ctx.values[0]}")
             await self.send_error(
-                ctx, f"Invalid action: {ctx.values[0]}. Please try again."
+                ctx,
+                f"The selected action `{ctx.values[0]}` is not valid. Please select a valid action from the menu and try again.",
             )
             return None
 
@@ -1761,13 +1820,15 @@ class Threads(interactions.Extension):
         except NotFound:
             logger.warning(f"User with ID {user_id} not found in the server")
             await self.send_error(
-                ctx, f"User with ID {user_id} not found in the server."
+                ctx,
+                f"Unable to find the user in the server. They may have left or been removed. Please verify the user is still in the server before trying again.",
             )
             return None
         except ValueError:
             logger.warning(f"Invalid user ID: {user_id}")
             await self.send_error(
-                ctx, f"Invalid user ID: {user_id}. Please try the action again."
+                ctx,
+                "There was an error processing the user information. Please try the action again, or contact a moderator if the issue persists.",
             )
             return None
 
@@ -1777,7 +1838,10 @@ class Threads(interactions.Extension):
             case ActionType.SHARE_PERMISSIONS | ActionType.REVOKE_PERMISSIONS:
                 return await self.share_revoke_permissions(ctx, member, action)
             case _:
-                await self.send_error(ctx, "Invalid action. Please try again.")
+                await self.send_error(
+                    ctx,
+                    "The selected action is not supported. Please choose either ban/unban or share/revoke permissions from the menu.",
+                )
                 return None
 
     @log_action
@@ -1788,80 +1852,88 @@ class Threads(interactions.Extension):
         action: ActionType,
     ) -> Optional[ActionDetails]:
         if not await self.validate_channel(ctx):
-            await self.send_error(ctx, "This command can only be used in threads.")
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
             return None
 
-        thread: interactions.ThreadChannel = ctx.channel
-        author_roles: Set[int] = {role.id for role in ctx.author.roles}
-        member_roles: Set[int] = {role.id for role in member.roles}
+        thread = ctx.channel
+        author_roles = {role.id for role in ctx.author.roles}
+        member_roles = {role.id for role in member.roles}
 
-        has_management_permission = any(
+        if any(
             role_id in member_roles and thread.parent_id in channels
             for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
-        )
-
-        if has_management_permission:
+        ):
             await self.send_error(
-                ctx, "You cannot ban users with management permissions."
+                ctx,
+                "Unable to ban users with management permissions. These users have special privileges that prevent them from being banned.",
             )
             return None
 
         if thread.parent_id == self.CONGRESS_ID:
             if self.CONGRESS_MEMBER_ROLE in author_roles:
-                if action == ActionType.BAN or (
-                    action == ActionType.UNBAN and member.id != ctx.author.id
+                if action is ActionType.BAN or (
+                    action is ActionType.UNBAN and member.id != ctx.author.id
                 ):
                     await self.send_error(
                         ctx,
-                        f"<@&{self.CONGRESS_MEMBER_ROLE}> can only unban themselves.",
+                        f"<@&{self.CONGRESS_MEMBER_ROLE}> members can only unban themselves.",
                     )
                     return None
             elif self.CONGRESS_MOD_ROLE not in author_roles:
                 await self.send_error(
-                    ctx, "You don't have permission to manage bans in this forum."
-                )
-                return None
-        else:
-            if not await self.can_manage_post(thread, ctx.author):
-                await self.send_error(
                     ctx,
-                    f"You can only {action.name.lower()} users from threads you manage.",
+                    f"You need to be a <@&{self.CONGRESS_MOD_ROLE}> to manage bans in this forum.",
                 )
                 return None
-
-        if member.id == thread.owner_id:
-            await self.send_error(ctx, "You cannot ban the thread owner.")
+        elif not await self.can_manage_post(thread, ctx.author):
+            await self.send_error(
+                ctx,
+                f"You can only {action.name.lower()} users from threads you manage.",
+            )
             return None
 
-        channel_id: str = str(thread.parent_id)
-        thread_id: str = str(thread.id)
-        user_id: str = str(member.id)
+        if member.id == thread.owner_id:
+            await self.send_error(
+                ctx,
+                "Thread owners cannot be banned from their own threads. This is a built-in protection for thread creators.",
+            )
+            return None
+
+        channel_id, thread_id, user_id = map(
+            str, [thread.parent_id, thread.id, member.id]
+        )
 
         async with self.ban_lock:
             banned_users = self.model.banned_users
-            channel_users = banned_users.setdefault(channel_id, {})
-            thread_users = channel_users.setdefault(thread_id, set())
-
-            match action:
-                case ActionType.BAN:
-                    thread_users.add(user_id)
-                case ActionType.UNBAN:
-                    thread_users.discard(user_id)
-                case _:
-                    await self.send_error(ctx, "Invalid action.")
-                    return None
-
+            thread_users = banned_users.setdefault(
+                str(thread.parent_id), defaultdict(set)
+            ).setdefault(str(thread.id), set())
+            if action is ActionType.BAN:
+                thread_users.add(user_id)
+            elif action is ActionType.UNBAN:
+                thread_users.discard(user_id)
+            else:
+                await self.send_error(
+                    ctx,
+                    "Invalid action requested. Please select either ban or unban and try again.",
+                )
+                return None
             if not thread_users:
-                del channel_users[thread_id]
-            if not channel_users:
-                del banned_users[channel_id]
-
+                del banned_users[channel_id][thread_id]
+                if not banned_users[channel_id]:
+                    del banned_users[channel_id]
             await self.model.save_banned_users(self.BANNED_USERS_FILE)
 
         await self.model.invalidate_ban_cache(channel_id, thread_id, user_id)
 
-        action_name: Final[str] = "banned" if action is ActionType.BAN else "unbanned"
-        await self.send_success(ctx, f"User has been {action_name} successfully.")
+        action_name = "banned" if action is ActionType.BAN else "unbanned"
+        await self.send_success(
+            ctx,
+            f"User has been successfully {action_name}. {'They will no longer be able to participate in this thread.' if action is ActionType.BAN else 'They can now participate in this thread again.'}",
+        )
 
         return ActionDetails(
             action=action,
@@ -1885,7 +1957,10 @@ class Threads(interactions.Extension):
         self, ctx: interactions.ComponentContext
     ) -> Optional[ActionDetails]:
         if not (match := self.message_action_regex_pattern.match(ctx.custom_id)):
-            await self.send_error(ctx, "Invalid message action format.")
+            await self.send_error(
+                ctx,
+                "The message action format is invalid. Please ensure you're using the correct command format.",
+            )
             return None
 
         message_id: int = int(match.group(1))
@@ -1894,15 +1969,24 @@ class Threads(interactions.Extension):
         try:
             message = await ctx.channel.fetch_message(message_id)
         except NotFound:
-            await self.send_error(ctx, "Message not found.")
+            await self.send_error(
+                ctx,
+                "The message could not be found. It may have been deleted or you may not have permission to view it.",
+            )
             return None
         except Exception as e:
             logger.error(f"Error fetching message {message_id}: {e}", exc_info=True)
-            await self.send_error(ctx, "Failed to retrieve the message.")
+            await self.send_error(
+                ctx,
+                "Unable to retrieve the message. This could be due to a temporary issue or insufficient permissions. Please try again later.",
+            )
             return None
 
         if not isinstance(ctx.channel, interactions.ThreadChannel):
-            await self.send_error(ctx, "This command can only be used within threads.")
+            await self.send_error(
+                ctx,
+                "This action can only be performed within threads. Please ensure you're in a thread channel before using this command.",
+            )
             return None
 
         post = ctx.channel
@@ -1915,7 +1999,10 @@ class Threads(interactions.Extension):
                     ctx, post, message, action == "pin"
                 )
             case _:
-                await self.send_error(ctx, "Invalid action selected.")
+                await self.send_error(
+                    ctx,
+                    "The selected action is not valid. Available actions are: delete, pin, and unpin. Please choose one of these options.",
+                )
                 return None
 
     async def delete_message_action(
@@ -1926,7 +2013,9 @@ class Threads(interactions.Extension):
     ) -> Optional[ActionDetails]:
         try:
             await message.delete()
-            await self.send_success(ctx, "Message deleted successfully.")
+            await self.send_success(
+                ctx, f"Message successfully deleted from thread `{post.name}`."
+            )
 
             return ActionDetails(
                 action=ActionType.DELETE,
@@ -1947,7 +2036,7 @@ class Threads(interactions.Extension):
             )
         except Exception as e:
             logger.error(f"Failed to delete message {message.id}: {e}", exc_info=True)
-            await self.send_error(ctx, "Failed to delete the message.")
+            await self.send_error(ctx, "Unable to delete the message.")
             return None
 
     async def pin_message_action(
@@ -1958,16 +2047,14 @@ class Threads(interactions.Extension):
         pin: bool,
     ) -> Optional[ActionDetails]:
         try:
-            if pin:
-                await message.pin()
-                action_type = ActionType.PIN
-                action_desc = "pinned"
-            else:
-                await message.unpin()
-                action_type = ActionType.UNPIN
-                action_desc = "unpinned"
+            action_type, action_desc = (
+                (ActionType.PIN, "pinned") if pin else (ActionType.UNPIN, "unpinned")
+            )
+            await message.pin() if pin else await message.unpin()
 
-            await self.send_success(ctx, f"Message {action_desc} successfully.")
+            await self.send_success(
+                ctx, f"Message has been successfully {action_desc}."
+            )
 
             return ActionDetails(
                 action=action_type,
@@ -1979,7 +2066,7 @@ class Threads(interactions.Extension):
                 additional_info={
                     f"{action_desc}_message_id": str(message.id),
                     f"{action_desc}_message_content": (
-                        message.content[:1000] if message.content else "N/A"
+                        message.content[:10] if message.content else "N/A"
                     ),
                 },
             )
@@ -1988,9 +2075,7 @@ class Threads(interactions.Extension):
                 f"Failed to {'pin' if pin else 'unpin'} message {message.id}: {e}",
                 exc_info=True,
             )
-            await self.send_error(
-                ctx, f"Failed to {'pin' if pin else 'unpin'} the message."
-            )
+            await self.send_error(ctx, f"Unable to {action_desc} the message.")
             return None
 
     manage_tags_regex_pattern = re.compile(r"manage_tags:(\d+)")
@@ -2000,71 +2085,65 @@ class Threads(interactions.Extension):
     async def on_manage_tags(
         self, ctx: interactions.ComponentContext
     ) -> Optional[ActionDetails]:
-        logger.info(f"on_manage_tags called with custom_id: {ctx.custom_id}")
-
+        logger.info(f"on_manage_tags invoked with custom_id: {ctx.custom_id}")
         if not (match := self.manage_tags_regex_pattern.match(ctx.custom_id)):
             logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
             await self.send_error(ctx, "Invalid custom ID format.")
             return None
-
-        post_id: Final[int] = int(match.group(1))
-
+        post_id = int(match.group(1))
         try:
-            post, parent_forum = await asyncio.gather(
-                self.bot.fetch_channel(post_id),
-                self.bot.fetch_channel(ctx.channel.parent_id),
-            )
+            post = await self.bot.fetch_channel(post_id)
+            parent_forum = await self.bot.fetch_channel(ctx.channel.parent_id)
         except Exception as e:
-            logger.error(f"Error fetching channels: {e}", exc_info=True)
-            await self.send_error(ctx, "Failed to fetch the required channels.")
+            logger.error(
+                f"Channel fetch error for post_id {post_id}: {e}", exc_info=True
+            )
+            await self.send_error(ctx, "Failed to retrieve necessary channels.")
             return None
-
         if not isinstance(post, interactions.GuildForumPost):
-            logger.warning(f"Channel {post_id} is not a GuildForumPost")
-            await self.send_error(ctx, "This is not a valid forum post.")
+            logger.warning(f"Channel {post_id} is not a GuildForumPost.")
+            await self.send_error(ctx, "Invalid forum post.")
+            return None
+        tag_updates = {
+            action: frozenset(
+                int(value.split(":")[1])
+                for value in ctx.values
+                if value.startswith(f"{action}:")
+            )
+            for action in ("add", "remove")
+        }
+        logger.info(f"Processing tag updates for post {post_id}: {tag_updates}")
+        current_tags = frozenset(tag.id for tag in post.applied_tags)
+        new_tags = (current_tags | tag_updates["add"]) - tag_updates["remove"]
+
+        if new_tags == current_tags:
+            await self.send_success(ctx, "No tag changes detected.")
             return None
 
-        tag_updates: Final[Dict[str, Set[int]]] = defaultdict(set)
-        for value in ctx.values:
-            action, tag_id = value.split(":")
-            tag_updates[action].add(int(tag_id))
-
-        logger.info(f"Tag updates for post {post_id}: {dict(tag_updates)}")
-
-        current_tag_ids: Final[Set[int]] = {tag.id for tag in post.applied_tags}
-        new_tag_ids: Final[Set[int]] = (
-            current_tag_ids | tag_updates["add"]
-        ) - tag_updates["remove"]
-
-        if new_tag_ids == current_tag_ids:
-            return await self.send_success(ctx, "No changes were made to the tags.")
+        if len(new_tags) > 5:
+            await self.send_error(ctx, "A post can have a maximum of 5 tags.")
+            return None
 
         try:
-            await post.edit(applied_tags=list(new_tag_ids))
-            logger.info(f"Successfully updated tags for post {post_id}")
+            await post.edit(applied_tags=list(new_tags))
+            logger.info(f"Tags successfully updated for post {post_id}.")
         except Exception as e:
-            logger.exception(f"Error editing post tags: {e}")
-            await self.send_error(
-                ctx,
-                "An error occurred while updating the post tags. Please try again later.",
-            )
+            logger.exception(f"Failed to edit tags for post {post_id}: {e}")
+            await self.send_error(ctx, "Error updating tags. Please try again later.")
             return None
 
-        tag_names: Final[Dict[int, str]] = {
-            tag.id: tag.name for tag in parent_forum.available_tags
-        }
-
-        update_messages: Final[List[str]] = [
+        tag_names = {tag.id: tag.name for tag in parent_forum.available_tags}
+        updates = [
             f"Tag `{tag_names.get(tag_id, 'Unknown')}` {'added to' if action == 'add' else 'removed from'} the post."
             for action, tag_ids in tag_updates.items()
+            if tag_ids
             for tag_id in tag_ids
         ]
 
-        await self.send_success(ctx, "\n".join(update_messages))
-
+        await self.send_success(ctx, "\n".join(updates))
         return ActionDetails(
             action=ActionType.EDIT,
-            reason="Tags updated in the post",
+            reason="Tags modified in the post",
             post_name=post.name,
             actor=ctx.author,
             channel=post,
@@ -2075,18 +2154,19 @@ class Threads(interactions.Extension):
                         "Tag": tag_names.get(tag_id, "Unknown"),
                     }
                     for action, tag_ids in tag_updates.items()
+                    if tag_ids
                     for tag_id in tag_ids
-                ],
+                ]
             },
         )
 
     async def process_new_post(self, thread: interactions.GuildPublicThread) -> None:
         try:
-            timestamp: Final[str] = datetime.now().strftime("%y%m%d%H%M")
-            new_title: Final[str] = f"[{timestamp}] {thread.name}"
+            timestamp = datetime.now().strftime("%y%m%d%H%M")
+            new_title = f"[{timestamp}] {thread.name}"
             await thread.edit(name=new_title)
 
-            poll: Final[interactions.Poll] = interactions.Poll.create(
+            poll = interactions.Poll.create(
                 question="您对此请愿持何意见？What is your position regarding this petition?",
                 duration=48,
                 allow_multiselect=False,
@@ -2103,8 +2183,11 @@ class Threads(interactions.Extension):
         if not self.should_process_link(event):
             return
 
-        new_content: Final[str] = await self.transform_links(event.message.content)
-        if new_content == event.message.content:
+        msg_content = event.message.content
+        if (
+            not (new_content := await self.transform_links(msg_content))
+            or new_content == msg_content
+        ):
             return
 
         await asyncio.gather(
@@ -2113,7 +2196,7 @@ class Threads(interactions.Extension):
         )
 
     async def send_warning(self, user: interactions.Member, message: str) -> None:
-        embed: Final[interactions.Embed] = await self.create_embed(
+        embed: interactions.Embed = await self.create_embed(
             title="Warning", description=message, color=EmbedColor.WARN
         )
         try:
@@ -2127,7 +2210,7 @@ class Threads(interactions.Extension):
         channel: Union[interactions.GuildText, interactions.ThreadChannel],
         name: str,
     ) -> AsyncGenerator[interactions.Webhook, None]:
-        webhook: Final[interactions.Webhook] = await channel.create_webhook(name=name)
+        webhook: interactions.Webhook = await channel.create_webhook(name=name)
         try:
             yield webhook
         finally:
@@ -2135,28 +2218,27 @@ class Threads(interactions.Extension):
                 await webhook.delete()
 
     async def replace_message(self, event: MessageCreate, new_content: str) -> None:
-        channel: Final[Union[interactions.GuildText, interactions.ThreadChannel]] = (
+        channel: Union[interactions.GuildText, interactions.ThreadChannel] = (
             event.message.channel
         )
         async with self.create_temp_webhook(channel, "Temp Webhook") as webhook:
             try:
-                await asyncio.gather(
-                    webhook.send(
-                        content=new_content,
-                        username=event.message.author.display_name,
-                        avatar_url=event.message.author.avatar_url,
-                    ),
-                    event.message.delete(),
+                await webhook.send(
+                    content=new_content,
+                    username=event.message.author.display_name,
+                    avatar_url=event.message.author.avatar_url,
                 )
+                await event.message.delete()
             except Exception as e:
-                logger.exception(f"Failed to replace message: {e}")
+                logger.exception(f"Failed to replace message: {str(e)}")
+                raise
 
     async def fetch_oldest_message_url(
         self, channel: Union[interactions.GuildText, interactions.ThreadChannel]
     ) -> Optional[str]:
         try:
             async for message in channel.history(limit=1):
-                url: Final[URL] = URL(message.jump_url)
+                url = URL(message.jump_url)
                 return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
         except Exception as e:
             logger.error(f"Error fetching oldest message: {e}")
@@ -2191,7 +2273,7 @@ class Threads(interactions.Extension):
 
     @interactions.listen(ExtensionUnload)
     async def on_extension_unload(self, event: ExtensionUnload) -> None:
-        tasks_to_stop: Final[tuple] = (self.rotate_featured_posts_periodically,)
+        tasks_to_stop: tuple = (self.rotate_featured_posts_periodically,)
         for task in tasks_to_stop:
             task.stop()
 
@@ -2205,24 +2287,27 @@ class Threads(interactions.Extension):
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_stats(self, event: MessageCreate) -> None:
-        if (
-            event.message.guild is None
-            or not isinstance(event.message.channel, interactions.GuildForumPost)
-            or event.message.channel.parent_id not in self.FEATURED_CHANNELS
+        if any(
+            (
+                not (msg := event.message).guild,
+                not isinstance((chan := msg.channel), interactions.GuildForumPost),
+                (parent_id := chan.parent_id) not in self.FEATURED_CHANNELS,
+            )
         ):
             return
-        post_id: Final[str] = str(event.message.channel.id)
-        await self.increment_message_count(post_id)
+
+        await self.increment_message_count(f"{chan.id}")
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_processing(self, event: MessageCreate) -> None:
         if not event.message.guild:
             return
 
-        tasks: list[Coroutine] = []
-
-        if self.should_process_link(event):
-            tasks.append(self.process_link(event))
+        link_task = (
+            asyncio.create_task(self.process_link(event))
+            if self.should_process_link(event)
+            else None
+        )
 
         if self.should_process_message(event):
             channel_id, post_id, author_id = map(
@@ -2235,33 +2320,33 @@ class Threads(interactions.Extension):
             )
 
             if await self.is_user_banned(channel_id, post_id, author_id):
-                tasks.append(event.message.delete())
+                await event.message.delete()
 
-        if tasks:
-            await asyncio.gather(*tasks)
+        if link_task:
+            await link_task
 
     @interactions.listen(NewThreadCreate)
     async def on_new_thread_create_for_processing(self, event: NewThreadCreate) -> None:
-        if not isinstance(event.thread, interactions.GuildPublicThread):
+        if not (
+            isinstance(event.thread, interactions.GuildPublicThread)
+            and event.thread.parent_id == self.POLL_FORUM_ID
+            and (owner_id := event.thread.owner_id) is not None
+            and (
+                owner := await (await self.bot.fetch_guild(self.GUILD_ID)).fetch_member(
+                    owner_id
+                )
+            )
+            and not owner.bot
+        ):
             return
-        if event.thread.parent_id != self.POLL_FORUM_ID:
-            return
-        if event.thread.owner_id is None:
-            return
-
-        guild: interactions.Guild = await self.bot.fetch_guild(self.GUILD_ID)
-        owner: Optional[interactions.Member] = await guild.fetch_member(
-            event.thread.owner_id
-        )
-
-        if owner and not owner.bot:
-            await self.process_new_post(event.thread)
+        await self.process_new_post(event.thread)
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_banned_users(self, event: MessageCreate) -> None:
-        if not event.message.guild:
-            return
-        if not isinstance(event.message.channel, interactions.ThreadChannel):
+        if not (
+            event.message.guild
+            and isinstance(event.message.channel, interactions.ThreadChannel)
+        ):
             return
 
         channel_id, post_id, author_id = map(
@@ -2273,8 +2358,9 @@ class Threads(interactions.Extension):
             ),
         )
 
-        if await self.is_user_banned(channel_id, post_id, author_id):
-            await event.message.delete()
+        await self.is_user_banned(
+            channel_id, post_id, author_id
+        ) and event.message.delete()
 
     # Check methods
 
@@ -2284,38 +2370,39 @@ class Threads(interactions.Extension):
         user: interactions.Member,
     ) -> bool:
         user_roles = {role.id for role in user.roles}
+        user_id = user.id
+        thread_parent = thread.parent_id
 
-        if thread.parent_id == self.CONGRESS_ID:
-            return (
-                self.CONGRESS_MOD_ROLE in user_roles
-                or self.CONGRESS_MEMBER_ROLE in user_roles
+        if thread_parent == self.CONGRESS_ID:
+            return bool(
+                user_roles & {self.CONGRESS_MOD_ROLE, self.CONGRESS_MEMBER_ROLE}
             )
 
         return (
-            thread.owner_id == user.id
-            or self.model.has_thread_permissions(str(thread.id), str(user.id))
-            or any(
-                role_id in user_roles and thread.parent_id in channels
-                for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
+            thread.owner_id == user_id
+            or self.model.has_thread_permissions(str(thread.id), str(user_id))
+            or next(
+                (
+                    True
+                    for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
+                    if role_id in user_roles and thread_parent in channels
+                ),
+                False,
             )
         )
 
     async def check_permissions(
         self, ctx: interactions.SlashContext
     ) -> tuple[bool, str]:
-        author_roles_ids: frozenset[int] = frozenset(
-            role.id for role in ctx.author.roles
+        r, p_id, perms = (
+            ctx.author.roles,
+            ctx.channel.parent_id,
+            self.ROLE_CHANNEL_PERMISSIONS,
         )
-        parent_id: int = ctx.channel.parent_id
-
-        has_perm: bool = any(
-            role_id in self.ROLE_CHANNEL_PERMISSIONS
-            and parent_id in self.ROLE_CHANNEL_PERMISSIONS[role_id]
-            for role_id in author_roles_ids
-        )
-
-        return has_perm, (
-            "" if has_perm else "You do not have permission for this action."
+        return (
+            any(role.id in perms and p_id in perms[role.id] for role in r),
+            "You do not have permission for this action."
+            * (not any(role.id in perms and p_id in perms[role.id] for role in r)),
         )
 
     async def validate_channel(self, ctx: interactions.InteractionContext) -> bool:
@@ -2348,17 +2435,13 @@ class Threads(interactions.Extension):
         return await self.can_manage_post(thread, user)
 
     def should_process_link(self, event: MessageCreate) -> bool:
-        if not event.message.guild or event.message.guild.id != self.GUILD_ID:
-            return False
-
-        member: Optional[interactions.Member] = event.message.guild.get_member(
-            event.message.author.id
-        )
-        if not member:
-            return False
-
-        return bool(event.message.content) and not any(
-            role.id == self.TAIWAN_ROLE_ID for role in member.roles
+        guild = event.message.guild
+        return (
+            guild
+            and guild.id == self.GUILD_ID
+            and (member := guild.get_member(event.message.author.id))
+            and event.message.content
+            and not any(role.id == self.TAIWAN_ROLE_ID for role in member.roles)
         )
 
     # Utility methods
@@ -2378,18 +2461,13 @@ class Threads(interactions.Extension):
 
     @functools.lru_cache(maxsize=1024)
     def sanitize_url(
-        self, url_str: str, preserve_params: tuple[str, ...] = ("p",)
+        self, url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
     ) -> str:
-        url: URL = URL(url_str)
-        query: dict[str, str] = {
-            k: v for k, v in url.query.items() if k in preserve_params
-        }
-        return str(url.with_query(query))
+        u = URL(url_str)
+        return str(u.with_query({k: u.query[k] for k in preserve_params & u.query}))
 
     @functools.lru_cache(maxsize=1)
-    def get_link_transformations(
-        self,
-    ) -> list[tuple[re.Pattern, Callable[[str], str]]]:
+    def get_link_transformations(self) -> list[tuple[re.Pattern, Callable[[str], str]]]:
         return [
             (
                 re.compile(
@@ -2401,19 +2479,25 @@ class Threads(interactions.Extension):
                     if "bilibili.com" in url.lower()
                     else str(URL(url).with_host("b23.tf"))
                 ),
-            ),
+            )
         ]
 
     async def transform_links(self, content: str) -> str:
-        def transform_url(match: re.Match) -> str:
-            url: str = match.group(0)
-            for pattern, transform in self.get_link_transformations():
-                if pattern.match(url):
-                    return transform(url)
-            return url
-
+        patterns = self.get_link_transformations()
         return await asyncio.to_thread(
-            lambda: re.sub(r"https?://\S+", transform_url, content, flags=re.IGNORECASE)
+            lambda: re.sub(
+                r"https?://\S+",
+                lambda m: next(
+                    (
+                        transform(str(m.group(0)))
+                        for pattern, transform in patterns
+                        if pattern.match(str(m.group(0)))
+                    ),
+                    m.group(0),
+                ),
+                content,
+                flags=re.IGNORECASE,
+            )
         )
 
     @functools.lru_cache(maxsize=1)
