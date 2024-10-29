@@ -476,149 +476,81 @@ class Threads(interactions.Extension):
 
         for post_id in eligible_posts:
             try:
-                await self.add_tag_to_post(post_id, "精華帖子 Top Picks")
+                await self.add_tag_to_post(post_id)
             except Exception as e:
                 logger.error("Failed to add tag to post %s: %s", post_id, e)
                 continue
 
         logger.info("Featured posts tags update completed successfully")
 
-    async def add_tag_to_post(self, post_id: str, tag_name: str) -> None:
+    async def add_tag_to_post(self, post_id: str) -> None:
         try:
-            channel: interactions.GuildForumPost = await self.bot.fetch_channel(
-                int(post_id)
-            )
-            if not isinstance(channel, interactions.GuildForumPost):
-                logger.error(f"Channel {post_id} is not a forum post.")
+            channel = await self.bot.fetch_channel(int(post_id))
+            forum = await self.bot.fetch_channel(channel.parent_id)
+
+            if not all(
+                (
+                    isinstance(channel, interactions.GuildForumPost),
+                    isinstance(forum, interactions.GuildForum),
+                )
+            ):
                 return
 
-            forum: interactions.GuildForum = await self.bot.fetch_channel(
-                channel.parent_id
-            )
-            if not isinstance(forum, interactions.GuildForum):
-                logger.error(f"Parent channel {channel.parent_id} is not a forum.")
-                return
+            featured_tag_id = 1275098388718813215
+            current_tags = frozenset(tag.id for tag in channel.applied_tags)
 
-            current_tag_ids: frozenset[int] = frozenset(
-                tag.id for tag in channel.applied_tags
-            )
-            available_tags: list[Any] = list(await self.fetch_available_tags(forum.id))
+            if featured_tag_id not in current_tags:
+                new_tags = list(current_tags | {featured_tag_id})
+                if len(new_tags) <= 5:
+                    await channel.edit(applied_tags=new_tags)
+                    logger.info(f"Added featured tag to post {post_id}")
 
-            if tag := next(filter(lambda t: t.name == tag_name, available_tags), None):
-                if tag.id not in current_tag_ids:
-                    await channel.edit(applied_tags=[*current_tag_ids, tag.id])
-                    logger.info(f"Added tag `{tag_name}` to post {post_id}.")
-                    return
-            logger.debug(
-                f"Tag `{tag_name}` already exists on post {post_id} or not found."
-            )
-
-        except ValueError as e:
-            logger.error(f"Invalid post ID format: {post_id}")
-        except Exception as e:
-            logger.error(
-                f"Unexpected error adding tag `{tag_name}` to post {post_id}: {e}",
-                exc_info=True,
-            )
+        except (ValueError, NotFound, Exception) as e:
+            logger.error(f"Error adding featured tag to post {post_id}: {e}")
 
     async def pin_featured_post(self, new_post_id: str) -> None:
         try:
-            new_post: interactions.GuildForumPost = await self.bot.fetch_channel(
-                int(new_post_id)
-            )
+            new_post = await self.bot.fetch_channel(int(new_post_id))
             if not isinstance(new_post, interactions.GuildForumPost):
-                logger.error(f"Channel {new_post_id} is not a forum post.")
                 return
 
-            if self.model.current_pinned_post:
+            forum = await self.bot.fetch_channel(new_post.parent_id)
+            if not isinstance(forum, interactions.GuildForum):
+                return
+
+            pinned_posts = [post async for post in forum.fetch_posts() if post.pinned]
+            for post in pinned_posts:
                 try:
-                    old_post: interactions.GuildForumPost = (
-                        await self.bot.fetch_channel(
-                            int(self.model.current_pinned_post)
-                        )
-                    )
-                    if (
-                        isinstance(old_post, interactions.GuildForumPost)
-                        and old_post.pinned
-                    ):
-                        try:
-                            await old_post.unpin(reason="Rotating featured posts.")
-                            logger.info(
-                                f"Unpinned old thread {self.model.current_pinned_post}."
-                            )
-                        except HTTPException as e:
-                            logger.error(f"Failed to unpin old thread: {e}")
-                            return
-
-                        for _ in range(5):
-                            updated_old_post: interactions.GuildForumPost = (
-                                await self.bot.fetch_channel(
-                                    int(self.model.current_pinned_post)
-                                )
-                            )
-                            if not updated_old_post.pinned:
-                                logger.info(
-                                    f"Confirmed unpinning of old thread {self.model.current_pinned_post}."
-                                )
-                                break
-                            await asyncio.sleep(1)
-                        else:
-                            logger.error(
-                                "Failed to unpin the old thread after several attempts."
-                            )
-                            return
-
-                except ValueError:
-                    logger.error(
-                        f"Invalid current pinned post ID: {self.model.current_pinned_post}"
-                    )
+                    await post.unpin(reason="Rotating featured posts.")
+                    await asyncio.sleep(0.25)
                 except Exception as e:
-                    logger.error(
-                        f"Unexpected error unpinning old thread {self.model.current_pinned_post}: {e}",
-                        exc_info=True,
-                    )
+                    logger.error(f"Failed to unpin post {post.id}: {e}")
+                    return
 
             if not new_post.pinned:
                 await new_post.pin(reason="New featured post.")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.25)
 
-                updated_post: interactions.GuildForumPost = (
-                    await self.bot.fetch_channel(int(new_post_id))
-                )
+                updated_post = await self.bot.fetch_channel(int(new_post_id))
                 if (
                     isinstance(updated_post, interactions.GuildForumPost)
                     and updated_post.pinned
                 ):
                     self.model.current_pinned_post = new_post_id
-                    logger.info(f"Successfully pinned new thread {new_post_id}.")
                 else:
-                    logger.error(f"Failed to pin new thread {new_post_id}.")
+                    logger.error(f"Failed to pin new post {new_post_id}")
                     return
             else:
                 self.model.current_pinned_post = new_post_id
-                logger.info(f"Thread {new_post_id} was already pinned")
 
-            active_threads: dict = await self.bot.http.list_active_threads(
-                guild_id=self.GUILD_ID
-            )
-            pinned_threads: list = [
-                thread
-                for thread in active_threads.get("threads", [])
-                if thread.get("parent_id") == str(new_post.parent_id)
-                and thread.get("pinned", False)
-            ]
+            final_pinned = [post async for post in forum.fetch_posts() if post.pinned]
+            if len(final_pinned) > 1:
+                logger.warning(f"Multiple posts pinned in channel {new_post.parent_id}")
 
-            if len(pinned_threads) > 1:
-                logger.warning(
-                    f"Multiple threads pinned in channel {new_post.parent_id}"
-                )
-
-        except ValueError:
-            logger.error(f"Invalid post ID format: {new_post_id}")
-        except NotFound:
-            logger.error(f"Post not found: {new_post_id}")
+        except (ValueError, NotFound) as e:
+            logger.error(f"Error pinning post {new_post_id}: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error pinning new thread: {e}", exc_info=True)
+            logger.error(f"Unexpected error pinning new post: {e}", exc_info=True)
 
     async def update_featured_posts_rotation(self) -> None:
         forum_ids: Sequence[int] = tuple(self.FEATURED_CHANNELS)
@@ -683,28 +615,21 @@ class Threads(interactions.Extension):
                 logger.warning(f"Channel ID {forum_id} is not a forum channel")
                 return None
 
-            threads_response: Dict[str, Any] = await self.bot.http.list_active_threads(
-                guild_id=self.GUILD_ID
-            )
-
-            forum_id_str = str(forum_id)
+            posts: List[interactions.GuildForumPost] = await forum_channel.fetch_posts()
             stats_dict: Dict[str, PostStats] = self.model.post_stats
 
-            valid_threads: List[Dict[str, Any]] = [
-                thread
-                for thread in threads_response.get("threads", [])
-                if (thread_id := str(thread.get("id"))) in stats_dict
-                and str(thread.get("parent_id")) == forum_id_str
+            valid_posts: List[interactions.GuildForumPost] = [
+                post for post in posts if str(post.id) in stats_dict
             ]
 
-            if not valid_threads:
+            if not valid_posts:
                 return None
 
-            top_thread: Dict[str, Any] = max(
-                valid_threads, key=(lambda t: stats_dict[str(t["id"])].message_count)
+            top_post: interactions.GuildForumPost = max(
+                valid_posts, key=(lambda p: stats_dict[str(p.id)].message_count)
             )
 
-            return str(top_thread["id"])
+            return str(top_post.id)
 
         except Exception as e:
             logger.error(
@@ -986,7 +911,7 @@ class Threads(interactions.Extension):
                 f"Here's the link to the top of the thread: [Click here]({message_url}).",
             )
         else:
-            await self.send_error(ctx, "Unable to find the top message in this thread.")
+            await self.send_error(ctx, "Unable to find the top message in this thread. This could happen if the thread is empty or if there was an error accessing the message history. Please try again later or contact a moderator if the issue persists.")
 
     @module_base.subcommand("lock", sub_cmd_description="Lock the current thread")
     @interactions.slash_option(
