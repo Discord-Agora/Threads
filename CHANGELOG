@@ -3,6 +3,10 @@
 ### Added
 - Whitelist entry: Channel ID 1250396377540853801
 
+### Changed
+- Removed the specific tag name requirement when adding a tag to a post, defaulting to a featured tag
+- Updated logic for managing pinned posts, including better handling of multiple pinned posts
+
 ## 2024-10-28
 
 ### Added
