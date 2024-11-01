@@ -302,7 +302,7 @@ class Model:
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
         cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
-        current_time: datetime = datetime.now()
+        current_time: datetime = datetime.now(timezone.utc)
 
         if cache_key in self.ban_cache:
             is_banned, timestamp = self.ban_cache[cache_key]
@@ -438,10 +438,6 @@ class Threads(interactions.Extension):
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
         ) - timedelta(days=8)
-        self.delete_counts = defaultdict(lambda: defaultdict(list))
-        self.delete_window = int(5 * 60)
-        self.activation_threshold = 1 << 1 | 1
-        self.minutes_per_delete = 1
 
     async def _initialize_data(self) -> None:
         await asyncio.gather(
@@ -1789,13 +1785,12 @@ class Threads(interactions.Extension):
                 )
                 return None
 
+    @log_action
     async def ban_unban_user(
         self,
         ctx: interactions.ContextMenuContext,
         member: interactions.Member,
         action: ActionType,
-        temp_ban: bool = False,
-        duration: Optional[int] = None,
     ) -> Optional[ActionDetails]:
         if not await self.validate_channel(ctx):
             await self.send_error(
@@ -1808,7 +1803,6 @@ class Threads(interactions.Extension):
         author_roles, member_roles = map(
             lambda x: {role.id for role in x.roles}, (ctx.author, member)
         )
-
         if any(
             role_id in member_roles and thread.parent_id in channels
             for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
@@ -1835,8 +1829,7 @@ class Threads(interactions.Extension):
                     f"You need to be a <@&{self.CONGRESS_MOD_ROLE}> to manage bans in this forum.",
                 )
                 return None
-
-        if not await self.can_manage_post(thread, ctx.author):
+        elif not await self.can_manage_post(thread, ctx.author):
             await self.send_error(
                 ctx,
                 f"You can only {action.name.lower()} users from threads you manage.",
@@ -1863,9 +1856,6 @@ class Threads(interactions.Extension):
             match action:
                 case ActionType.BAN:
                     thread_users.add(user_id)
-                    temp_ban and duration and asyncio.create_task(
-                        self._schedule_unban(ctx, member, thread, duration)
-                    )
                 case ActionType.UNBAN:
                     thread_users.discard(user_id)
                 case _:
@@ -1877,8 +1867,8 @@ class Threads(interactions.Extension):
 
             if not thread_users:
                 del banned_users[channel_id][thread_id]
-                not banned_users[channel_id] and banned_users.pop(channel_id)
-
+                if not banned_users[channel_id]:
+                    del banned_users[channel_id]
             await self.model.save_banned_users(self.BANNED_USERS_FILE)
 
         await self.model.invalidate_ban_cache(channel_id, thread_id, user_id)
@@ -1902,49 +1892,6 @@ class Threads(interactions.Extension):
                 "affected_user_id": member.id,
             },
         )
-
-    async def _schedule_unban(
-        self,
-        ctx: interactions.ContextMenuContext,
-        member: interactions.Member,
-        thread: interactions.ThreadChannel,
-        duration: int,
-    ) -> None:
-        try:
-            await asyncio.wait_for(asyncio.sleep(duration), timeout=duration + 1)
-            unban_task = asyncio.create_task(
-                self.ban_unban_user(ctx, member, ActionType.UNBAN)
-            )
-
-            embed = await self.create_embed(
-                title="Temporary Ban Expired",
-                description=f"Your temporary ban in {thread.mention} has expired. You can now participate in the thread again.",
-                color=EmbedColor.INFO,
-            )
-
-            notification_task = asyncio.create_task(member.send(embed=embed))
-
-            done, pending = await asyncio.wait(
-                [unban_task, notification_task], return_when=asyncio.ALL_COMPLETED
-            )
-
-            for task in pending:
-                task.cancel()
-
-            for task in done:
-                try:
-                    await task
-                except Exception as e:
-                    logger.warning(
-                        f"Task failed during unban process for {member.mention}: {e}"
-                    )
-
-        except asyncio.TimeoutError:
-            logger.error(
-                f"Unban operation timed out for {member.mention} in {thread.name}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to process unban for {member.mention}: {e}")
 
     message_action_regex_pattern = re.compile(r"message_action:(\d+)")
 
@@ -2009,9 +1956,6 @@ class Threads(interactions.Extension):
         message: interactions.Message,
     ) -> Optional[ActionDetails]:
         try:
-            if not await self.check_and_handle_delete_spam(ctx, post, message):
-                return None
-
             await message.delete()
             await self.send_success(
                 ctx, f"Message successfully deleted from thread `{post.name}`."
@@ -2040,43 +1984,6 @@ class Threads(interactions.Extension):
             logger.error(f"Failed to delete message {message.id}: {e}", exc_info=True)
             await self.send_error(ctx, "Unable to delete the message.")
             return None
-
-    async def check_and_handle_delete_spam(
-        self,
-        ctx: interactions.ComponentContext,
-        post: interactions.ThreadChannel,
-        message: interactions.Message,
-    ) -> bool:
-        current_time = datetime.now(timezone.utc)
-        user_id, channel_id = map(str, (ctx.author.id, post.id))
-
-        if user_id not in self.delete_counts:
-            self.delete_counts[user_id] = defaultdict(list)
-
-        user_deletes = self.delete_counts[user_id][channel_id]
-        cutoff_time = current_time - timedelta(seconds=self.delete_window)
-
-        user_deletes[:] = (ts for ts in user_deletes if ts > cutoff_time)
-        user_deletes.append(current_time)
-
-        if (delete_count := len(user_deletes)) <= self.activation_threshold:
-            return True
-
-        excess_deletes = delete_count - self.activation_threshold
-        ban_duration = excess_deletes * self.minutes_per_delete * 60
-
-        ban_task = self.ban_unban_user(
-            ctx, ctx.author, ActionType.BAN, temp_ban=True, duration=ban_duration
-        )
-
-        error_task = self.send_error(
-            ctx,
-            f"You have deleted {delete_count} messages in {self.delete_window//60} minutes. After the first {self.activation_threshold} deletions, you are now banned for {excess_deletes} minute(s).",
-        )
-
-        await ban_task
-        await error_task
-        return False
 
     async def pin_message_action(
         self,
@@ -2125,13 +2032,11 @@ class Threads(interactions.Extension):
         self, ctx: interactions.ComponentContext
     ) -> Optional[ActionDetails]:
         logger.info(f"on_manage_tags invoked with custom_id: {ctx.custom_id}")
-
         if not (match := self.manage_tags_regex_pattern.match(ctx.custom_id)):
             logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
             await self.send_error(ctx, "Invalid custom ID format.")
             return None
         post_id = int(match.group(1))
-
         try:
             post = await self.bot.fetch_channel(post_id)
             parent_forum = await self.bot.fetch_channel(ctx.channel.parent_id)
@@ -2141,12 +2046,10 @@ class Threads(interactions.Extension):
             )
             await self.send_error(ctx, "Failed to retrieve necessary channels.")
             return None
-
         if not isinstance(post, interactions.GuildForumPost):
             logger.warning(f"Channel {post_id} is not a GuildForumPost.")
             await self.send_error(ctx, "Invalid forum post.")
             return None
-
         tag_updates = {
             action: frozenset(
                 int(value.split(":")[1])
@@ -2155,7 +2058,6 @@ class Threads(interactions.Extension):
             )
             for action in ("add", "remove")
         }
-
         logger.info(f"Processing tag updates for post {post_id}: {tag_updates}")
         current_tags = frozenset(tag.id for tag in post.applied_tags)
         new_tags = (current_tags | tag_updates["add"]) - tag_updates["remove"]
@@ -2333,10 +2235,8 @@ class Threads(interactions.Extension):
     async def on_message_create_for_stats(self, event: MessageCreate) -> None:
         if not event.message.guild:
             return
-
         if not isinstance(event.message.channel, interactions.GuildForumPost):
             return
-
         if not event.message.channel.parent_id in self.FEATURED_CHANNELS:
             return
 
