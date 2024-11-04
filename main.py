@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import logging
 import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
+from logging.handlers import RotatingFileHandler
 from typing import (
     Any,
     AsyncGenerator,
@@ -39,39 +41,22 @@ from interactions.api.events import (
 )
 from interactions.client.errors import NotFound
 from interactions.ext.paginators import Paginator
-from loguru import logger
 from yarl import URL
 
 BASE_DIR: str = os.path.abspath(os.path.dirname(__file__))
 LOG_FILE: str = os.path.join(BASE_DIR, "threads.log")
 
-logger.remove()
-logger.add(
-    sink=LOG_FILE,
-    level="DEBUG",
-    format=(
-        "{time:YYYY-MM-DD HH:mm:ss.SSS ZZ} | "
-        "{process}:{thread} | "
-        "{level: <8} | "
-        "{name}:{function}:{line} - "
-        "{message}"
-    ),
-    filter=lambda record: (
-        record["name"].startswith("extensions.github_d_com__kazuki388_s_Threads.main")
-    ),
-    colorize=None,
-    serialize=False,
-    backtrace=True,
-    diagnose=True,
-    context=None,
-    enqueue=False,
-    catch=True,
-    rotation="1 MB",
-    retention=1,
-    compression="gz",
-    encoding="utf-8",
-    mode="a",
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter(
+    "%(asctime)s | %(process)d:%(thread)d | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d - %(message)s",
+    "%Y-%m-%d %H:%M:%S.%f %z",
 )
+file_handler = RotatingFileHandler(
+    LOG_FILE, maxBytes=1024 * 1024, backupCount=1, encoding="utf-8"
+)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
 # Model
 
@@ -132,7 +117,7 @@ class Model:
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
-            async with aiofiles.open(file_path, "rb") as file:
+            async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
                 loaded_data: Dict[str, Dict[str, list]] = (
                     orjson.loads(content) if content.strip() else {}
@@ -180,7 +165,7 @@ class Model:
                 | orjson.OPT_SERIALIZE_NUMPY,
             )
 
-            async with aiofiles.open(file_path, "wb") as file:
+            async with aiofiles.open(file_path, mode="wb") as file:
                 await file.write(json_data)
 
             logger.info(f"Successfully saved banned users data to {file_path}")
@@ -196,7 +181,7 @@ class Model:
                 serializable_permissions, option=orjson.OPT_INDENT_2
             )
 
-            async with aiofiles.open(file_path, "wb") as file:
+            async with aiofiles.open(file_path, mode="wb") as file:
                 await file.write(json_data)
 
             logger.info(f"Successfully saved thread permissions to {file_path}")
@@ -205,7 +190,7 @@ class Model:
 
     async def load_thread_permissions(self, file_path: str) -> None:
         try:
-            async with aiofiles.open(file_path, "rb") as file:
+            async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
                 loaded_data: Dict[str, List[str]] = orjson.loads(content)
 
@@ -223,7 +208,7 @@ class Model:
 
     async def load_post_stats(self, file_path: str) -> None:
         try:
-            async with aiofiles.open(file_path, "rb") as file:
+            async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
                 if not content.strip():
                     loaded_data: Dict[str, Dict[str, Any]] = {}
@@ -263,7 +248,7 @@ class Model:
                 serializable_stats,
                 option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
             )
-            async with aiofiles.open(file_path, "wb") as file:
+            async with aiofiles.open(file_path, mode="wb") as file:
                 await file.write(json_data)
             logger.info(f"Successfully saved post stats to {file_path}")
         except Exception as e:
@@ -2237,10 +2222,53 @@ class Threads(interactions.Extension):
             return
         if not isinstance(event.message.channel, interactions.GuildForumPost):
             return
-        if not event.message.channel.parent_id in self.FEATURED_CHANNELS:
+        if event.message.channel.parent_id not in self.FEATURED_CHANNELS:
             return
 
         await self.increment_message_count("{}".format(event.message.channel.id))
+
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_message_actions(self, event: MessageCreate) -> None:
+        msg = event.message
+        if not all(
+            (
+                msg.guild,
+                msg.message_reference,
+                isinstance(msg.channel, interactions.ThreadChannel),
+            )
+        ):
+            return
+
+        action = {
+            "del": "delete",
+            "pin": "pin",
+            "unpin": "unpin",
+        }.get(msg.content.casefold().strip())
+
+        if not action:
+            return
+
+        try:
+            if not (referenced_message := await msg.fetch_referenced_message()):
+                return
+
+            if not await self.can_manage_message(
+                msg.channel, msg.author, referenced_message
+            ):
+                return
+
+            await msg.delete()
+
+            await (
+                self.delete_message_action(msg, msg.channel, referenced_message)
+                if action == "delete"
+                else self.pin_message_action(
+                    msg, msg.channel, referenced_message, action == "pin"
+                )
+            )
+
+        except Exception as e:
+            logger.error(f"Error processing message action: {e}", exc_info=True)
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_processing(self, event: MessageCreate) -> None:
