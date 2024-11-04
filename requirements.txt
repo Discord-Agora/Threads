@@ -3,4 +3,3 @@ orjson
 discord-py-interactions
 cachetools
 yarl
-loguru
