@@ -1,8 +1,5 @@
 ## 2024-11-04
 
-### Added
-- A new channel ID mapping for post retrieval
-
 ### Changed
 - Removed redundant fetch_channel calls for forum and post
 
