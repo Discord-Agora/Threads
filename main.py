@@ -398,9 +398,9 @@ class Threads(interactions.Extension):
                 1169032829548630107,
                 1213345198147637268,
                 1183254117813071922,
-                1250396377540853801,
             ),
             1213490790341279754: (1185259262654562355,),
+            1277243048333541488: (1250396377540853801,),
         }
         self.ALLOWED_CHANNELS: Tuple[int, ...] = (
             1152311220557320202,
@@ -1470,7 +1470,6 @@ class Threads(interactions.Extension):
 
         for post_id, post_stats in sorted_stats:
             try:
-                post = await self.bot.fetch_channel(int(post_id))
                 last_active = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
 
                 current_embed.add_field(
@@ -1506,9 +1505,6 @@ class Threads(interactions.Extension):
 
         for forum_id, post_id in featured_posts.items():
             try:
-                forum = await self.bot.fetch_channel(int(forum_id))
-                post = await self.bot.fetch_channel(int(post_id))
-
                 post_stats = stats.get(post_id, PostStats())
                 timestamp = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -1747,7 +1743,7 @@ class Threads(interactions.Extension):
             logger.warning(f"User with ID {user_id} not found in the server")
             await self.send_error(
                 ctx,
-                f"Unable to find the user in the server. They may have left or been removed. Please verify the user is still in the server before trying again.",
+                "Unable to find the user in the server. They may have left or been removed. Please verify the user is still in the server before trying again.",
             )
             return None
         except ValueError:
