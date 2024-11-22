@@ -694,27 +694,113 @@ class Threads(interactions.Extension):
         embed.set_footer(text="鍵政大舞台")
         return embed
 
+    @functools.lru_cache(maxsize=1)
+    def _get_log_channels(self) -> tuple[int, int, int]:
+        return (
+            self.LOG_CHANNEL_ID,
+            self.LOG_POST_ID,
+            self.LOG_FORUM_ID,
+        )
+
     async def send_response(
         self,
-        ctx: interactions.InteractionContext,
+        ctx: Optional[
+            Union[
+                interactions.SlashContext,
+                interactions.InteractionContext,
+                interactions.ComponentContext,
+            ]
+        ],
         title: str,
         message: str,
         color: EmbedColor,
+        log_to_channel: bool = True,
     ) -> None:
-        await ctx.send(
-            embed=await self.create_embed(title, message, color),
-            ephemeral=True,
-        )
+        embed: interactions.Embed = await self.create_embed(title, message, color)
+
+        if ctx:
+            await ctx.send(embed=embed, ephemeral=True)
+
+        if log_to_channel:
+            LOG_CHANNEL_ID, LOG_POST_ID, LOG_FORUM_ID = self._get_log_channels()
+            await self.send_to_channel(LOG_CHANNEL_ID, embed)
+            await self.send_to_forum_post(LOG_FORUM_ID, LOG_POST_ID, embed)
+
+    async def send_to_channel(self, channel_id: int, embed: interactions.Embed) -> None:
+        try:
+            channel = await self.bot.fetch_channel(channel_id)
+
+            if not isinstance(
+                channel := (
+                    channel if isinstance(channel, interactions.GuildText) else None
+                ),
+                interactions.GuildText,
+            ):
+                logger.error(f"Channel ID {channel_id} is not a valid text channel.")
+                return
+
+            await channel.send(embed=embed)
+
+        except NotFound as nf:
+            logger.error(f"Channel with ID {channel_id} not found: {nf!r}")
+        except Exception as e:
+            logger.error(f"Error sending message to channel {channel_id}: {e!r}")
+
+    async def send_to_forum_post(
+        self, forum_id: int, post_id: int, embed: interactions.Embed
+    ) -> None:
+        try:
+            if not isinstance(
+                forum := await self.bot.fetch_channel(forum_id), interactions.GuildForum
+            ):
+                logger.error(f"Channel ID {forum_id} is not a valid forum channel.")
+                return
+
+            if not isinstance(
+                thread := await forum.fetch_post(post_id),
+                interactions.GuildPublicThread,
+            ):
+                logger.error(f"Post with ID {post_id} is not a valid thread.")
+                return
+
+            await thread.send(embed=embed)
+
+        except NotFound:
+            logger.error(f"{forum_id=}, {post_id=} - Forum or post not found")
+        except Exception as e:
+            logger.error(f"Forum post error [{forum_id=}, {post_id=}]: {e!r}")
 
     async def send_error(
-        self, ctx: interactions.InteractionContext, message: str
+        self,
+        ctx: Optional[
+            Union[
+                interactions.SlashContext,
+                interactions.InteractionContext,
+                interactions.ComponentContext,
+            ]
+        ],
+        message: str,
+        log_to_channel: bool = False,
     ) -> None:
-        await self.send_response(ctx, "Error", message, EmbedColor.ERROR)
+        await self.send_response(
+            ctx, "Error", message, EmbedColor.ERROR, log_to_channel
+        )
 
     async def send_success(
-        self, ctx: interactions.InteractionContext, message: str
+        self,
+        ctx: Optional[
+            Union[
+                interactions.SlashContext,
+                interactions.InteractionContext,
+                interactions.ComponentContext,
+            ]
+        ],
+        message: str,
+        log_to_channel: bool = False,
     ) -> None:
-        await self.send_response(ctx, "Success", message, EmbedColor.INFO)
+        await self.send_response(
+            ctx, "Success", message, EmbedColor.INFO, log_to_channel
+        )
 
     async def log_action_internal(self, details: ActionDetails) -> None:
         logger.debug(f"log_action_internal called for action: {details.action}")
@@ -1406,8 +1492,9 @@ class Threads(interactions.Extension):
                     await self.send_success(
                         ctx,
                         f"{target.mention} has been timed out until <t:{end_time}:R>.\n"
-                        f"Yes Votes: {votes.get('👍', 0)}\n"
-                        f"No Votes: {votes.get('👎', 0)}",
+                        f"- Yes Votes: {votes.get('👍', 0)}\n"
+                        f"- No Votes: {votes.get('👎', 0)}",
+                        log_to_channel=True
                     )
 
                 except Exception as e:
