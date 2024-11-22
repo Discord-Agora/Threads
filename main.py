@@ -1406,7 +1406,7 @@ class Threads(interactions.Extension):
         self.active_timeout_polls[user.id] = task
 
         await asyncio.sleep(60)
-        await self.active_timeout_polls.pop(user.id, None)
+        self.active_timeout_polls.pop(user.id, None)
 
     async def handle_timeout_poll(
         self,
@@ -1494,7 +1494,7 @@ class Threads(interactions.Extension):
                         f"{target.mention} has been timed out until <t:{end_time}:R>.\n"
                         f"- Yes Votes: {votes.get('👍', 0)}\n"
                         f"- No Votes: {votes.get('👎', 0)}",
-                        log_to_channel=True
+                        log_to_channel=True,
                     )
 
                 except Exception as e:
