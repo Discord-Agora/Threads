@@ -19,6 +19,7 @@ The **Threads** module is designed to manage thread-based conversations, user in
 - Pin and unpin messages within threads
 - View comprehensive statistics for posts and forums
 - Dynamic threshold adjustment based on server activity
+- Timeout voting system for temporary user restrictions
 
 ## Usage
 
@@ -29,6 +30,11 @@ The **Threads** module is designed to manage thread-based conversations, user in
   - Options: `reason` (string, required) - Reason for locking the thread
 - `/threads unlock`: Unlock the current thread
   - Options: `reason` (string, required) - Reason for unlocking the thread
+- `/threads timeout`: Start a timeout poll for a user
+  - Options:
+    - `user` (user, required) - The user to timeout
+    - `reason` (string, required) - Reason for timeout
+    - `duration` (integer, required) - Timeout duration in minutes (1-10)
 - `/threads list`: List information for current thread
   - Options: `type` (choice, required) - Select data type to view:
     - `Banned Users`: View banned users in current thread
@@ -50,6 +56,14 @@ The **Threads** module is designed to manage thread-based conversations, user in
 - User Context Menu:
   - **User in Thread**: Ban, unban, share permissions, or revoke permissions for a specific user within a thread
 
+### Quick Replies
+
+Messages can be managed by replying with these commands:
+
+- `del`: Delete the replied message
+- `pin`: Pin the replied message
+- `unpin`: Unpin the replied message
+
 ## Configuration
 
 Customize the module by adjusting the configuration variables and constants defined in `main.py`. Key configuration options include:
@@ -60,6 +74,8 @@ Customize the module by adjusting the configuration variables and constants defi
 - `TAIWAN_ROLE_ID`: ID of the role exempt from link transformation
 - `THREADS_ROLE_ID`: ID of the role required for debug commands
 - `GUILD_ID`: ID of your Discord server
+- `TIMEOUT_CHANNEL_IDS`: Channels where timeout voting is allowed
+- `TIMEOUT_REQUIRED_DIFFERENCE`: Required vote difference for timeout action
 - `ROLE_CHANNEL_PERMISSIONS`: Defines roles and their associated channels for permission management
 - `ALLOWED_CHANNELS`: Tuple of channel IDs where the module is active
 - `FEATURED_CHANNELS`: Channels where featured posts are selected
