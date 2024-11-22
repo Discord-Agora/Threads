@@ -39,7 +39,7 @@ from interactions.api.events import (
     MessageCreate,
     NewThreadCreate,
 )
-from interactions.client.errors import NotFound
+from interactions.client.errors import Forbidden, NotFound
 from interactions.ext.paginators import Paginator
 from yarl import URL
 
@@ -263,9 +263,7 @@ class Model:
                 await file.write(json_data)
             logger.info(f"Successfully saved selected posts to {file_path}")
         except Exception as e:
-            logger.exception(
-                f"Error saving selected posts to {file_path}: {e}", exc_info=True
-            )
+            logger.exception(f"Error saving selected posts to {file_path}: {e}")
 
     async def load_featured_posts(self, file_path: str) -> None:
         try:
@@ -281,9 +279,7 @@ class Model:
         except orjson.JSONDecodeError as json_err:
             logger.error(f"JSON decoding error in selected posts: {json_err}")
         except Exception as e:
-            logger.exception(
-                f"Unexpected error while loading selected posts: {e}", exc_info=True
-            )
+            logger.exception(f"Unexpected error while loading selected posts: {e}")
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
         cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
@@ -416,6 +412,13 @@ class Threads(interactions.Extension):
             1250396377540853801,
         )
         self.FEATURED_CHANNELS: Tuple[int, ...] = (1152311220557320202,)
+        self.TIMEOUT_CHANNEL_IDS: Tuple[int, ...] = (
+            1299458193507881051,
+            1150630511136481322,
+        )
+        self.TIMEOUT_REQUIRED_DIFFERENCE: int = 5
+        self.active_timeout_polls: Dict[int, asyncio.Task] = {}
+        self.TIMEOUT_DURATION: int = 30
         self.message_count_threshold: int = 200
         self.rotation_interval: timedelta = timedelta(hours=23)
         asyncio.create_task(self._initialize_data())
@@ -499,7 +502,9 @@ class Threads(interactions.Extension):
             if not isinstance(forum, interactions.GuildForum):
                 return
 
-            pinned_posts = [post async for post in forum.fetch_posts() if post.pinned]
+            posts = await forum.fetch_posts()
+            pinned_posts = [post for post in posts if post.pinned]
+
             for post in pinned_posts:
                 try:
                     await post.unpin(reason="Rotating featured posts.")
@@ -524,7 +529,8 @@ class Threads(interactions.Extension):
             else:
                 self.model.current_pinned_post = new_post_id
 
-            final_pinned = [post async for post in forum.fetch_posts() if post.pinned]
+            posts = await forum.fetch_posts()
+            final_pinned = [post for post in posts if post.pinned]
             if len(final_pinned) > 1:
                 logger.warning(f"Multiple posts pinned in channel {new_post.parent_id}")
 
@@ -635,7 +641,7 @@ class Threads(interactions.Extension):
 
         one_day_ago: datetime = current_time - timedelta(days=1)
         recent_activity: int = sum(
-            stat.last_activity >= one_day_ago for stat in post_stats
+            1 for stat in post_stats if stat.last_activity >= one_day_ago
         )
 
         self.rotation_interval = (
@@ -814,8 +820,8 @@ class Threads(interactions.Extension):
         }
         return color_mapping.get(action, EmbedColor.DEBUG).value
 
+    @staticmethod
     async def send_dm(
-        self,
         target: interactions.Member,
         embed: interactions.Embed,
         components: List[interactions.Button],
@@ -875,17 +881,17 @@ class Threads(interactions.Extension):
             for k, v in info.items()
         )
 
-    # Command methods
+    # Base commands
 
     module_base: interactions.SlashCommand = interactions.SlashCommand(
         name="threads", description="Threads commands"
     )
 
+    # Top commands
+
     @module_base.subcommand("top", sub_cmd_description="Return to the top")
     async def navigate_to_top_post(self, ctx: interactions.SlashContext) -> None:
-        thread: Union[interactions.TextChannel, interactions.ThreadChannel] = (
-            ctx.channel
-        )
+        thread: Union[interactions.GuildText, interactions.ThreadChannel] = ctx.channel
         if message_url := await self.fetch_oldest_message_url(thread):
             await self.send_success(
                 ctx,
@@ -896,6 +902,20 @@ class Threads(interactions.Extension):
                 ctx,
                 "Unable to find the top message in this thread. This could happen if the thread is empty or if there was an error accessing the message history. Please try again later or contact a moderator if the issue persists.",
             )
+
+    @staticmethod
+    async def fetch_oldest_message_url(
+        channel: Union[interactions.GuildText, interactions.ThreadChannel]
+    ) -> Optional[str]:
+        try:
+            async for message in channel.history(limit=1):
+                url = URL(message.jump_url)
+                return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
+        except Exception as e:
+            logger.error(f"Error fetching oldest message: {e}")
+        return None
+
+    # Lock commands
 
     @module_base.subcommand("lock", sub_cmd_description="Lock the current thread")
     @interactions.slash_option(
@@ -922,6 +942,72 @@ class Threads(interactions.Extension):
         self, ctx: interactions.SlashContext, reason: str
     ) -> ActionDetails:
         return await self.toggle_post_lock(ctx, ActionType.UNLOCK, reason)
+
+    @log_action
+    async def toggle_post_lock(
+        self, ctx: interactions.SlashContext, action: ActionType, reason: str
+    ) -> Optional[ActionDetails]:
+        if not await self.validate_channel(ctx):
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
+            return None
+
+        thread = ctx.channel
+        desired_state = action == ActionType.LOCK
+        action_name = action.name.lower()
+        action_past_tense: Literal["locked", "unlocked"] = (
+            "locked" if desired_state else "unlocked"
+        )
+
+        async def check_conditions() -> Optional[str]:
+            if thread.archived:
+                return f"Unable to {action_name} {thread.mention} because it is archived. Please unarchive the thread first."
+            if thread.locked == desired_state:
+                return f"This thread is already {action_name}ed. No changes were made."
+            permissions_check, error_message = await self.check_permissions(ctx)
+            return error_message if not permissions_check else None
+
+        if error_message := await check_conditions():
+            await self.send_error(ctx, error_message)
+            return None
+
+        try:
+            await asyncio.wait_for(thread.edit(locked=desired_state), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout while trying to {action_name} thread {thread.id}")
+            await self.send_error(
+                ctx,
+                f"The request to {action_name} the thread timed out. Please try again. If the issue persists, contact a moderator.",
+            )
+            return None
+        except Exception as e:
+            logger.exception(f"Failed to {action_name} thread {thread.id}")
+            await self.send_error(
+                ctx,
+                f"Failed to {action_name} the thread due to an error: {str(e)}. Please try again or contact a moderator if the issue persists.",
+            )
+            return None
+
+        await self.send_success(
+            ctx,
+            f"Thread has been successfully {action_past_tense}. All members will be notified of this change.",
+        )
+
+        return ActionDetails(
+            action=action,
+            reason=reason,
+            post_name=thread.name,
+            actor=ctx.author,
+            channel=thread,
+            additional_info={
+                "previous_state": "Unlocked" if action == ActionType.LOCK else "Locked",
+                "new_state": "Locked" if action == ActionType.LOCK else "Unlocked",
+            },
+        )
+
+    # Message commands
 
     @interactions.message_context_menu(name="Message in Thread")
     @log_action
@@ -967,22 +1053,26 @@ class Threads(interactions.Extension):
         embed: interactions.Embed = await self.create_embed(
             title="Message Actions",
             description="Select an action to perform on this message.",
-            color=EmbedColor.INFO,
         )
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
         return None
 
+    # Tags commands
+
     @interactions.message_context_menu(name="Tags in Post")
     @log_action
     async def manage_post_tags(self, ctx: interactions.ContextMenuContext) -> None:
         logger.info(f"manage_post_tags called for post {ctx.channel.id}")
+
         if not isinstance(ctx.channel, interactions.GuildForumPost):
             logger.warning(f"Invalid channel for manage_post_tags: {ctx.channel.id}")
             await self.send_error(ctx, "This command can only be used in forum posts.")
             return
 
-        has_perm, error_message = await self.check_permissions(ctx)
+        has_perm, error_message = await self.check_permissions(
+            interactions.SlashContext(ctx)
+        )
         if not has_perm:
             logger.warning(f"Insufficient permissions for user {ctx.author.id}")
             await self.send_error(ctx, error_message)
@@ -990,9 +1080,14 @@ class Threads(interactions.Extension):
 
         post: interactions.GuildForumPost = ctx.channel
         try:
-            available_tags: Tuple[interactions.ForumTag, ...] = (
+            available_tags: Tuple[interactions.ThreadTag, ...] = (
                 await self.fetch_available_tags(post.parent_id)
             )
+            if not available_tags:
+                logger.warning(f"No available tags found for forum {post.parent_id}")
+                await self.send_error(ctx, "No tags are available for this forum.")
+                return
+
             logger.info(f"Available tags for post {post.id}: {available_tags}")
         except Exception as e:
             logger.error(f"Error fetching available tags: {e}", exc_info=True)
@@ -1018,7 +1113,6 @@ class Threads(interactions.Extension):
             *options,
             placeholder="Select tags to add or remove",
             custom_id=f"manage_tags:{post.id}",
-            min_values=1,
             max_values=len(options),
         )
         logger.info(f"Created select menu with custom_id: manage_tags:{post.id}")
@@ -1026,7 +1120,6 @@ class Threads(interactions.Extension):
         embed: interactions.Embed = await self.create_embed(
             title="Tags in Post",
             description="Select tags to add or remove from this post. You can select multiple tags at once.",
-            color=EmbedColor.INFO,
         )
 
         try:
@@ -1041,6 +1134,22 @@ class Threads(interactions.Extension):
             await self.send_error(
                 ctx, "An error occurred while creating the tag management menu."
             )
+
+    async def fetch_available_tags(
+        self, parent_id: int
+    ) -> tuple[interactions.ThreadTag, ...]:
+        try:
+            channel: interactions.GuildChannel = await self.bot.fetch_channel(parent_id)
+            if not isinstance(channel, interactions.GuildForum):
+                logger.warning(f"Channel {parent_id} is not a forum channel")
+                return tuple()
+
+            return tuple(channel.available_tags or ())
+        except Exception as e:
+            logger.error(f"Error fetching available tags for channel {parent_id}: {e}")
+            return tuple()
+
+    # User commands
 
     @interactions.user_context_menu(name="User in Thread")
     @log_action
@@ -1110,10 +1219,256 @@ class Threads(interactions.Extension):
             description=f"Select action for {target_user.mention}:\n"
             f"Current status: {'Banned' if is_banned else 'Not banned'} in this thread.\n"
             f"Permissions: {'Shared' if has_permissions else 'Not shared'}",
-            color=EmbedColor.INFO,
         )
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
+
+    # Timeout commands
+
+    @module_base.subcommand(
+        "timeout", sub_cmd_description="Start a timeout poll for a user"
+    )
+    @interactions.slash_option(
+        name="user",
+        description="The user to timeout",
+        required=True,
+        opt_type=interactions.OptionType.USER,
+    )
+    @interactions.slash_option(
+        name="reason",
+        description="Reason for timeout",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="duration",
+        description="Timeout duration in minutes (max 10)",
+        required=True,
+        opt_type=interactions.OptionType.INTEGER,
+        min_value=1,
+        max_value=10,
+    )
+    async def timeout_poll(
+        self,
+        ctx: interactions.SlashContext,
+        user: Union[
+            interactions.PermissionOverwrite, interactions.Role, interactions.User
+        ],
+        reason: str,
+        duration: int,
+    ) -> None:
+        if not isinstance(user, interactions.Member):
+            await self.send_error(ctx, "Invalid user type provided.")
+            return
+
+        if any(
+            [
+                ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS,
+                await self.has_admin_permissions(user),
+                user.id in self.active_timeout_polls,
+            ]
+        ):
+            await self.send_error(
+                ctx,
+                next(
+                    filter(
+                        None,
+                        [
+                            (
+                                "This command can only be used in the designated timeout channels."
+                                if ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS
+                                else None
+                            ),
+                            (
+                                "You cannot start a timeout poll for administrators."
+                                if await self.has_admin_permissions(user)
+                                else None
+                            ),
+                            (
+                                f"There is already an active timeout poll for {user.mention}."
+                                if user.id in self.active_timeout_polls
+                                else None
+                            ),
+                        ],
+                    )
+                ),
+            )
+            return
+
+        embed = await self.create_embed(title="Timeout Poll", color=EmbedColor.WARN)
+        embed.add_field(name="User", value=user.mention, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=True)
+        embed.add_field(name="Duration", value=f"{duration} minutes", inline=True)
+        embed.add_field(
+            name="Required difference",
+            value=f"{self.TIMEOUT_REQUIRED_DIFFERENCE} votes",
+            inline=True,
+        )
+
+        end_time = int((datetime.now(timezone.utc) + timedelta(minutes=1)).timestamp())
+        embed.add_field(
+            name="Poll duration", value=f"Ends <t:{end_time}:R>", inline=True
+        )
+
+        message = await ctx.send(embeds=[embed])
+        await message.add_reaction("👍")
+        await message.add_reaction("👎")
+
+        task = asyncio.create_task(
+            self.handle_timeout_poll(ctx, message, user, reason, duration)
+        )
+        self.active_timeout_polls[user.id] = task
+
+        await asyncio.sleep(60)
+        await self.active_timeout_polls.pop(user.id, None)
+
+    async def handle_timeout_poll(
+        self,
+        ctx: interactions.SlashContext,
+        message: interactions.Message,
+        target: Union[
+            interactions.PermissionOverwrite, interactions.Role, interactions.User
+        ],
+        reason: str,
+        duration: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(60)
+            reactions = (await ctx.channel.fetch_message(message.id)).reactions
+
+            votes = {
+                r.emoji.name: r.count - 1
+                for r in reactions
+                if r.emoji.name in ("👍", "👎")
+            }
+            vote_diff = votes.get("👍", 0) - votes.get("👎", 0)
+
+            channel = ctx.channel
+            end_time = int(
+                (datetime.now(timezone.utc) + timedelta(minutes=duration)).timestamp()
+            )
+
+            if vote_diff >= self.TIMEOUT_REQUIRED_DIFFERENCE:
+                try:
+                    deny_perms = [
+                        interactions.Permissions.SEND_MESSAGES,
+                        interactions.Permissions.SEND_MESSAGES_IN_THREADS,
+                        interactions.Permissions.SEND_TTS_MESSAGES,
+                        interactions.Permissions.SEND_VOICE_MESSAGES,
+                        interactions.Permissions.ADD_REACTIONS,
+                        interactions.Permissions.ATTACH_FILES,
+                        interactions.Permissions.CREATE_INSTANT_INVITE,
+                        interactions.Permissions.MENTION_EVERYONE,
+                        interactions.Permissions.MANAGE_MESSAGES,
+                        interactions.Permissions.MANAGE_THREADS,
+                        interactions.Permissions.MANAGE_CHANNELS,
+                    ]
+
+                    forum_perms = [interactions.Permissions.CREATE_POSTS, *deny_perms]
+
+                    try:
+                        if hasattr(channel, "parent_channel"):
+                            target_channel = channel.parent_channel
+                            perms = forum_perms
+                        else:
+                            target_channel = channel
+                            perms = deny_perms
+
+                        reason_str = f"Member {target.display_name}({target.id}) timeout until <t:{end_time}:f> in Channel {target_channel.name} reason:{reason[:50] if len(reason) > 51 else reason}"
+                        await target_channel.add_permission(
+                            target, deny=perms, reason=reason_str
+                        )
+
+                    except Forbidden:
+                        await self.send_error(
+                            ctx,
+                            "The bot needs to have enough permissions! Please contact technical support!",
+                        )
+                        return
+
+                    asyncio.create_task(
+                        self.restore_permissions(target_channel, target, duration)
+                    )
+
+                    result_embed = await self.create_embed(title="Timeout Poll Result")
+                    result_embed.add_field(
+                        name="Status",
+                        value=f"{target.mention} has been timed out until <t:{end_time}:R>.",
+                        inline=True,
+                    )
+                    result_embed.add_field(
+                        name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
+                    )
+                    result_embed.add_field(
+                        name="No Votes", value=str(votes.get("👎", 0)), inline=True
+                    )
+
+                    await self.send_success(
+                        ctx,
+                        f"{target.mention} has been timed out until <t:{end_time}:R>.\n"
+                        f"Yes Votes: {votes.get('👍', 0)}\n"
+                        f"No Votes: {votes.get('👎', 0)}",
+                    )
+
+                except Exception as e:
+                    logger.error(f"Failed to apply timeout: {e}")
+                    await self.send_error(
+                        ctx, f"Failed to apply timeout to {target.mention}"
+                    )
+            else:
+                result_embed = await self.create_embed(title="Timeout Poll Result")
+                result_embed.add_field(
+                    name="Status",
+                    value=f"Timeout poll for {target.mention} failed.",
+                    inline=True,
+                )
+                result_embed.add_field(
+                    name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
+                )
+                result_embed.add_field(
+                    name="No Votes", value=str(votes.get("👎", 0)), inline=True
+                )
+                result_embed.add_field(
+                    name="Required difference",
+                    value=f"{self.TIMEOUT_REQUIRED_DIFFERENCE} votes",
+                    inline=True,
+                )
+
+            await ctx.channel.send(embeds=[result_embed])
+
+        except Exception as e:
+            logger.error(f"Error handling timeout poll: {e}", exc_info=True)
+            await self.send_error(
+                ctx, "An error occurred while processing the timeout poll."
+            )
+
+    async def restore_permissions(
+        self,
+        channel: Union[interactions.GuildChannel, interactions.ThreadChannel],
+        member: Union[
+            interactions.PermissionOverwrite, interactions.Role, interactions.User
+        ],
+        duration: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(duration * 60)
+            channel = getattr(channel, "parent_channel", channel)
+
+            end_time = int(datetime.now(timezone.utc).timestamp())
+            await channel.delete_permission(
+                member, reason=f"Timeout expired at <t:{end_time}:f>"
+            )
+
+            embed = await self.create_embed(title="Timeout Expired")
+            embed.add_field(
+                name="Status",
+                value=f"{member.mention}'s timeout has expired at <t:{end_time}:f>.",
+                inline=True,
+            )
+            await channel.send(embeds=[embed])
+
+        except Exception as e:
+            logger.error(f"Error restoring permissions: {e}", exc_info=True)
 
     # List commands
 
@@ -1633,70 +1988,6 @@ class Threads(interactions.Extension):
             },
         )
 
-    @log_action
-    async def toggle_post_lock(
-        self, ctx: interactions.SlashContext, action: ActionType, reason: str
-    ) -> Optional[ActionDetails]:
-        if not await self.validate_channel(ctx):
-            await self.send_error(
-                ctx,
-                "This command can only be used in threads. Please navigate to a thread channel and try again.",
-            )
-            return None
-
-        thread = ctx.channel
-        desired_state = action == ActionType.LOCK
-        action_name = action.name.lower()
-        action_past_tense: Literal["locked", "unlocked"] = (
-            "locked" if desired_state else "unlocked"
-        )
-
-        async def check_conditions() -> Optional[str]:
-            if thread.archived:
-                return f"Unable to {action_name} {thread.mention} because it is archived. Please unarchive the thread first."
-            if thread.locked == desired_state:
-                return f"This thread is already {action_name}ed. No changes were made."
-            permissions_check, error_message = await self.check_permissions(ctx)
-            return error_message if not permissions_check else None
-
-        if error_message := await check_conditions():
-            await self.send_error(ctx, error_message)
-            return None
-
-        try:
-            await asyncio.wait_for(thread.edit(locked=desired_state), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.warning(f"Timeout while trying to {action_name} thread {thread.id}")
-            await self.send_error(
-                ctx,
-                f"The request to {action_name} the thread timed out. Please try again. If the issue persists, contact a moderator.",
-            )
-            return None
-        except Exception as e:
-            logger.exception(f"Failed to {action_name} thread {thread.id}")
-            await self.send_error(
-                ctx,
-                f"Failed to {action_name} the thread due to an error: {str(e)}. Please try again or contact a moderator if the issue persists.",
-            )
-            return None
-
-        await self.send_success(
-            ctx,
-            f"Thread has been successfully {action_past_tense}. All members will be notified of this change.",
-        )
-
-        return ActionDetails(
-            action=action,
-            reason=reason,
-            post_name=thread.name,
-            actor=ctx.author,
-            channel=thread,
-            additional_info={
-                "previous_state": "Unlocked" if action == ActionType.LOCK else "Locked",
-                "new_state": "Locked" if action == ActionType.LOCK else "Unlocked",
-            },
-        )
-
     manage_user_regex_pattern = re.compile(r"manage_user:(\d+):(\d+):(\d+)")
 
     @interactions.component_callback(manage_user_regex_pattern)
@@ -2061,7 +2352,7 @@ class Threads(interactions.Extension):
 
         tag_names = {tag.id: tag.name for tag in parent_forum.available_tags}
         updates = [
-            f"Tag `{tag_names.get(tag_id, 'Unknown')}` {'added to' if action == 'add' else 'removed from'} the post."
+            f"Tag `{tag_names.get(str(tag_id), 'Unknown')}` {'added to' if action == 'add' else 'removed from'} the post."
             for action, tag_ids in tag_updates.items()
             if tag_ids
             for tag_id in tag_ids
@@ -2078,7 +2369,7 @@ class Threads(interactions.Extension):
                 "tag_updates": [
                     {
                         "Action": action.capitalize(),
-                        "Tag": tag_names.get(tag_id, "Unknown"),
+                        "Tag": tag_names.get(str(tag_id), "Unknown"),
                     }
                     for action, tag_ids in tag_updates.items()
                     if tag_ids
@@ -2087,7 +2378,8 @@ class Threads(interactions.Extension):
             },
         )
 
-    async def process_new_post(self, thread: interactions.GuildPublicThread) -> None:
+    @staticmethod
+    async def process_new_post(thread: interactions.GuildPublicThread) -> None:
         try:
             timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
             new_title = f"[{timestamp}] {thread.name}"
@@ -2096,7 +2388,6 @@ class Threads(interactions.Extension):
             poll = interactions.Poll.create(
                 question="您对此请愿持何意见？What is your position regarding this petition?",
                 duration=48,
-                allow_multiselect=False,
                 answers=["正  In Favor", "反  Opposed", "无  Abstain"],
             )
             await thread.send(poll=poll)
@@ -2160,18 +2451,55 @@ class Threads(interactions.Extension):
                 logger.exception(f"Failed to replace message: {str(e)}")
                 raise
 
-    async def fetch_oldest_message_url(
-        self, channel: Union[interactions.GuildText, interactions.ThreadChannel]
-    ) -> Optional[str]:
-        try:
-            async for message in channel.history(limit=1):
-                url = URL(message.jump_url)
-                return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
-        except Exception as e:
-            logger.error(f"Error fetching oldest message: {e}")
-        return None
+    @functools.lru_cache(maxsize=1024)
+    def sanitize_url(
+        self, url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
+    ) -> str:
+        u = URL(url_str)
+        query_params = frozenset(u.query.keys())
+        return str(
+            u.with_query({k: u.query[k] for k in preserve_params & query_params})
+        )
 
-    # Event methods
+    @functools.lru_cache(maxsize=1)
+    def get_link_transformations(self) -> list[tuple[re.Pattern, Callable[[str], str]]]:
+        return [
+            (
+                re.compile(
+                    r"https?://(?:www\.)?(?:b23\.tv|bilibili\.com/video/(?:BV\w+|av\d+))",
+                    re.IGNORECASE,
+                ),
+                lambda url: (
+                    self.sanitize_url(url)
+                    if "bilibili.com" in url.lower()
+                    else str(URL(url).with_host("b23.tf"))
+                ),
+            )
+        ]
+
+    async def transform_links(self, content: str) -> str:
+        patterns = self.get_link_transformations()
+        return await asyncio.to_thread(
+            lambda: re.sub(
+                r"https?://\S+",
+                lambda m: next(
+                    (
+                        transform(str(m.group(0)))
+                        for pattern, transform in patterns
+                        if pattern.match(str(m.group(0)))
+                    ),
+                    m.group(0),
+                ),
+                content,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @functools.lru_cache(maxsize=1)
+    def get_warning_message(self) -> str:
+        return "The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited."
+
+    # Task methods
 
     @interactions.Task.create(interactions.IntervalTrigger(hours=1))
     async def rotate_featured_posts_periodically(self) -> None:
@@ -2193,6 +2521,8 @@ class Threads(interactions.Extension):
                 f"Fatal error in featured posts rotation task: {e}", exc_info=True
             )
             raise
+
+    # Event methods
 
     @interactions.listen(ExtensionLoad)
     async def on_extension_load(self, event: ExtensionLoad) -> None:
@@ -2394,6 +2724,13 @@ class Threads(interactions.Extension):
             and bool(event.message.content)
         )
 
+    @staticmethod
+    async def has_admin_permissions(member: interactions.Member) -> bool:
+        return any(
+            role.permissions & interactions.Permissions.ADMINISTRATOR
+            for role in member.roles
+        )
+
     async def can_manage_message(
         self,
         thread: interactions.ThreadChannel,
@@ -2412,62 +2749,9 @@ class Threads(interactions.Extension):
             and not any(role.id == self.TAIWAN_ROLE_ID for role in member.roles)
         )
 
-    # Utility methods
-
     async def is_user_banned(
         self, channel_id: str, post_id: str, author_id: str
     ) -> bool:
         return await asyncio.to_thread(
             self.model.is_user_banned, channel_id, post_id, author_id
         )
-
-    async def fetch_available_tags(
-        self, parent_id: int
-    ) -> tuple[interactions.ForumTag, ...]:
-        channel: interactions.GuildChannel = await self.bot.fetch_channel(parent_id)
-        return tuple(channel.available_tags or ())
-
-    @functools.lru_cache(maxsize=1024)
-    def sanitize_url(
-        self, url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
-    ) -> str:
-        u = URL(url_str)
-        return str(u.with_query({k: u.query[k] for k in preserve_params & u.query}))
-
-    @functools.lru_cache(maxsize=1)
-    def get_link_transformations(self) -> list[tuple[re.Pattern, Callable[[str], str]]]:
-        return [
-            (
-                re.compile(
-                    r"https?://(?:www\.)?(?:b23\.tv|bilibili\.com/video/(?:BV\w+|av\d+))",
-                    re.IGNORECASE,
-                ),
-                lambda url: (
-                    self.sanitize_url(url)
-                    if "bilibili.com" in url.lower()
-                    else str(URL(url).with_host("b23.tf"))
-                ),
-            )
-        ]
-
-    async def transform_links(self, content: str) -> str:
-        patterns = self.get_link_transformations()
-        return await asyncio.to_thread(
-            lambda: re.sub(
-                r"https?://\S+",
-                lambda m: next(
-                    (
-                        transform(str(m.group(0)))
-                        for pattern, transform in patterns
-                        if pattern.match(str(m.group(0)))
-                    ),
-                    m.group(0),
-                ),
-                content,
-                flags=re.IGNORECASE,
-            )
-        )
-
-    @functools.lru_cache(maxsize=1)
-    def get_warning_message(self) -> str:
-        return "The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited."
