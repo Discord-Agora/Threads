@@ -378,7 +378,10 @@ class Threads(interactions.Extension):
         self.LOG_CHANNEL_ID: int = 1166627731916734504
         self.LOG_FORUM_ID: int = 1159097493875871784
         self.LOG_POST_ID: int = 1279118293936111707
-        self.POLL_FORUM_ID: int = 1155914521907568740
+        self.POLL_FORUM_ID: Tuple[int, ...] = (
+            1155914521907568740,
+            1196707789859459132,
+        )
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
         self.THREADS_ROLE_ID: int = 1223635198327914639
         self.GUILD_ID: int = 1150630510696075404
@@ -2473,7 +2476,7 @@ class Threads(interactions.Extension):
             await thread.edit(name=new_title)
 
             poll = interactions.Poll.create(
-                question="您对此请愿持何意见？What is your position regarding this petition?",
+                question="您对此持何意见？What is your position?",
                 duration=48,
                 answers=["正  In Favor", "反  Opposed", "无  Abstain"],
             )
@@ -2714,7 +2717,7 @@ class Threads(interactions.Extension):
     async def on_new_thread_create_for_processing(self, event: NewThreadCreate) -> None:
         if not (
             isinstance(event.thread, interactions.GuildPublicThread)
-            and event.thread.parent_id == self.POLL_FORUM_ID
+            and event.thread.parent_id in self.POLL_FORUM_ID
             and (owner_id := event.thread.owner_id) is not None
             and (
                 owner := await (await self.bot.fetch_guild(self.GUILD_ID)).fetch_member(
