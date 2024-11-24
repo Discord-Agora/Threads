@@ -380,7 +380,6 @@ class Threads(interactions.Extension):
         self.LOG_POST_ID: int = 1279118293936111707
         self.POLL_FORUM_ID: Tuple[int, ...] = (
             1155914521907568740,
-            1196707789859459132,
         )
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
         self.THREADS_ROLE_ID: int = 1223635198327914639
