@@ -20,6 +20,7 @@ The **Threads** module is designed to manage thread-based conversations, user in
 - View comprehensive statistics for posts and forums
 - Dynamic threshold adjustment based on server activity
 - Timeout voting system for temporary user restrictions
+- Convert channel names between different Chinese variants
 
 ## Usage
 
@@ -46,6 +47,20 @@ The **Threads** module is designed to manage thread-based conversations, user in
     - `Thread Permissions`: View all thread permission assignments
     - `Post Statistics`: View post activity statistics
     - `Featured Threads`: View featured threads and their metrics
+- `/threads convert`: Convert channel names between different Chinese variants
+  - Options:
+    - `source` (choice, required) - Source language variant:
+      - Simplified Chinese (Mainland China)
+      - Traditional Chinese (Taiwan)
+      - Traditional Chinese (Hong Kong)
+      - Traditional Chinese (Mainland China)
+      - Japanese Shinjitai
+    - `target` (choice, required) - Target language variant (same options as source)
+    - `scope` (choice, required) - What to convert:
+      - All
+      - Server Name Only
+      - Roles Only
+      - Channels Only
 
 ### Context Menus
 
@@ -70,12 +85,17 @@ Customize the module by adjusting the configuration variables and constants defi
 
 - `LOG_CHANNEL_ID`: ID of the channel where logs will be sent
 - `LOG_FORUM_ID`: ID of the forum channel for logging purposes
+- `LOG_POST_ID`: ID of the post where logs will be sent
 - `POLL_FORUM_ID`: ID of the forum channel where polls are created
 - `TAIWAN_ROLE_ID`: ID of the role exempt from link transformation
 - `THREADS_ROLE_ID`: ID of the role required for debug commands
 - `GUILD_ID`: ID of your Discord server
+- `CONGRESS_ID`: ID of the congress forum
+- `CONGRESS_MEMBER_ROLE`: ID of the congress member role
+- `CONGRESS_MOD_ROLE`: ID of the congress moderator role
 - `TIMEOUT_CHANNEL_IDS`: Channels where timeout voting is allowed
 - `TIMEOUT_REQUIRED_DIFFERENCE`: Required vote difference for timeout action
+- `TIMEOUT_DURATION`: Default timeout duration in minutes
 - `ROLE_CHANNEL_PERMISSIONS`: Defines roles and their associated channels for permission management
 - `ALLOWED_CHANNELS`: Tuple of channel IDs where the module is active
 - `FEATURED_CHANNELS`: Channels where featured posts are selected
