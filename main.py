@@ -32,6 +32,7 @@ import aiofiles
 import aiofiles.os
 import interactions
 import orjson
+import StarCC
 from cachetools import TTLCache
 from interactions.api.events import (
     ExtensionLoad,
@@ -114,6 +115,7 @@ class Model:
         self.post_stats: Dict[str, PostStats] = {}
         self.featured_posts: Dict[str, str] = {}
         self.current_pinned_post: Optional[str] = None
+        self.converters: Dict[str, StarCC.PresetConversion] = {}
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
@@ -210,10 +212,9 @@ class Model:
         try:
             async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
-                if not content.strip():
-                    loaded_data: Dict[str, Dict[str, Any]] = {}
-                else:
-                    loaded_data: Dict[str, Dict[str, Any]] = orjson.loads(content)
+                loaded_data: Dict[str, Dict[str, Any]] = (
+                    {} if not content.strip() else orjson.loads(content)
+                )
 
             self.post_stats = {
                 post_id: PostStats(
@@ -286,13 +287,13 @@ class Model:
         current_time: datetime = datetime.now(timezone.utc)
 
         if cache_key in self.ban_cache:
-            is_banned, timestamp = self.ban_cache[cache_key]
+            cached_result, timestamp = self.ban_cache[cache_key]
             if current_time - timestamp < self.CACHE_DURATION:
-                return is_banned
+                return cached_result
 
-        is_banned: bool = user_id in self.banned_users[channel_id][post_id]
-        self.ban_cache[cache_key] = (is_banned, current_time)
-        return is_banned
+        result: bool = user_id in self.banned_users[channel_id][post_id]
+        self.ban_cache[cache_key] = (result, current_time)
+        return result
 
     async def invalidate_ban_cache(
         self, channel_id: str, post_id: str, user_id: str
@@ -367,6 +368,8 @@ class Threads(interactions.Extension):
         self.bot: interactions.Client = bot
         self.model: Model = Model()
         self.ban_lock: asyncio.Lock = asyncio.Lock()
+        self.conversion_task: Optional[asyncio.Task] = None
+
         self.BANNED_USERS_FILE: str = os.path.join(
             os.path.dirname(__file__), "banned_users.json"
         )
@@ -417,17 +420,19 @@ class Threads(interactions.Extension):
             1150630511136481322,
         )
         self.TIMEOUT_REQUIRED_DIFFERENCE: int = 5
-        self.active_timeout_polls: Dict[int, asyncio.Task] = {}
         self.TIMEOUT_DURATION: int = 30
+
+        self.active_timeout_polls: Dict[int, asyncio.Task] = {}
         self.message_count_threshold: int = 200
         self.rotation_interval: timedelta = timedelta(hours=23)
-        asyncio.create_task(self._initialize_data())
         self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
         ) - timedelta(days=8)
 
-    async def _initialize_data(self) -> None:
+        asyncio.create_task(self.initialize_data())
+
+    async def initialize_data(self) -> None:
         await asyncio.gather(
             self.model.load_banned_users(self.BANNED_USERS_FILE),
             self.model.load_thread_permissions(self.THREAD_PERMISSIONS_FILE),
@@ -695,7 +700,7 @@ class Threads(interactions.Extension):
         return embed
 
     @functools.lru_cache(maxsize=1)
-    def _get_log_channels(self) -> tuple[int, int, int]:
+    def get_log_channels(self) -> tuple[int, int, int]:
         return (
             self.LOG_CHANNEL_ID,
             self.LOG_POST_ID,
@@ -722,9 +727,9 @@ class Threads(interactions.Extension):
             await ctx.send(embed=embed, ephemeral=True)
 
         if log_to_channel:
-            LOG_CHANNEL_ID, LOG_POST_ID, LOG_FORUM_ID = self._get_log_channels()
-            await self.send_to_channel(LOG_CHANNEL_ID, embed)
-            await self.send_to_forum_post(LOG_FORUM_ID, LOG_POST_ID, embed)
+            log_channel_id, log_post_id, log_forum_id = self.get_log_channels()
+            await self.send_to_channel(log_channel_id, embed)
+            await self.send_to_forum_post(log_forum_id, log_post_id, embed)
 
     async def send_to_channel(self, channel_id: int, embed: interactions.Embed) -> None:
         try:
@@ -973,6 +978,249 @@ class Threads(interactions.Extension):
         name="threads", description="Threads commands"
     )
 
+    # Convert commands
+
+    @module_base.subcommand(
+        "convert",
+        sub_cmd_description="Convert channel names between different Chinese variants",
+    )
+    @interactions.slash_option(
+        name="source",
+        description="Source language variant",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(
+                name="Simplified Chinese (Mainland China)", value="cn"
+            ),
+            interactions.SlashCommandChoice(
+                name="Traditional Chinese (Taiwan)", value="tw"
+            ),
+            interactions.SlashCommandChoice(
+                name="Traditional Chinese (Hong Kong)", value="hk"
+            ),
+            interactions.SlashCommandChoice(
+                name="Traditional Chinese (Mainland China)", value="cnt"
+            ),
+            interactions.SlashCommandChoice(name="Japanese Shinjitai", value="jp"),
+        ],
+    )
+    @interactions.slash_option(
+        name="target",
+        description="Target language variant",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(
+                name="Simplified Chinese (Mainland China)", value="cn"
+            ),
+            interactions.SlashCommandChoice(
+                name="Traditional Chinese (Taiwan)", value="tw"
+            ),
+            interactions.SlashCommandChoice(
+                name="Traditional Chinese (Hong Kong)", value="hk"
+            ),
+            interactions.SlashCommandChoice(
+                name="Traditional Chinese (Mainland China)", value="cnt"
+            ),
+            interactions.SlashCommandChoice(name="Japanese Shinjitai", value="jp"),
+        ],
+    )
+    @interactions.slash_option(
+        name="scope",
+        description="What to convert",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(name="All", value="all"),
+            interactions.SlashCommandChoice(name="Server Name Only", value="server"),
+            interactions.SlashCommandChoice(name="Roles Only", value="roles"),
+            interactions.SlashCommandChoice(name="Channels Only", value="channels"),
+        ],
+    )
+    @interactions.slash_default_member_permission(
+        interactions.Permissions.ADMINISTRATOR
+    )
+    @interactions.max_concurrency(interactions.Buckets.GUILD, 1)
+    async def convert_names(
+        self, ctx: interactions.SlashContext, source: str, target: str, scope: str
+    ) -> None:
+        if not ctx.author.guild_permissions.ADMINISTRATOR:
+            await self.send_error(ctx, "Only administrators can use this command.")
+            return
+
+        if source == target:
+            await self.send_error(
+                ctx, "Source and target languages cannot be the same."
+            )
+            return
+
+        supported_pairs = {
+            ("cn", "tw"),
+            ("cn", "hk"),
+            ("cn", "cnt"),
+            ("cn", "jp"),
+            ("tw", "hk"),
+            ("tw", "cnt"),
+            ("tw", "jp"),
+            ("hk", "cnt"),
+            ("hk", "jp"),
+            ("cnt", "jp"),
+        }
+        conversion_pair = tuple(sorted([source, target]))
+        if conversion_pair not in {tuple(sorted(pair)) for pair in supported_pairs}:
+            await self.send_error(
+                ctx,
+                f"Conversion between {source.upper()} and {target.upper()} is not supported. Please choose a supported language pair.",
+            )
+            return
+
+        converter_key = f"{source}2{target}"
+        if converter_key not in self.model.converters:
+            with_phrase = {source, target} == {"cn", "tw"}
+            self.model.converters[converter_key] = StarCC.PresetConversion(
+                src=source, dst=target, with_phrase=with_phrase
+            )
+
+        await self.send_success(
+            ctx,
+            "Starting conversion task. This may take a while depending on the server size.",
+            log_to_channel=True,
+        )
+
+        task = asyncio.create_task(
+            self.perform_conversion(ctx.guild, f"{source}2{target}", scope)
+        )
+        self.conversion_task = task
+        await task
+
+    async def perform_conversion(
+        self,
+        guild: interactions.Guild,
+        direction: str,
+        scope: str,
+    ) -> None:
+        src, dst = direction.split("2")
+        converter = self.model.converters[f"{src}2{dst}"]
+        direction_name = f"{direction[:2].upper()} to {direction[3:].upper()}"
+
+        try:
+            if scope in ("all", "server"):
+                if guild.name and (new_name := converter(guild.name)) != guild.name:
+                    await guild.edit(name=new_name)
+                    await asyncio.sleep(2)
+
+                if (
+                    guild.description
+                    and (new_desc := converter(guild.description)) != guild.description
+                ):
+                    await guild.edit(description=new_desc)
+                    await asyncio.sleep(2)
+
+            if scope in ("all", "roles"):
+                for i, role in enumerate(guild.roles):
+                    if role.name and role.position != 0:
+                        if (new_name := converter(role.name)) != role.name:
+                            try:
+                                await role.edit(name=new_name)
+                                await asyncio.sleep(1 + (1 if (i + 1) % 10 == 0 else 0))
+                            except Exception as e:
+                                logger.error(f"Role update failed: {e}")
+
+            if scope in ("all", "channels"):
+                channels = set()
+                for channel in guild.channels:
+                    if channel.id not in channels:
+                        channels.add(channel.id)
+                        try:
+                            if (
+                                channel.name
+                                and (new_name := converter(channel.name))
+                                != channel.name
+                            ):
+                                await channel.edit(name=new_name)
+                                await asyncio.sleep(2)
+
+                            if isinstance(
+                                channel,
+                                (interactions.GuildText, interactions.GuildNews),
+                            ):
+                                if (
+                                    channel.topic
+                                    and (new_topic := converter(channel.topic))
+                                    != channel.topic
+                                ):
+                                    await channel.edit(topic=new_topic)
+                                    await asyncio.sleep(2)
+
+                            if (
+                                isinstance(channel, interactions.GuildForum)
+                                and channel.available_tags
+                            ):
+                                for tag in channel.available_tags:
+                                    if (
+                                        new_tag_name := converter(tag.name)
+                                    ) != tag.name:
+                                        await channel.edit_tag(
+                                            tag.id, name=new_tag_name
+                                        )
+                                        await asyncio.sleep(2)
+
+                        except Exception as e:
+                            logger.error(f"Channel conversion failed: {e}")
+
+                        if isinstance(channel, interactions.GuildCategory):
+                            for child in channel.channels:
+                                if child.id not in channels:
+                                    channels.add(child.id)
+                                    try:
+                                        if (
+                                            child.name
+                                            and (new_name := converter(child.name))
+                                            != child.name
+                                        ):
+                                            await child.edit(name=new_name)
+                                            await asyncio.sleep(2)
+
+                                        if isinstance(
+                                            child,
+                                            (
+                                                interactions.GuildText,
+                                                interactions.GuildNews,
+                                            ),
+                                        ):
+                                            if (
+                                                child.topic
+                                                and (
+                                                    new_topic := converter(child.topic)
+                                                )
+                                                != child.topic
+                                            ):
+                                                await child.edit(topic=new_topic)
+                                                await asyncio.sleep(2)
+
+                                        if (
+                                            isinstance(child, interactions.GuildForum)
+                                            and child.available_tags
+                                        ):
+                                            for tag in child.available_tags:
+                                                if (
+                                                    new_tag_name := converter(tag.name)
+                                                ) != tag.name:
+                                                    await child.edit_tag(
+                                                        tag.id, name=new_tag_name
+                                                    )
+                                                    await asyncio.sleep(2)
+
+                                    except Exception as e:
+                                        logger.error(f"Channel conversion failed: {e}")
+
+            logger.info(f"Conversion to {direction_name} completed successfully")
+
+        except Exception as e:
+            logger.error(f"Error during conversion: {e}", exc_info=True)
+            raise
+
     # Top commands
 
     @module_base.subcommand("top", sub_cmd_description="Return to the top")
@@ -1110,7 +1358,7 @@ class Threads(interactions.Extension):
         post: interactions.ThreadChannel = ctx.channel
         message: interactions.Message = ctx.target
 
-        if not await self.can_manage_message(post, ctx.author, message):
+        if not await self.can_manage_message(post, ctx.author):
             await self.send_error(
                 ctx,
                 "You don't have sufficient permissions to manage this message. You need to be either a moderator or the message author.",
@@ -1406,7 +1654,7 @@ class Threads(interactions.Extension):
         self.active_timeout_polls[user.id] = task
 
         await asyncio.sleep(60)
-        self.active_timeout_polls.pop(user.id, None)
+        await self.active_timeout_polls.pop(user.id, None)
 
     async def handle_timeout_poll(
         self,
@@ -1574,8 +1822,11 @@ class Threads(interactions.Extension):
             ),
             interactions.SlashCommandChoice(name="Post Statistics", value="stats"),
         ],
+        argument_name="list_type",
     )
-    async def list_thread_info(self, ctx: interactions.SlashContext, type: str) -> None:
+    async def list_thread_info(
+        self, ctx: interactions.SlashContext, list_type: str
+    ) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(
                 ctx,
@@ -1592,7 +1843,7 @@ class Threads(interactions.Extension):
 
         channel_id, post_id = str(ctx.channel.parent_id), str(ctx.channel.id)
 
-        match type:
+        match list_type:
             case "banned":
                 banned_users = self.model.banned_users[channel_id][post_id]
 
@@ -1698,12 +1949,6 @@ class Threads(interactions.Extension):
 
     # Debug commands
 
-    async def has_threads_role(ctx: interactions.BaseContext) -> bool:
-        return any(
-            role.id == ctx.command.extension.THREADS_ROLE_ID
-            for role in ctx.author.roles
-        )
-
     @module_base.subcommand("view", sub_cmd_description="View configuration files")
     @interactions.slash_option(
         name="type",
@@ -1718,10 +1963,18 @@ class Threads(interactions.Extension):
             interactions.SlashCommandChoice(name="Post Statistics", value="stats"),
             interactions.SlashCommandChoice(name="Featured Threads", value="featured"),
         ],
+        argument_name="view_type",
     )
-    @interactions.check(has_threads_role)
-    async def list_debug_info(self, ctx: interactions.SlashContext, type: str) -> None:
-        match type:
+    async def list_debug_info(
+        self, ctx: interactions.SlashContext, view_type: str
+    ) -> None:
+        if not any(role.id == self.THREADS_ROLE_ID for role in ctx.author.roles):
+            await self.send_error(
+                ctx, "You do not have permission to use this command."
+            )
+            return
+
+        match view_type:
             case "banned":
                 banned_users = await self._get_merged_banned_users()
                 embeds = await self._create_banned_user_embeds(banned_users)
@@ -2470,18 +2723,15 @@ class Threads(interactions.Extension):
         thread: interactions.GuildPublicThread, create_poll: bool = True
     ) -> None:
         try:
-            timestamp = int(datetime.now(timezone.utc).timestamp())
-            base = f"[{timestamp & 0xFFFF:04x}"
-            thread_id = thread.id
-            seq = f"{thread_id & 0xFFFF:04d}]"
-            new_title = base + seq + " " + thread.name
+            timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
+            new_title = f"[{timestamp}] {thread.name}"
 
             tasks = [thread.edit(name=new_title)]
             if create_poll:
                 poll = interactions.Poll.create(
                     question="您对此持何意见？What is your position?",
                     duration=48,
-                    answers=("正  In Favor", "反  Opposed", "无  Abstain"),
+                    answers=["正  In Favor", "反  Opposed", "无  Abstain"],
                 )
                 tasks.append(thread.send(poll=poll))
 
@@ -2620,11 +2870,11 @@ class Threads(interactions.Extension):
     # Event methods
 
     @interactions.listen(ExtensionLoad)
-    async def on_extension_load(self, event: ExtensionLoad) -> None:
+    async def on_extension_load(self) -> None:
         self.rotate_featured_posts_periodically.start()
 
     @interactions.listen(ExtensionUnload)
-    async def on_extension_unload(self, event: ExtensionUnload) -> None:
+    async def on_extension_unload(self) -> None:
         tasks_to_stop: tuple = (self.rotate_featured_posts_periodically,)
         for task in tasks_to_stop:
             task.stop()
@@ -2673,9 +2923,7 @@ class Threads(interactions.Extension):
             if not (referenced_message := await msg.fetch_referenced_message()):
                 return
 
-            if not await self.can_manage_message(
-                msg.channel, msg.author, referenced_message
-            ):
+            if not await self.can_manage_message(msg.channel, msg.author):
                 return
 
             await msg.delete()
@@ -2857,7 +3105,6 @@ class Threads(interactions.Extension):
         self,
         thread: interactions.ThreadChannel,
         user: interactions.Member,
-        message: interactions.Message,
     ) -> bool:
         return await self.can_manage_post(thread, user)
 
