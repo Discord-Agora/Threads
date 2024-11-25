@@ -378,9 +378,7 @@ class Threads(interactions.Extension):
         self.LOG_CHANNEL_ID: int = 1166627731916734504
         self.LOG_FORUM_ID: int = 1159097493875871784
         self.LOG_POST_ID: int = 1279118293936111707
-        self.POLL_FORUM_ID: Tuple[int, ...] = (
-            1155914521907568740,
-        )
+        self.POLL_FORUM_ID: Tuple[int, ...] = (1155914521907568740,)
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
         self.THREADS_ROLE_ID: int = 1223635198327914639
         self.GUILD_ID: int = 1150630510696075404
@@ -2468,23 +2466,31 @@ class Threads(interactions.Extension):
         )
 
     @staticmethod
-    async def process_new_post(thread: interactions.GuildPublicThread) -> None:
+    async def process_new_post(
+        thread: interactions.GuildPublicThread, create_poll: bool = True
+    ) -> None:
         try:
-            timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
-            new_title = f"[{timestamp}] {thread.name}"
-            await thread.edit(name=new_title)
+            timestamp = int(datetime.now(timezone.utc).timestamp())
+            base = f"[{timestamp & 0xFFFF:04x}"
+            thread_id = thread.id
+            seq = f"{thread_id & 0xFFFF:04d}]"
+            new_title = base + seq + " " + thread.name
 
-            poll = interactions.Poll.create(
-                question="您对此持何意见？What is your position?",
-                duration=48,
-                answers=["正  In Favor", "反  Opposed", "无  Abstain"],
-            )
-            await thread.send(poll=poll)
+            tasks = [thread.edit(name=new_title)]
+            if create_poll:
+                poll = interactions.Poll.create(
+                    question="您对此持何意见？What is your position?",
+                    duration=48,
+                    answers=("正  In Favor", "反  Opposed", "无  Abstain"),
+                )
+                tasks.append(thread.send(poll=poll))
+
+            for task in tasks:
+                await task
 
         except Exception as e:
-            logger.error(
-                f"Error processing thread {thread.id}: {str(e)}", exc_info=True
-            )
+            error_msg = f"Error processing thread {thread.id}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
 
     async def process_link(self, event: MessageCreate) -> None:
         if not self.should_process_link(event):
@@ -2643,7 +2649,7 @@ class Threads(interactions.Extension):
         await self.increment_message_count("{}".format(event.message.channel.id))
 
     @interactions.listen(MessageCreate)
-    async def on_message_create_for_message_actions(self, event: MessageCreate) -> None:
+    async def on_message_create_for_actions(self, event: MessageCreate) -> None:
         msg = event.message
         if not all(
             (
@@ -2686,7 +2692,7 @@ class Threads(interactions.Extension):
             logger.error(f"Error processing message action: {e}", exc_info=True)
 
     @interactions.listen(MessageCreate)
-    async def on_message_create_for_processing(self, event: MessageCreate) -> None:
+    async def on_message_create_for_link(self, event: MessageCreate) -> None:
         if not event.message.guild:
             return
 
@@ -2713,20 +2719,47 @@ class Threads(interactions.Extension):
             await link_task
 
     @interactions.listen(NewThreadCreate)
-    async def on_new_thread_create_for_processing(self, event: NewThreadCreate) -> None:
-        if not (
-            isinstance(event.thread, interactions.GuildPublicThread)
-            and event.thread.parent_id in self.POLL_FORUM_ID
-            and (owner_id := event.thread.owner_id) is not None
-            and (
-                owner := await (await self.bot.fetch_guild(self.GUILD_ID)).fetch_member(
-                    owner_id
-                )
-            )
-            and not owner.bot
-        ):
+    async def on_new_thread_create_for_poll(self, event: NewThreadCreate) -> None:
+        thread = event.thread
+        parent_id = thread.parent_id
+
+        if not isinstance(thread, interactions.GuildForumPost):
+            logger.debug(f"Thread {thread.id} is not a forum post, skipping")
             return
-        await self.process_new_post(event.thread)
+
+        if not (parent_id in self.POLL_FORUM_ID or parent_id == self.CONGRESS_ID):
+            logger.debug(
+                f"Thread {thread.id} parent {parent_id} is not a monitored forum, skipping"
+            )
+            return
+
+        owner_id = event.thread.owner_id
+        if not owner_id:
+            logger.debug(f"Thread {thread.id} has no owner, skipping")
+            return
+
+        guild = await self.bot.fetch_guild(self.GUILD_ID)
+        owner = await guild.fetch_member(owner_id)
+        if not owner or owner.bot:
+            logger.debug(
+                f"Thread {thread.id} owner {owner_id} is invalid or bot, skipping"
+            )
+            return
+
+        forum_id = parent_id if isinstance(parent_id, int) else parent_id[0]
+        skip_tags = {
+            self.POLL_FORUM_ID: {1242530950970216590, 1184022078278602825},
+            self.CONGRESS_ID: {1196707934877528075, 1276909294565986438},
+        }.get(forum_id, set())
+
+        thread_tags = {tag.id for tag in thread.applied_tags}
+        create_poll = not bool(skip_tags & thread_tags)
+
+        logger.info(
+            f"Processing thread {thread.id} in forum {forum_id}. Thread tags: {thread_tags}. Skip tags: {skip_tags}. Tags intersection: {skip_tags & thread_tags}. Will create poll: {create_poll}"
+        )
+
+        await self.process_new_post(thread, create_poll=create_poll)
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_banned_users(self, event: MessageCreate) -> None:
