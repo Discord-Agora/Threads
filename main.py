@@ -1420,7 +1420,7 @@ class Threads(interactions.Extension):
         message: interactions.Message,
         display_result: Optional[bool] = True,
     ) -> Optional[ActionDetails]:
-        if not self.model.groq_api_key or not self.client:
+        if not (self.model.groq_api_key and self.client):
             logger.error("AI API configuration is missing")
             await self.send_error(ctx, "The AI service is not configured.")
             return None
@@ -1433,84 +1433,139 @@ class Threads(interactions.Extension):
             )
             return None
 
-        if message.author.bot:
-            await self.send_error(ctx, "Bot messages cannot be checked for abuse.")
-            return None
-
-        message_age = datetime.now(timezone.utc) - message.created_at
-        if message_age > timedelta(days=7):
-            await self.send_error(ctx, "Messages older than 7 days cannot be checked.")
+        if any(
+            (
+                message.author.bot,
+                datetime.now(timezone.utc) - message.created_at > timedelta(days=7),
+            )
+        ):
+            await self.send_error(
+                ctx,
+                (
+                    "Bot messages cannot be checked for abuse."
+                    if message.author.bot
+                    else "Messages older than 7 days cannot be checked."
+                ),
+            )
             return None
 
         if isinstance(post, (interactions.ThreadChannel, interactions.GuildChannel)):
             try:
-                target_channel = (
-                    post.parent_channel if hasattr(post, "parent_channel") else post
-                )
-                member_perms = target_channel.permissions_for(message.author)
-                if member_perms and not (
-                    member_perms & interactions.Permissions.SEND_MESSAGES
-                ):
-                    await self.send_error(
-                        ctx,
-                        f"{message.author.mention} is currently timed out and cannot be checked for additional violations.",
-                    )
-                    return None
+                target_channel = getattr(post, "parent_channel", post)
+                if member_perms := target_channel.permissions_for(message.author):
+                    if not (member_perms & interactions.Permissions.SEND_MESSAGES):
+                        await self.send_error(
+                            ctx,
+                            f"{message.author.mention} is currently timed out and cannot be checked for additional violations.",
+                        )
+                        return None
             except Exception as e:
                 logger.error(f"Error checking user timeout status: {e}")
 
         try:
             current_time = datetime.now()
             current_minute = current_time.replace(second=0, microsecond=0)
-            cache_key = f"groq_requests_{current_minute.isoformat()}"
-            token_key = f"groq_tokens_{current_minute.isoformat()}"
+            current_day = current_time.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
 
-            last_update = self.url_cache.get(f"last_update_{cache_key}", current_time)
-            request_count = self.url_cache.get(cache_key, 0)
-            token_count = self.url_cache.get(token_key, 0)
+            user_id = str(ctx.author.id)
+            user_cache_keys = {
+                "request": f"groq_requests_{user_id}_{current_minute.isoformat()}",
+                "token": f"groq_tokens_{user_id}_{current_minute.isoformat()}",
+                "update": f"last_update_{user_id}_{current_minute.isoformat()}",
+            }
 
+            cache_keys = {
+                "user": {
+                    "request": f"groq_requests_{user_id}_{current_minute.isoformat()}",
+                    "token": f"groq_tokens_{user_id}_{current_minute.isoformat()}",
+                    "update": f"last_update_{user_id}_{current_minute.isoformat()}",
+                },
+                "global": {
+                    "minute_requests": f"global_groq_requests_{current_minute.isoformat()}",
+                    "minute_tokens": f"global_groq_tokens_{current_minute.isoformat()}",
+                    "day_requests": f"global_groq_requests_{current_day.isoformat()}",
+                    "day_tokens": f"global_groq_tokens_{current_day.isoformat()}",
+                    "last_update": f"global_last_update_{current_minute.isoformat()}",
+                },
+            }
+
+            last_update = self.url_cache.get(cache_keys["user"]["update"], current_time)
             time_passed = (current_time - last_update).total_seconds()
-            requests_replenished = min(30, int(30 * time_passed / 60))
-            tokens_replenished = min(7000, int(7000 * time_passed / 60))
+            request_count = max(
+                0,
+                self.url_cache.get(cache_keys["user"]["request"], 0)
+                - min(10, int(10 * time_passed / 60)),
+            )
+            token_count = max(
+                0,
+                self.url_cache.get(cache_keys["user"]["token"], 0)
+                - min(2000, int(2000 * time_passed / 60)),
+            )
 
-            request_count = max(0, request_count - requests_replenished)
-            token_count = max(0, token_count - tokens_replenished)
+            global_last_update = self.url_cache.get(
+                cache_keys["global"]["last_update"], current_time
+            )
+            global_time_passed = (current_time - global_last_update).total_seconds()
+            global_minute_requests = max(
+                0,
+                self.url_cache.get(cache_keys["global"]["minute_requests"], 0)
+                - min(30, int(30 * global_time_passed / 60)),
+            )
+            global_minute_tokens = max(
+                0,
+                self.url_cache.get(cache_keys["global"]["minute_tokens"], 0)
+                - min(7000, int(7000 * global_time_passed / 60)),
+            )
+            global_day_requests = self.url_cache.get(
+                cache_keys["global"]["day_requests"], 0
+            )
+            global_day_tokens = self.url_cache.get(
+                cache_keys["global"]["day_tokens"], 0
+            )
 
-            if request_count >= 30 or token_count >= 7000:
+            if request_count >= 10 or token_count >= 2000:
                 wait_time = max(
-                    60 - int(time_passed), int((token_count - 7000) * 60 / 7000) + 1
+                    60 - int(time_passed), int((token_count - 2000) * 60 / 2000) + 1
                 )
                 await self.send_error(
-                    ctx, f"Rate limit reached. Please try again in {wait_time} seconds."
+                    ctx,
+                    f"You have reached your personal rate limit. Please try again in {wait_time} seconds.",
                 )
                 return None
 
-            messages = []
+            if any(
+                (
+                    global_minute_requests >= 30,
+                    global_minute_tokens >= 7000,
+                    global_day_requests >= 7000,
+                    global_day_tokens >= 500000,
+                )
+            ):
+                await self.send_error(
+                    ctx,
+                    "The server has reached its rate limit. Please try again later.",
+                )
+                return None
+
+            messages = [
+                f"The caller is {ctx.author.display_name}, the potential author is {message.author.display_name}"
+            ]
             async for msg in ctx.channel.history(limit=50, before=message):
-                if msg.author == ctx.author:
-                    messages.append(f"<<<<{msg.author.display_name}: {msg.content}>>>>")
-                elif msg.author == message.author:
-                    messages.append(f"****{msg.author.display_name}: {msg.content}****")
+                if msg.author in (ctx.author, message.author):
+                    messages.append(
+                        f"{'<<<<' if msg.author == ctx.author else '****'}{msg.author.display_name}: {msg.content}{'>>>>' if msg.author == ctx.author else '****'}"
+                    )
 
-            messages.reverse()
-
-            messages.insert(
-                0,
-                f"The caller is {ctx.author.display_name}, the potential author is {message.author.display_name}",
-            )
             messages.append(f"||||{message.author.display_name}: {message.content}||||")
-
-            filtered_messages = list(filter(None, messages))
-            message_text = "\n".join(filtered_messages)
-            truncated_text = (
-                message_text[-500:] if len(message_text) > 500 else message_text
-            )
-
+            truncated_text = "\n".join(filter(None, messages))[-500:]
             estimated_tokens = len(truncated_text) // 4
 
-            if token_count + estimated_tokens > 7000:
+            if token_count + estimated_tokens > 2000:
                 await self.send_error(
-                    ctx, "Token limit reached. Please try again in a minute."
+                    ctx,
+                    "You have reached your personal token limit. Please try again in a minute.",
                 )
                 return None
 
@@ -1521,9 +1576,26 @@ class Threads(interactions.Extension):
                         + [{"role": "user", "content": truncated_text}],
                         **self.model_params,
                     )
-                    self.url_cache[cache_key] = request_count + 1
-                    self.url_cache[token_key] = token_count + estimated_tokens
-                    self.url_cache[f"last_update_{cache_key}"] = current_time
+
+                    self.url_cache.update(
+                        {
+                            cache_keys["user"]["request"]: request_count + 1,
+                            cache_keys["user"]["token"]: token_count + estimated_tokens,
+                            cache_keys["user"]["update"]: current_time,
+                            cache_keys["global"][
+                                "minute_requests"
+                            ]: global_minute_requests
+                            + 1,
+                            cache_keys["global"]["minute_tokens"]: global_minute_tokens
+                            + estimated_tokens,
+                            cache_keys["global"]["day_requests"]: global_day_requests
+                            + 1,
+                            cache_keys["global"]["day_tokens"]: global_day_tokens
+                            + estimated_tokens,
+                            cache_keys["global"]["last_update"]: current_time,
+                        }
+                    )
+
             except asyncio.TimeoutError:
                 await self.send_error(
                     ctx, "AI service request timed out. Please try again later."
@@ -1563,27 +1635,22 @@ class Threads(interactions.Extension):
                 ]
 
                 try:
-                    target_channel = (
-                        post.parent_channel if hasattr(post, "parent_channel") else post
-                    )
+                    target_channel = getattr(post, "parent_channel", post)
                     perms = (
                         [interactions.Permissions.CREATE_POSTS, *deny_perms]
                         if hasattr(post, "parent_channel")
                         else deny_perms
                     )
-
                     await target_channel.add_permission(
                         message.author,
                         deny=perms,
                         reason=f"AI detected abuse - {timeout_duration}s timeout",
                     )
-
                     asyncio.create_task(
                         self.restore_permissions(
                             target_channel, message.author, timeout_duration // 60
                         )
                     )
-
                 except Exception as e:
                     logger.error(f"Failed to apply timeout: {e}", exc_info=True)
                     await self.send_error(
@@ -1611,7 +1678,7 @@ class Threads(interactions.Extension):
                     inline=True,
                 )
 
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, ephemeral=not is_offensive)
 
             return ActionDetails(
                 action=ActionType.EDIT,
@@ -2268,29 +2335,30 @@ class Threads(interactions.Extension):
     ) -> Optional[ActionDetails]:
         message: interactions.Message = ctx.target
         channel = ctx.channel
+        options: List[interactions.StringSelectOption] = []
 
         if isinstance(channel, interactions.ThreadChannel):
-            if not await self.can_manage_message(channel, ctx.author):
+            if await self.can_manage_message(channel, ctx.author):
+                options.extend(
+                    [
+                        interactions.StringSelectOption(
+                            label="Delete Message",
+                            value="delete",
+                            description="Delete this message",
+                        ),
+                        interactions.StringSelectOption(
+                            label=f"{'Unpin' if message.pinned else 'Pin'} Message",
+                            value=f"{'unpin' if message.pinned else 'pin'}",
+                            description=f"{'Unpin' if message.pinned else 'Pin'} this message",
+                        ),
+                    ]
+                )
+            else:
                 await self.send_error(
                     ctx,
                     "You don't have sufficient permissions to manage this message. You need to be either a moderator or the message author.",
                 )
                 return None
-
-            options: List[interactions.StringSelectOption] = [
-                interactions.StringSelectOption(
-                    label="Delete Message",
-                    value="delete",
-                    description="Delete this message",
-                ),
-                interactions.StringSelectOption(
-                    label=f"{'Unpin' if message.pinned else 'Pin'} Message",
-                    value=f"{'unpin' if message.pinned else 'pin'}",
-                    description=f"{'Unpin' if message.pinned else 'Pin'} this message",
-                ),
-            ]
-        else:
-            options = []
 
         options.append(
             interactions.StringSelectOption(
