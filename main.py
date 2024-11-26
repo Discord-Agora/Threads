@@ -1435,6 +1435,15 @@ class Threads(interactions.Extension):
         message: interactions.Message,
         display_result: Optional[bool] = True,
     ) -> Optional[ActionDetails]:
+        
+        channel_id = getattr(post, 'parent_id', post.id)
+        if channel_id == 1151301324143603712:
+            await self.send_error(
+                ctx,
+                "AI content check is not available in the vituperation channel.",
+            )
+            return None
+
         if not (self.model.groq_api_key and self.client):
             logger.error("AI API configuration is missing")
             await self.send_error(ctx, "The AI service is not configured.")
