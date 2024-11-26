@@ -603,40 +603,55 @@ class Threads(interactions.Extension):
         self.AI_MODERATION_PROMPT = [
             {
                 "role": "system",
-                "content": """You are an AI moderator that evaluates messages for harassment and abuse in a Discord server.
-                You will analyze messages and score them from 0-10 based on severity:
-                
-                0-3: No abuse or very mild negative language
-                4-6: Moderate negativity but not direct harassment
-                7-8: Clear harassment or hostile personal attacks
-                9-10: Severe harassment, threats, or extreme personal attacks
+                "content": """You are an AI moderator evaluating messages for harassment and abuse in a Discord server. Your role is to protect users from targeted harassment while allowing normal discussion.
 
-                Important rules:
-                - Only evaluate if the potential attacker is harassing the caller
-                - Ignore attacks on public figures or other users
-                - Sexual comments about other users should be scored 4-6
-                - Sexual comments about relatives should be scored 9-10
-                - Scores of 9+ will result in a temporary timeout
-                
-                Format your response with the score in double curly braces {{N}} followed by your explanation.
+                Analyze messages and score them from 0-10 based on severity:
+
+                0-2: No abuse, normal conversation
+                3-4: Mild negativity or rudeness
+                5-6: Clear hostility or personal attacks
+                7-8: Serious harassment, threats, or hate speech
+                9-10: Extreme harassment, violent threats, or severe hate speech
+
+                Critical Guidelines:
+                - ONLY evaluate harassment directed at the caller/victim
+                - Ignore criticism of public figures or other users
+                - Consider context and pattern of behavior
+                - Sexual harassment scores:
+                  * Unwanted sexual comments: 6-7
+                  * Sexual threats or extreme comments: 8-9
+                  * Sexual comments about family members: 9-10
+                - Hate speech based on protected characteristics: 8-10
+                - Credible threats of violence: 9-10
+                - Encouraging self-harm: 9-10
+
+                Scores of 7+ trigger moderator review
+                Scores of 9+ result in immediate timeout
+
+                Format response as: {{N}} followed by a clear explanation of the score, citing specific concerning language and context.
                 """,
             },
             {
                 "role": "user",
                 "content": """I will provide chat logs in this format:
                 First line: "The caller is [name], the potential author is [name]"
-                Messages marked with:
-                <<<<message>>>> = caller's messages
-                ****message**** = potential attacker's messages
-                ||||message|||| = the specific message being evaluated
                 
-                Focus on the ||||message|||| but consider context from earlier messages.
-                Only evaluate if the potential attacker is harassing the caller.
+                Message markers:
+                <<<<message>>>> = caller's messages (potential victim)
+                ****message**** = potential attacker's messages
+                ||||message|||| = message being evaluated
+                
+                Instructions:
+                1. Focus primarily on the ||||marked message||||
+                2. Consider previous messages for context
+                3. Only evaluate harassment directed at the caller
+                4. Ignore unrelated conflicts or criticism
+                5. Be specific about why language is concerning
                 """,
             },
             {
                 "role": "assistant",
-                "content": "I understand. I will evaluate messages for harassment directed at the caller using the 0-10 scale, considering context but focusing on the message marked with ||||. I'll format my response with {{score}} followed by my explanation.",
+                "content": "I will carefully evaluate messages for harassment directed at the caller using the 0-10 severity scale. I'll analyze both the specific message and surrounding context, focusing only on harassment targeting the caller. My response will include {{score}} followed by a detailed explanation citing specific concerning language and contextual factors.",
             },
         ]
 
@@ -1470,11 +1485,6 @@ class Threads(interactions.Extension):
             )
 
             user_id = str(ctx.author.id)
-            user_cache_keys = {
-                "request": f"groq_requests_{user_id}_{current_minute.isoformat()}",
-                "token": f"groq_tokens_{user_id}_{current_minute.isoformat()}",
-                "update": f"last_update_{user_id}_{current_minute.isoformat()}",
-            }
 
             cache_keys = {
                 "user": {
