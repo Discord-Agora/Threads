@@ -4,3 +4,5 @@ discord-py-interactions
 cachetools
 yarl
 starcc
+groq
+aioshutil
