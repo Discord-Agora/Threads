@@ -1435,8 +1435,13 @@ class Threads(interactions.Extension):
         message: interactions.Message,
         display_result: Optional[bool] = True,
     ) -> Optional[ActionDetails]:
-        
-        channel_id = getattr(post, 'parent_id', post.id)
+
+        channel_id = (
+            message.channel.parent_id
+            if isinstance(message.channel, interactions.ThreadChannel)
+            else message.channel.id
+        )
+
         if channel_id == 1151301324143603712:
             await self.send_error(
                 ctx,
