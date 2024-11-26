@@ -664,7 +664,7 @@ class Threads(interactions.Extension):
         )
         try:
             if self.model.groq_api_key:
-                self.client = Groq(api_key=self.model.groq_api_key)
+                self.client = groq.AsyncGroq(api_key=self.model.groq_api_key)
         except Exception as e:
             logger.error(f"Failed to initialize Groq client: {e}")
             self.client = None
