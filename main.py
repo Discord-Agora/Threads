@@ -30,6 +30,9 @@ from typing import (
 
 import aiofiles
 import aiofiles.os
+import aiofiles.ospath
+import aioshutil
+import groq
 import interactions
 import orjson
 import StarCC
@@ -47,6 +50,7 @@ from yarl import URL
 BASE_DIR: str = os.path.abspath(os.path.dirname(__file__))
 LOG_FILE: str = os.path.join(BASE_DIR, "threads.log")
 
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter(
@@ -58,6 +62,7 @@ file_handler = RotatingFileHandler(
 )
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
+
 
 # Model
 
@@ -104,8 +109,25 @@ class PostStats:
     last_activity: datetime = datetime.now(timezone.utc)
 
 
+@dataclass
+class TimeoutConfig:
+    base_duration: int = 300
+    multiplier: float = 1.5
+    decay_hours: int = 24
+    max_duration: int = 3600
+    low_activity_threshold: int = 10
+    high_activity_threshold: int = 100
+    low_violation_rate: float = 1.0
+    high_violation_rate: float = 5.0
+    base_duration_step: int = 60
+    multiplier_step: float = 0.1
+    decay_hours_step: int = 1
+    max_duration_step: int = 300
+
+
 class Model:
     def __init__(self) -> None:
+        self.timeout_config = TimeoutConfig()
         self.banned_users: DefaultDict[str, DefaultDict[str, Set[str]]] = defaultdict(
             lambda: defaultdict(set)
         )
@@ -116,6 +138,152 @@ class Model:
         self.featured_posts: Dict[str, str] = {}
         self.current_pinned_post: Optional[str] = None
         self.converters: Dict[str, StarCC.PresetConversion] = {}
+        self.timeout_history: Dict[str, Dict[str, Any]] = {}
+        self.message_history: DefaultDict[int, List[datetime]] = defaultdict(list)
+        self.violation_history: DefaultDict[int, List[datetime]] = defaultdict(list)
+        self.last_timeout_adjustment = datetime.now(timezone.utc)
+        self.timeout_adjustment_interval = timedelta(hours=1)
+        self.groq_api_key: Optional[str] = None
+
+    async def adjust_timeout_cfg(self) -> None:
+        current_time = datetime.now(timezone.utc)
+        if (
+            current_time - self.last_timeout_adjustment
+            < self.timeout_adjustment_interval
+        ):
+            return
+
+        one_hour_ago = current_time - timedelta(hours=1)
+        for history in (self.message_history, self.violation_history):
+            for k in list(history.keys()):
+                history[k] = [t for t in history[k] if t >= one_hour_ago]
+
+        total_messages = sum(len(msgs) for msgs in self.message_history.values())
+        total_violations = sum(len(viols) for viols in self.violation_history.values())
+        violation_rate = (
+            total_violations * 100 / total_messages if total_messages else 0
+        )
+
+        cfg = self.timeout_config
+        activity_factor = (total_messages > cfg.high_activity_threshold) - (
+            total_messages < cfg.low_activity_threshold
+        )
+        violation_factor = (violation_rate > cfg.high_violation_rate) - (
+            violation_rate < cfg.low_violation_rate
+        )
+        total_factor = activity_factor + violation_factor
+
+        cfg.base_duration = max(
+            60, min(600, cfg.base_duration + total_factor * cfg.base_duration_step)
+        )
+        cfg.multiplier = max(
+            1.2, min(2.0, cfg.multiplier + total_factor * cfg.multiplier_step)
+        )
+        cfg.decay_hours = max(
+            12, min(48, cfg.decay_hours - activity_factor * cfg.decay_hours_step)
+        )
+
+        if violation_factor:
+            cfg.max_duration = max(
+                1800,
+                min(7200, cfg.max_duration + violation_factor * cfg.max_duration_step),
+            )
+
+        self.last_timeout_adjustment = current_time
+        logger.info(
+            f"Timeout config adjusted - base_duration: {cfg.base_duration}, multiplier: {cfg.multiplier}, decay_hours: {cfg.decay_hours}, max_duration: {cfg.max_duration}"
+        )
+
+    def record_message(self, channel_id: int) -> None:
+        self.message_history[channel_id].append(datetime.now(timezone.utc))
+
+    def record_violation(self, channel_id: int) -> None:
+        self.violation_history[channel_id].append(datetime.now(timezone.utc))
+
+    def calculate_timeout_duration(self, user_id: str) -> int:
+        current_ts: float = datetime.now(timezone.utc).timestamp()
+        user_data: dict = self.timeout_history.setdefault(
+            user_id, {"violation_count": 0, "last_timeout": current_ts}
+        )
+
+        decay_periods: int = int(
+            (current_ts - user_data["last_timeout"])
+            / (self.timeout_config.decay_hours * 3600)
+        )
+
+        user_data["violation_count"] = max(
+            1, user_data["violation_count"] - decay_periods + 1
+        )
+        violations = user_data["violation_count"]
+        user_data["last_timeout"] = current_ts
+
+        return max(
+            self.timeout_config.base_duration,
+            min(
+                int(
+                    self.timeout_config.base_duration
+                    * self.timeout_config.multiplier ** (violations - 1)
+                ),
+                self.timeout_config.max_duration,
+            ),
+        )
+
+    async def load_timeout_history(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, mode="rb") as file:
+                content: bytes = await file.read()
+                loaded_data: Dict[str, Dict[str, Any]] = (
+                    orjson.loads(content) if content.strip() else {}
+                )
+
+            self.timeout_history.clear()
+            self.timeout_history.update(loaded_data)
+            logger.info(f"Successfully loaded timeout history from {file_path}")
+        except FileNotFoundError:
+            logger.warning(
+                f"Timeout history file not found: {file_path}. Creating a new one"
+            )
+            await self.save_timeout_history(file_path)
+        except orjson.JSONDecodeError as e:
+            logger.error(f"Error decoding timeout history JSON data: {e}")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error loading timeout history: {e}", exc_info=True
+            )
+
+    async def save_timeout_history(self, file_path: str) -> None:
+        try:
+            json_data: bytes = orjson.dumps(
+                self.timeout_history,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            )
+
+            async with aiofiles.open(file_path, mode="wb") as file:
+                await file.write(json_data)
+
+            logger.info(f"Successfully saved timeout history to {file_path}")
+        except Exception as e:
+            logger.error(f"Error saving timeout history: {e}", exc_info=True)
+
+    async def load_groq_key(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path) as file:
+                self.groq_api_key = (await file.read()).strip()
+                logger.info("Successfully loaded GROQ API key")
+        except FileNotFoundError:
+            logger.warning("GROQ API key file not found")
+        except Exception as e:
+            logger.error(f"Error loading GROQ API key: {e}")
+
+    async def save_groq_key(self, api_key: str, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, mode="w") as file:
+                await file.write(api_key)
+            self.groq_api_key = api_key
+            logger.info("Successfully saved GROQ API key")
+        except Exception as e:
+            logger.error(f"Error saving GROQ API key: {e}")
+            raise
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
@@ -368,16 +536,17 @@ class Threads(interactions.Extension):
         self.bot: interactions.Client = bot
         self.model: Model = Model()
         self.ban_lock: asyncio.Lock = asyncio.Lock()
+        self.client: Optional[groq.AsyncGroq] = None
         self.conversion_task: Optional[asyncio.Task] = None
 
-        self.BANNED_USERS_FILE: str = os.path.join(
-            os.path.dirname(__file__), "banned_users.json"
-        )
+        self.GROQ_KEY_FILE: str = os.path.join(BASE_DIR, ".groq_key")
+        self.BANNED_USERS_FILE: str = os.path.join(BASE_DIR, "banned_users.json")
         self.THREAD_PERMISSIONS_FILE: str = os.path.join(
-            os.path.dirname(__file__), "thread_permissions.json"
+            BASE_DIR, "thread_permissions.json"
         )
         self.POST_STATS_FILE: str = os.path.join(BASE_DIR, "post_stats.json")
         self.FEATURED_POSTS_FILE: str = os.path.join(BASE_DIR, "featured_posts.json")
+        self.TIMEOUT_HISTORY_FILE: str = os.path.join(BASE_DIR, "timeout_history.json")
         self.LOG_CHANNEL_ID: int = 1166627731916734504
         self.LOG_FORUM_ID: int = 1159097493875871784
         self.LOG_POST_ID: int = 1279118293936111707
@@ -426,9 +595,61 @@ class Threads(interactions.Extension):
         self.message_count_threshold: int = 200
         self.rotation_interval: timedelta = timedelta(hours=23)
         self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
+        self.last_log_key: Optional[str] = None
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
         ) - timedelta(days=8)
+
+        self.AI_MODERATION_PROMPT = [
+            {
+                "role": "system",
+                "content": """You are an AI moderator that evaluates messages for harassment and abuse in a Discord server.
+                You will analyze messages and score them from 0-10 based on severity:
+                
+                0-3: No abuse or very mild negative language
+                4-6: Moderate negativity but not direct harassment
+                7-8: Clear harassment or hostile personal attacks
+                9-10: Severe harassment, threats, or extreme personal attacks
+
+                Important rules:
+                - Only evaluate if the potential attacker is harassing the caller
+                - Ignore attacks on public figures or other users
+                - Sexual comments about other users should be scored 4-6
+                - Sexual comments about relatives should be scored 9-10
+                - Scores of 9+ will result in a temporary timeout
+                
+                Format your response with the score in double curly braces {{N}} followed by your explanation.
+                """,
+            },
+            {
+                "role": "user",
+                "content": """I will provide chat logs in this format:
+                First line: "The caller is [name], the potential author is [name]"
+                Messages marked with:
+                <<<<message>>>> = caller's messages
+                ****message**** = potential attacker's messages
+                ||||message|||| = the specific message being evaluated
+                
+                Focus on the ||||message|||| but consider context from earlier messages.
+                Only evaluate if the potential attacker is harassing the caller.
+                """,
+            },
+            {
+                "role": "assistant",
+                "content": "I understand. I will evaluate messages for harassment directed at the caller using the 0-10 scale, considering context but focusing on the message marked with ||||. I'll format my response with {{score}} followed by my explanation.",
+            },
+        ]
+
+        self.model_params = {
+            "model": "llama-3.2-90b-text-preview",
+            "temperature": 0,
+            "max_tokens": 1024,
+            "top_p": 1,
+            "stop": None,
+            "stream": False,
+            "presence_penalty": 0,
+            "frequency_penalty": 0,
+        }
 
         asyncio.create_task(self.initialize_data())
 
@@ -438,7 +659,15 @@ class Threads(interactions.Extension):
             self.model.load_thread_permissions(self.THREAD_PERMISSIONS_FILE),
             self.model.load_post_stats(self.POST_STATS_FILE),
             self.model.load_featured_posts(self.FEATURED_POSTS_FILE),
+            self.model.load_groq_key(self.GROQ_KEY_FILE),
+            self.model.load_timeout_history(self.TIMEOUT_HISTORY_FILE),
         )
+        try:
+            if self.model.groq_api_key:
+                self.client = Groq(api_key=self.model.groq_api_key)
+        except Exception as e:
+            logger.error(f"Failed to initialize Groq client: {e}")
+            self.client = None
 
     # Tag operations
 
@@ -857,10 +1086,10 @@ class Threads(interactions.Extension):
         log_post = await log_forum.fetch_post(self.LOG_POST_ID)
 
         log_key = f"{details.action}_{details.post_name}_{timestamp}"
-        if getattr(self, "_last_log_key", None) == log_key:
+        if self.last_log_key == log_key:
             logger.warning(f"Duplicate log detected: {log_key}")
             return
-        self._last_log_key = log_key
+        self.last_log_key = log_key
 
         if log_post.archived:
             await log_post.edit(archived=False)
@@ -978,6 +1207,659 @@ class Threads(interactions.Extension):
         name="threads", description="Threads commands"
     )
 
+    # Debug commands
+
+    module_group_debug: interactions.SlashCommand = module_base.group(
+        name="debug", description="Debug commands"
+    )
+
+    @module_group_debug.subcommand(
+        "export", sub_cmd_description="Export files from the extension directory"
+    )
+    @interactions.slash_option(
+        name="type",
+        description="Type of files to export",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_default_member_permission(
+        interactions.Permissions.ADMINISTRATOR
+    )
+    async def command_export(self, ctx: interactions.SlashContext, type: str) -> None:
+        await ctx.defer(ephemeral=True)
+        filename: str = ""
+
+        if not os.path.exists(BASE_DIR):
+            return await self.send_error(ctx, "Extension directory does not exist.")
+
+        if type != "all" and not os.path.isfile(os.path.join(BASE_DIR, type)):
+            return await self.send_error(
+                ctx, f"File '{type}' does not exist in the extension directory."
+            )
+
+        try:
+            async with aiofiles.tempfile.NamedTemporaryFile(
+                prefix="export_", suffix=".tar.gz", delete=False
+            ) as afp:
+                filename = afp.name
+                base_name = filename[:-7]
+
+                await aioshutil.make_archive(
+                    base_name,
+                    "gztar",
+                    BASE_DIR,
+                    "." if type == "all" else type,
+                )
+
+            if not os.path.exists(filename):
+                return await self.send_error(ctx, "Failed to create archive file.")
+
+            file_size = os.path.getsize(filename)
+            if file_size > 8_388_608:
+                return await self.send_error(
+                    ctx, "Archive file is too large to send (>8MB)."
+                )
+
+            message = (
+                "All extension files attached."
+                if type == "all"
+                else f"File '{type}' attached."
+            )
+            await ctx.send(
+                message,
+                files=[interactions.File(filename)],
+            )
+
+        except PermissionError:
+            logger.error(f"Permission denied while exporting {type}")
+            await self.send_error(ctx, "Permission denied while accessing files.")
+        except Exception as e:
+            logger.error(f"Error exporting {type}: {e}", exc_info=True)
+            await self.send_error(
+                ctx, f"An error occurred while exporting {type}: {str(e)}"
+            )
+        finally:
+            if filename and os.path.exists(filename):
+                try:
+                    os.unlink(filename)
+                except Exception as e:
+                    logger.error(f"Error cleaning up temp file: {e}")
+
+    @command_export.autocomplete("type")
+    async def export_type_autocomplete(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        choices: list[dict[str, str]] = [{"name": "All Files", "value": "all"}]
+
+        try:
+            if os.path.exists(BASE_DIR):
+                files = [
+                    f
+                    for f in os.listdir(BASE_DIR)
+                    if os.path.isfile(os.path.join(BASE_DIR, f))
+                ]
+
+                choices.extend({"name": file, "value": file} for file in sorted(files))
+        except PermissionError:
+            logger.error("Permission denied while listing files")
+            choices = [{"name": "Error: Permission denied", "value": "error"}]
+        except Exception as e:
+            logger.error(f"Error listing files: {e}", exc_info=True)
+            choices = [{"name": f"Error: {str(e)}", "value": "error"}]
+
+        await ctx.send(choices[:25])
+
+    # Timeout commands
+
+    module_group_timeout: interactions.SlashCommand = module_base.group(
+        name="timeout", description="Timeout management"
+    )
+
+    @module_group_timeout.subcommand(
+        "set", sub_cmd_description="Set bot configurations"
+    )
+    @interactions.slash_option(
+        name="key",
+        description="Set the GROQ API key",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        argument_name="groq_key",
+    )
+    @interactions.slash_default_member_permission(
+        interactions.Permissions.ADMINISTRATOR
+    )
+    async def set_groq_key(self, ctx: interactions.SlashContext, groq_key: str) -> None:
+        if not (ctx.author.guild_permissions & interactions.Permissions.ADMINISTRATOR):
+            return await self.send_error(
+                ctx, "Only administrators can set the GROQ API key."
+            )
+
+        try:
+            client = groq.AsyncGroq(api_key=groq_key.strip())
+            messages = [{"role": "user", "content": "test"}]
+
+            try:
+                async with asyncio.timeout(10):
+                    await client.chat.completions.create(
+                        messages=messages,
+                        model="llama-3.2-90b-text-preview",
+                        max_tokens=1,
+                    )
+                valid = True
+            except Exception as e:
+                logger.error(f"Invalid Groq API key: {e}")
+                valid = False
+
+            if not valid:
+                self.client = None
+                await self.model.save_groq_key("", self.GROQ_KEY_FILE)
+                return await self.send_error(ctx, "Invalid GROQ API key provided.")
+
+            await self.model.save_groq_key(groq_key.strip(), self.GROQ_KEY_FILE)
+            self.client = client
+
+            return await self.send_success(
+                ctx,
+                "GROQ API key has been successfully set and validated.",
+                log_to_channel=True,
+            )
+        except Exception as e:
+            return await self.send_error(ctx, f"Failed to set GROQ API key: {repr(e)}")
+
+    @module_group_timeout.subcommand(
+        "check", sub_cmd_description="Check message content with AI"
+    )
+    @interactions.slash_option(
+        name="message",
+        description="ID of the message or message URL to check",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        argument_name="message_id",
+    )
+    async def check_message(
+        self, ctx: interactions.SlashContext, message_id: str
+    ) -> None:
+        try:
+            if message_id.startswith("https://discord.com/channels/"):
+                *_, guild_str, channel_str, msg_str = message_id.split("/")[:7]
+                guild_id, channel_id, msg_id = map(
+                    int, (guild_str, channel_str, msg_str)
+                )
+
+                if guild_id != ctx.guild_id:
+                    await self.send_error(ctx, "The message must be from this server.")
+                    return
+
+                message = await (
+                    await ctx.guild.fetch_channel(channel_id)
+                ).fetch_message(msg_id)
+            else:
+                message = await ctx.channel.fetch_message(int(message_id))
+
+        except (ValueError, NotFound):
+            await self.send_error(
+                ctx,
+                "Message not found. Please make sure you provided a valid message ID or URL and that the message exists.",
+            )
+            return
+        except Exception as e:
+            logger.error(f"Error fetching message {msg_id}: {e}", exc_info=True)
+            await self.send_error(
+                ctx,
+                "An error occurred while fetching the message. Please try again later.",
+            )
+            return
+
+        await self.ai_check_message_action(ctx, message.channel, message)
+
+    async def ai_check_message_action(
+        self,
+        ctx: interactions.ComponentContext,
+        post: Union[interactions.ThreadChannel, interactions.GuildChannel],
+        message: interactions.Message,
+        display_result: Optional[bool] = True,
+    ) -> Optional[ActionDetails]:
+        if not self.model.groq_api_key or not self.client:
+            logger.error("AI API configuration is missing")
+            await self.send_error(ctx, "The AI service is not configured.")
+            return None
+
+        try:
+            message = await ctx.channel.fetch_message(message.id)
+        except NotFound:
+            await self.send_error(
+                ctx, "The message has been deleted and cannot be checked."
+            )
+            return None
+
+        if message.author.bot:
+            await self.send_error(ctx, "Bot messages cannot be checked for abuse.")
+            return None
+
+        message_age = datetime.now(timezone.utc) - message.created_at
+        if message_age > timedelta(days=7):
+            await self.send_error(ctx, "Messages older than 7 days cannot be checked.")
+            return None
+
+        if isinstance(post, (interactions.ThreadChannel, interactions.GuildChannel)):
+            try:
+                target_channel = (
+                    post.parent_channel if hasattr(post, "parent_channel") else post
+                )
+                member_perms = target_channel.permissions_for(message.author)
+                if member_perms and not (
+                    member_perms & interactions.Permissions.SEND_MESSAGES
+                ):
+                    await self.send_error(
+                        ctx,
+                        f"{message.author.mention} is currently timed out and cannot be checked for additional violations.",
+                    )
+                    return None
+            except Exception as e:
+                logger.error(f"Error checking user timeout status: {e}")
+
+        try:
+            messages = []
+            async for msg in ctx.channel.history(limit=50, before=message):
+                if msg.author == ctx.author:
+                    messages.append(f"<<<<{msg.author.display_name}: {msg.content}>>>>")
+                elif msg.author == message.author:
+                    messages.append(f"****{msg.author.display_name}: {msg.content}****")
+
+            messages.reverse()
+
+            messages.insert(
+                0,
+                f"The caller is {ctx.author.display_name}, the potential author is {message.author.display_name}",
+            )
+            messages.append(f"||||{message.author.display_name}: {message.content}||||")
+
+            filtered_messages = list(filter(None, messages))
+            message_text = "\n".join(filtered_messages)
+            truncated_text = (
+                message_text[-500:] if len(message_text) > 500 else message_text
+            )
+
+            try:
+                async with asyncio.timeout(30):
+                    completion = await self.client.chat.completions.create(
+                        messages=self.AI_MODERATION_PROMPT
+                        + [{"role": "user", "content": truncated_text}],
+                        **self.model_params,
+                    )
+            except asyncio.TimeoutError:
+                await self.send_error(
+                    ctx, "AI service request timed out. Please try again later."
+                )
+                return None
+
+            ai_response = completion.choices[0].message.content.strip()
+            match = re.search(r"{(\d+)}", ai_response)
+            score = int(match.group(1)) if match else 0
+            is_offensive = score >= 9
+
+            if is_offensive and not message.author.bot:
+                user_id = str(message.author.id)
+                timeout_duration = self.model.calculate_timeout_duration(user_id)
+                self.model.record_violation(post.id)
+                await self.model.adjust_timeout_cfg()
+
+                if display_result:
+                    msg_link = f"https://discord.com/channels/{ctx.guild_id}/{ctx.channel_id}/{message.id}"
+                    await self.send_success(
+                        ctx,
+                        f"{message.author.display_name}'s GPT [abuse]({msg_link}) score is {score}, will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
+                    )
+
+                deny_perms = [
+                    interactions.Permissions.SEND_MESSAGES,
+                    interactions.Permissions.SEND_MESSAGES_IN_THREADS,
+                    interactions.Permissions.SEND_TTS_MESSAGES,
+                    interactions.Permissions.SEND_VOICE_MESSAGES,
+                    interactions.Permissions.ADD_REACTIONS,
+                    interactions.Permissions.ATTACH_FILES,
+                    interactions.Permissions.CREATE_INSTANT_INVITE,
+                    interactions.Permissions.MENTION_EVERYONE,
+                    interactions.Permissions.MANAGE_MESSAGES,
+                    interactions.Permissions.MANAGE_THREADS,
+                    interactions.Permissions.MANAGE_CHANNELS,
+                ]
+
+                try:
+                    target_channel = (
+                        post.parent_channel if hasattr(post, "parent_channel") else post
+                    )
+                    perms = (
+                        [interactions.Permissions.CREATE_POSTS, *deny_perms]
+                        if hasattr(post, "parent_channel")
+                        else deny_perms
+                    )
+
+                    await target_channel.add_permission(
+                        message.author,
+                        deny=perms,
+                        reason=f"AI detected abuse - {timeout_duration}s timeout",
+                    )
+
+                    asyncio.create_task(
+                        self.restore_permissions(
+                            target_channel, message.author, timeout_duration // 60
+                        )
+                    )
+
+                except Exception as e:
+                    logger.error(f"Failed to apply timeout: {e}", exc_info=True)
+                    await self.send_error(
+                        ctx, f"Failed to apply timeout to {message.author.mention}"
+                    )
+
+            embed = await self.create_embed(
+                title="AI Content Check Result",
+                description=(
+                    f"The AI detected potentially offensive content:\n{ai_response}"
+                    if is_offensive
+                    else "No offensive content was detected by the AI."
+                ),
+                color=EmbedColor.WARN if is_offensive else EmbedColor.INFO,
+            )
+
+            if is_offensive:
+                embed.add_field(
+                    name="Suggested Action",
+                    value=(
+                        "Consider deleting this message using the delete option."
+                        if isinstance(post, interactions.ThreadChannel)
+                        else "Consider reporting this message to moderators."
+                    ),
+                    inline=True,
+                )
+
+            await ctx.send(embed=embed)
+
+            return ActionDetails(
+                action=ActionType.EDIT,
+                reason=f"AI content check performed by {ctx.author.mention}",
+                post_name=post.name,
+                actor=ctx.author,
+                channel=post if isinstance(post, interactions.ThreadChannel) else None,
+                target=message.author,
+                additional_info={
+                    "checked_message_id": str(message.id),
+                    "checked_message_content": (
+                        message.content[:1000] if message.content else "N/A"
+                    ),
+                    "ai_result": ai_response,
+                    "is_offensive": is_offensive,
+                    "abuse_score": score,
+                },
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to perform AI check on message {message.id}: {e}",
+                exc_info=True,
+            )
+            await self.send_error(ctx, "Unable to perform the AI content check.")
+            return None
+
+    @module_group_timeout.subcommand(
+        "poll", sub_cmd_description="Start a timeout poll for a user"
+    )
+    @interactions.slash_option(
+        name="user",
+        description="The user to timeout",
+        required=True,
+        opt_type=interactions.OptionType.USER,
+    )
+    @interactions.slash_option(
+        name="reason",
+        description="Reason for timeout",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="duration",
+        description="Timeout duration in minutes (max 10)",
+        required=True,
+        opt_type=interactions.OptionType.INTEGER,
+        min_value=1,
+        max_value=10,
+    )
+    async def timeout_poll(
+        self,
+        ctx: interactions.SlashContext,
+        user: Union[
+            interactions.PermissionOverwrite, interactions.Role, interactions.User
+        ],
+        reason: str,
+        duration: int,
+    ) -> None:
+        if not isinstance(user, interactions.Member):
+            await self.send_error(ctx, "Invalid user type provided.")
+            return
+
+        if any(
+            [
+                ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS,
+                await self.has_admin_permissions(user),
+                user.id in self.active_timeout_polls,
+            ]
+        ):
+            await self.send_error(
+                ctx,
+                next(
+                    filter(
+                        None,
+                        [
+                            (
+                                "This command can only be used in the designated timeout channels."
+                                if ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS
+                                else None
+                            ),
+                            (
+                                "You cannot start a timeout poll for administrators."
+                                if await self.has_admin_permissions(user)
+                                else None
+                            ),
+                            (
+                                f"There is already an active timeout poll for {user.mention}."
+                                if user.id in self.active_timeout_polls
+                                else None
+                            ),
+                        ],
+                    )
+                ),
+            )
+            return
+
+        embed = await self.create_embed(title="Timeout Poll", color=EmbedColor.WARN)
+        embed.add_field(name="User", value=user.mention, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=True)
+        embed.add_field(name="Duration", value=f"{duration} minutes", inline=True)
+        embed.add_field(
+            name="Required difference",
+            value=f"{self.TIMEOUT_REQUIRED_DIFFERENCE} votes",
+            inline=True,
+        )
+
+        end_time = int((datetime.now(timezone.utc) + timedelta(minutes=1)).timestamp())
+        embed.add_field(
+            name="Poll duration", value=f"Ends <t:{end_time}:R>", inline=True
+        )
+
+        message = await ctx.send(embeds=[embed])
+        await message.add_reaction("👍")
+        await message.add_reaction("👎")
+
+        task = asyncio.create_task(
+            self.handle_timeout_poll(ctx, message, user, reason, duration)
+        )
+        self.active_timeout_polls[user.id] = task
+
+        await asyncio.sleep(60)
+        self.active_timeout_polls.pop(user.id, None)
+
+    async def handle_timeout_poll(
+        self,
+        ctx: interactions.SlashContext,
+        message: interactions.Message,
+        target: Union[
+            interactions.PermissionOverwrite, interactions.Role, interactions.User
+        ],
+        reason: str,
+        duration: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(60)
+            reactions = (await ctx.channel.fetch_message(message.id)).reactions
+
+            votes = {
+                r.emoji.name: r.count - 1
+                for r in reactions
+                if r.emoji.name in ("👍", "👎")
+            }
+            vote_diff = votes.get("👍", 0) - votes.get("👎", 0)
+
+            channel = ctx.channel
+            end_time = int(
+                (datetime.now(timezone.utc) + timedelta(minutes=duration)).timestamp()
+            )
+
+            if vote_diff >= self.TIMEOUT_REQUIRED_DIFFERENCE:
+                try:
+                    deny_perms = [
+                        interactions.Permissions.SEND_MESSAGES,
+                        interactions.Permissions.SEND_MESSAGES_IN_THREADS,
+                        interactions.Permissions.SEND_TTS_MESSAGES,
+                        interactions.Permissions.SEND_VOICE_MESSAGES,
+                        interactions.Permissions.ADD_REACTIONS,
+                        interactions.Permissions.ATTACH_FILES,
+                        interactions.Permissions.CREATE_INSTANT_INVITE,
+                        interactions.Permissions.MENTION_EVERYONE,
+                        interactions.Permissions.MANAGE_MESSAGES,
+                        interactions.Permissions.MANAGE_THREADS,
+                        interactions.Permissions.MANAGE_CHANNELS,
+                    ]
+
+                    forum_perms = [interactions.Permissions.CREATE_POSTS, *deny_perms]
+
+                    try:
+                        if hasattr(channel, "parent_channel"):
+                            target_channel = channel.parent_channel
+                            perms = forum_perms
+                        else:
+                            target_channel = channel
+                            perms = deny_perms
+
+                        reason_str = f"Member {target.display_name}({target.id}) timeout until <t:{end_time}:f> in Channel {target_channel.name} reason:{reason[:50] if len(reason) > 51 else reason}"
+                        await target_channel.add_permission(
+                            target, deny=perms, reason=reason_str
+                        )
+
+                    except Forbidden:
+                        await self.send_error(
+                            ctx,
+                            "The bot needs to have enough permissions! Please contact technical support!",
+                        )
+                        return
+
+                    asyncio.create_task(
+                        self.restore_permissions(target_channel, target, duration)
+                    )
+
+                    result_embed = await self.create_embed(title="Timeout Poll Result")
+                    result_embed.add_field(
+                        name="Status",
+                        value=f"{target.mention} has been timed out until <t:{end_time}:R>.",
+                        inline=True,
+                    )
+                    result_embed.add_field(
+                        name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
+                    )
+                    result_embed.add_field(
+                        name="No Votes", value=str(votes.get("👎", 0)), inline=True
+                    )
+
+                    await self.send_success(
+                        ctx,
+                        f"{target.mention} has been timed out until <t:{end_time}:R>.\n"
+                        f"- Yes Votes: {votes.get('👍', 0)}\n"
+                        f"- No Votes: {votes.get('👎', 0)}",
+                        log_to_channel=True,
+                    )
+
+                except Exception as e:
+                    logger.error(f"Failed to apply timeout: {e}")
+                    await self.send_error(
+                        ctx, f"Failed to apply timeout to {target.mention}"
+                    )
+            else:
+                result_embed = await self.create_embed(title="Timeout Poll Result")
+                result_embed.add_field(
+                    name="Status",
+                    value=f"Timeout poll for {target.mention} failed.",
+                    inline=True,
+                )
+                result_embed.add_field(
+                    name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
+                )
+                result_embed.add_field(
+                    name="No Votes", value=str(votes.get("👎", 0)), inline=True
+                )
+                result_embed.add_field(
+                    name="Required difference",
+                    value=f"{self.TIMEOUT_REQUIRED_DIFFERENCE} votes",
+                    inline=True,
+                )
+
+            await ctx.channel.send(embeds=[result_embed])
+
+        except Exception as e:
+            logger.error(f"Error handling timeout poll: {e}", exc_info=True)
+            await self.send_error(
+                ctx, "An error occurred while processing the timeout poll."
+            )
+
+    async def restore_permissions(
+        self,
+        channel: Union[interactions.GuildChannel, interactions.ThreadChannel],
+        member: Union[
+            interactions.PermissionOverwrite, interactions.Role, interactions.User
+        ],
+        duration: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(duration * 60)
+            channel = getattr(channel, "parent_channel", channel)
+
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    end_time = int(datetime.now(timezone.utc).timestamp())
+                    await channel.delete_permission(
+                        member, reason=f"Timeout expired at <t:{end_time}:f>"
+                    )
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    logger.warning(
+                        f"Failed to restore permissions (attempt {attempt + 1}): {e}"
+                    )
+                    await asyncio.sleep(1)
+
+            embed = await self.create_embed(title="Timeout Expired")
+            embed.add_field(
+                name="Status",
+                value=f"{member.mention}'s timeout has expired at <t:{end_time}:f>.",
+                inline=True,
+            )
+            await channel.send(embeds=[embed])
+
+        except Exception as e:
+            logger.error(f"Error restoring permissions: {e}", exc_info=True)
+
     # Convert commands
 
     @module_base.subcommand(
@@ -1045,7 +1927,7 @@ class Threads(interactions.Extension):
     async def convert_names(
         self, ctx: interactions.SlashContext, source: str, target: str, scope: str
     ) -> None:
-        if not ctx.author.guild_permissions.ADMINISTRATOR:
+        if not ctx.author.guild_permissions & interactions.Permissions.ADMINISTRATOR:
             await self.send_error(ctx, "Only administrators can use this command.")
             return
 
@@ -1348,34 +2230,38 @@ class Threads(interactions.Extension):
     async def message_actions(
         self, ctx: interactions.ContextMenuContext
     ) -> Optional[ActionDetails]:
-        if not isinstance(ctx.channel, interactions.ThreadChannel):
-            await self.send_error(
-                ctx,
-                "This command can only be used in threads. Please try this action in a thread channel instead.",
-            )
-            return None
-
-        post: interactions.ThreadChannel = ctx.channel
         message: interactions.Message = ctx.target
+        channel = ctx.channel
 
-        if not await self.can_manage_message(post, ctx.author):
-            await self.send_error(
-                ctx,
-                "You don't have sufficient permissions to manage this message. You need to be either a moderator or the message author.",
+        if isinstance(channel, interactions.ThreadChannel):
+            if not await self.can_manage_message(channel, ctx.author):
+                await self.send_error(
+                    ctx,
+                    "You don't have sufficient permissions to manage this message. You need to be either a moderator or the message author.",
+                )
+                return None
+
+            options: List[interactions.StringSelectOption] = [
+                interactions.StringSelectOption(
+                    label="Delete Message",
+                    value="delete",
+                    description="Delete this message",
+                ),
+                interactions.StringSelectOption(
+                    label=f"{'Unpin' if message.pinned else 'Pin'} Message",
+                    value=f"{'unpin' if message.pinned else 'pin'}",
+                    description=f"{'Unpin' if message.pinned else 'Pin'} this message",
+                ),
+            ]
+        else:
+            options = []
+
+        options.append(
+            interactions.StringSelectOption(
+                label="Check with AI",
+                value="ai_check",
+                description="Use AI to check for offensive content",
             )
-            return None
-
-        options: Tuple[interactions.StringSelectOption, ...] = (
-            interactions.StringSelectOption(
-                label="Delete Message",
-                value="delete",
-                description="Delete this message",
-            ),
-            interactions.StringSelectOption(
-                label=f"{'Unpin' if message.pinned else 'Pin'} Message",
-                value=f"{'unpin' if message.pinned else 'pin'}",
-                description=f"{'Unpin' if message.pinned else 'Pin'} this message",
-            ),
         )
 
         select_menu: interactions.StringSelectMenu = interactions.StringSelectMenu(
@@ -1391,6 +2277,141 @@ class Threads(interactions.Extension):
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
         return None
+
+    message_action_regex_pattern = re.compile(r"message_action:(\d+)")
+
+    @interactions.component_callback(message_action_regex_pattern)
+    @log_action
+    async def on_message_action(
+        self, ctx: interactions.ComponentContext
+    ) -> Optional[ActionDetails]:
+        if not (match := self.message_action_regex_pattern.match(ctx.custom_id)):
+            await self.send_error(
+                ctx,
+                "The message action format is invalid. Please ensure you're using the correct command format.",
+            )
+            return None
+
+        message_id: int = int(match.group(1))
+        action: str = ctx.values[0].lower()
+
+        try:
+            message = await ctx.channel.fetch_message(message_id)
+        except NotFound:
+            await self.send_error(
+                ctx,
+                "The message could not be found. It may have been deleted or you may not have permission to view it.",
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching message {message_id}: {e}", exc_info=True)
+            await self.send_error(
+                ctx,
+                "Unable to retrieve the message. This could be due to a temporary issue or insufficient permissions. Please try again later.",
+            )
+            return None
+
+        channel = ctx.channel
+
+        match action:
+            case "delete" | "pin" | "unpin":
+                if not isinstance(channel, interactions.ThreadChannel):
+                    await self.send_error(
+                        ctx,
+                        "Delete and pin actions can only be performed within threads. Please ensure you're in a thread channel before using these commands.",
+                    )
+                    return None
+
+                return (
+                    await self.delete_message_action(ctx, channel, message)
+                    if action == "delete"
+                    else await self.pin_message_action(
+                        ctx, channel, message, action == "pin"
+                    )
+                )
+            case "ai_check":
+                return await self.ai_check_message_action(ctx, channel, message)
+            case _:
+                await self.send_error(
+                    ctx,
+                    "The selected action is not valid. Please choose a valid action from the menu.",
+                )
+                return None
+
+    async def delete_message_action(
+        self,
+        ctx: interactions.ComponentContext,
+        post: interactions.ThreadChannel,
+        message: interactions.Message,
+    ) -> Optional[ActionDetails]:
+        try:
+            await message.delete()
+            await self.send_success(
+                ctx, f"Message successfully deleted from thread `{post.name}`."
+            )
+
+            return ActionDetails(
+                action=ActionType.DELETE,
+                reason=f"User-initiated message deletion by {ctx.author.mention}",
+                post_name=post.name,
+                actor=ctx.author,
+                channel=post,
+                target=message.author,
+                additional_info={
+                    "deleted_message_id": str(message.id),
+                    "deleted_message_content": (
+                        message.content[:1000] if message.content else "N/A"
+                    ),
+                    "deleted_message_attachments": (
+                        [a.url for a in message.attachments]
+                        if message.attachments
+                        else []
+                    ),
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to delete message {message.id}: {e}", exc_info=True)
+            await self.send_error(ctx, "Unable to delete the message.")
+            return None
+
+    async def pin_message_action(
+        self,
+        ctx: interactions.ComponentContext,
+        post: interactions.ThreadChannel,
+        message: interactions.Message,
+        pin: bool,
+    ) -> Optional[ActionDetails]:
+        try:
+            action_type, action_desc = (
+                (ActionType.PIN, "pinned") if pin else (ActionType.UNPIN, "unpinned")
+            )
+            await message.pin() if pin else await message.unpin()
+
+            await self.send_success(
+                ctx, f"Message has been successfully {action_desc}."
+            )
+
+            return ActionDetails(
+                action=action_type,
+                reason=f"User-initiated message {action_desc} by {ctx.author.mention}",
+                post_name=post.name,
+                actor=ctx.author,
+                channel=post,
+                target=message.author,
+                additional_info={
+                    f"{action_desc}_message_id": str(message.id),
+                    f"{action_desc}_message_content": (
+                        message.content[:10] if message.content else "N/A"
+                    ),
+                },
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to {'pin' if pin else 'unpin'} message {message.id}: {e}",
+                exc_info=True,
+            )
+            await self.send_error(ctx, f"Unable to {action_desc} the message.")
+            return None
 
     # Tags commands
 
@@ -1483,6 +2504,88 @@ class Threads(interactions.Extension):
             logger.error(f"Error fetching available tags for channel {parent_id}: {e}")
             return tuple()
 
+    manage_tags_regex_pattern = re.compile(r"manage_tags:(\d+)")
+
+    @interactions.component_callback(manage_tags_regex_pattern)
+    @log_action
+    async def on_manage_tags(
+        self, ctx: interactions.ComponentContext
+    ) -> Optional[ActionDetails]:
+        logger.info(f"on_manage_tags invoked with custom_id: {ctx.custom_id}")
+        if not (match := self.manage_tags_regex_pattern.match(ctx.custom_id)):
+            logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
+            await self.send_error(ctx, "Invalid custom ID format.")
+            return None
+        post_id = int(match.group(1))
+        try:
+            post = await self.bot.fetch_channel(post_id)
+            parent_forum = await self.bot.fetch_channel(ctx.channel.parent_id)
+        except Exception as e:
+            logger.error(
+                f"Channel fetch error for post_id {post_id}: {e}", exc_info=True
+            )
+            await self.send_error(ctx, "Failed to retrieve necessary channels.")
+            return None
+        if not isinstance(post, interactions.GuildForumPost):
+            logger.warning(f"Channel {post_id} is not a GuildForumPost.")
+            await self.send_error(ctx, "Invalid forum post.")
+            return None
+        tag_updates = {
+            action: frozenset(
+                int(value.split(":")[1])
+                for value in ctx.values
+                if value.startswith(f"{action}:")
+            )
+            for action in ("add", "remove")
+        }
+        logger.info(f"Processing tag updates for post {post_id}: {tag_updates}")
+        current_tags = frozenset(tag.id for tag in post.applied_tags)
+        new_tags = (current_tags | tag_updates["add"]) - tag_updates["remove"]
+
+        if new_tags == current_tags:
+            await self.send_success(ctx, "No tag changes detected.")
+            return None
+
+        if len(new_tags) > 5:
+            await self.send_error(ctx, "A post can have a maximum of 5 tags.")
+            return None
+
+        try:
+            await post.edit(applied_tags=list(new_tags))
+            logger.info(f"Tags successfully updated for post {post_id}.")
+        except Exception as e:
+            logger.exception(f"Failed to edit tags for post {post_id}: {e}")
+            await self.send_error(ctx, "Error updating tags. Please try again later.")
+            return None
+
+        tag_names = {tag.id: tag.name for tag in parent_forum.available_tags}
+        updates = [
+            f"Tag `{tag_names.get(str(tag_id), 'Unknown')}` {'added to' if action == 'add' else 'removed from'} the post."
+            for action, tag_ids in tag_updates.items()
+            if tag_ids
+            for tag_id in tag_ids
+        ]
+
+        await self.send_success(ctx, "\n".join(updates))
+        return ActionDetails(
+            action=ActionType.EDIT,
+            reason="Tags modified in the post",
+            post_name=post.name,
+            actor=ctx.author,
+            channel=post,
+            additional_info={
+                "tag_updates": [
+                    {
+                        "Action": action.capitalize(),
+                        "Tag": tag_names.get(str(tag_id), "Unknown"),
+                    }
+                    for action, tag_ids in tag_updates.items()
+                    if tag_ids
+                    for tag_id in tag_ids
+                ]
+            },
+        )
+
     # User commands
 
     @interactions.user_context_menu(name="User in Thread")
@@ -1557,253 +2660,268 @@ class Threads(interactions.Extension):
 
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
 
-    # Timeout commands
+    manage_user_regex_pattern = re.compile(r"manage_user:(\d+):(\d+):(\d+)")
 
-    @module_base.subcommand(
-        "timeout", sub_cmd_description="Start a timeout poll for a user"
-    )
-    @interactions.slash_option(
-        name="user",
-        description="The user to timeout",
-        required=True,
-        opt_type=interactions.OptionType.USER,
-    )
-    @interactions.slash_option(
-        name="reason",
-        description="Reason for timeout",
-        required=True,
-        opt_type=interactions.OptionType.STRING,
-    )
-    @interactions.slash_option(
-        name="duration",
-        description="Timeout duration in minutes (max 10)",
-        required=True,
-        opt_type=interactions.OptionType.INTEGER,
-        min_value=1,
-        max_value=10,
-    )
-    async def timeout_poll(
+    @interactions.component_callback(manage_user_regex_pattern)
+    @log_action
+    async def on_manage_user(
+        self, ctx: interactions.ComponentContext
+    ) -> Optional[ActionDetails]:
+        logger.info(f"on_manage_user called with custom_id: {ctx.custom_id}")
+
+        if not (match := self.manage_user_regex_pattern.match(ctx.custom_id)):
+            logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
+            await self.send_error(
+                ctx,
+                "There was an issue processing your request due to an invalid format. Please try the action again, or contact a moderator if the issue persists.",
+            )
+            return None
+
+        channel_id, post_id, user_id = match.groups()
+        logger.info(
+            f"Parsed IDs - channel: {channel_id}, post: {post_id}, user: {user_id}"
+        )
+
+        if not ctx.values:
+            logger.warning("No action selected")
+            await self.send_error(
+                ctx,
+                "No action was selected from the menu. Please select an action (ban/unban or share/revoke permissions) and try again.",
+            )
+            return None
+
+        try:
+            action = ActionType[ctx.values[0].upper()]
+        except KeyError:
+            logger.warning(f"Invalid action: {ctx.values[0]}")
+            await self.send_error(
+                ctx,
+                f"The selected action `{ctx.values[0]}` is not valid. Please select a valid action from the menu and try again.",
+            )
+            return None
+
+        try:
+            member = await ctx.guild.fetch_member(int(user_id))
+        except NotFound:
+            logger.warning(f"User with ID {user_id} not found in the server")
+            await self.send_error(
+                ctx,
+                "Unable to find the user in the server. They may have left or been removed. Please verify the user is still in the server before trying again.",
+            )
+            return None
+        except ValueError:
+            logger.warning(f"Invalid user ID: {user_id}")
+            await self.send_error(
+                ctx,
+                "There was an error processing the user information. Please try the action again, or contact a moderator if the issue persists.",
+            )
+            return None
+
+        match action:
+            case ActionType.BAN | ActionType.UNBAN:
+                return await self.ban_unban_user(ctx, member, action)
+            case ActionType.SHARE_PERMISSIONS | ActionType.REVOKE_PERMISSIONS:
+                return await self.share_revoke_permissions(ctx, member, action)
+            case _:
+                await self.send_error(
+                    ctx,
+                    "The selected action is not supported. Please choose either ban/unban or share/revoke permissions from the menu.",
+                )
+                return None
+
+    @log_action
+    async def share_revoke_permissions(
         self,
-        ctx: interactions.SlashContext,
-        user: Union[
-            interactions.PermissionOverwrite, interactions.Role, interactions.User
-        ],
-        reason: str,
-        duration: int,
-    ) -> None:
-        if not isinstance(user, interactions.Member):
-            await self.send_error(ctx, "Invalid user type provided.")
-            return
+        ctx: interactions.ContextMenuContext,
+        member: interactions.Member,
+        action: ActionType,
+    ) -> Optional[ActionDetails]:
+        if not await self.validate_channel(ctx):
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
+            return None
 
+        thread = ctx.channel
+        author = ctx.author
+
+        if thread.parent_id != self.CONGRESS_ID and thread.owner_id != author.id:
+            await self.send_error(
+                ctx,
+                "Only the thread owner can manage thread permissions. If you need to modify permissions, please contact the thread owner.",
+            )
+            return None
+
+        if thread.parent_id == self.CONGRESS_ID:
+            author_roles = {role.id for role in author.roles}
+
+            if self.CONGRESS_MEMBER_ROLE in author_roles:
+                await self.send_error(
+                    ctx,
+                    f"Members with the <@&{self.CONGRESS_MEMBER_ROLE}> role cannot manage thread permissions. This is a restricted action.",
+                )
+                return None
+
+            if self.CONGRESS_MOD_ROLE not in author_roles:
+                await self.send_error(
+                    ctx,
+                    f"You need the <@&{self.CONGRESS_MOD_ROLE}> role to manage thread permissions in this forum. Please contact a moderator for assistance.",
+                )
+                return None
+        else:
+            if not await self.can_manage_post(thread, author):
+                await self.send_error(
+                    ctx,
+                    f"You can only {action.name.lower()} permissions for threads you manage. Please ensure you have the correct permissions or contact a moderator.",
+                )
+                return None
+
+        thread_id = str(thread.id)
+        user_id = str(member.id)
+
+        match action:
+            case ActionType.SHARE_PERMISSIONS:
+                self.model.thread_permissions.setdefault(thread_id, set()).add(user_id)
+                action_name = "shared"
+            case ActionType.REVOKE_PERMISSIONS:
+                if thread_id in self.model.thread_permissions:
+                    self.model.thread_permissions[thread_id].discard(user_id)
+                action_name = "revoked"
+            case _:
+                await self.send_error(
+                    ctx,
+                    "Invalid action type detected. Please try again with a valid permission action.",
+                )
+                return None
+
+        await self.model.save_thread_permissions(self.THREAD_PERMISSIONS_FILE)
+        await self.send_success(
+            ctx,
+            f"Permissions have been {action_name} successfully for {member.mention}. They will be notified of this change.",
+        )
+
+        return ActionDetails(
+            action=action,
+            reason=f"Permissions {action_name} by {author.mention}",
+            post_name=thread.name,
+            actor=author,
+            target=member,
+            channel=thread,
+            additional_info={
+                "action_type": f"{action_name.capitalize()} permissions",
+                "affected_user": str(member),
+                "affected_user_id": member.id,
+            },
+        )
+
+    @log_action
+    async def ban_unban_user(
+        self,
+        ctx: interactions.ContextMenuContext,
+        member: interactions.Member,
+        action: ActionType,
+    ) -> Optional[ActionDetails]:
+        if not await self.validate_channel(ctx):
+            await self.send_error(
+                ctx,
+                "This command can only be used in threads. Please navigate to a thread channel and try again.",
+            )
+            return None
+
+        thread = ctx.channel
+        author_roles, member_roles = map(
+            lambda x: {role.id for role in x.roles}, (ctx.author, member)
+        )
         if any(
-            [
-                ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS,
-                await self.has_admin_permissions(user),
-                user.id in self.active_timeout_polls,
-            ]
+            role_id in member_roles and thread.parent_id in channels
+            for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
         ):
             await self.send_error(
                 ctx,
-                next(
-                    filter(
-                        None,
-                        [
-                            (
-                                "This command can only be used in the designated timeout channels."
-                                if ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS
-                                else None
-                            ),
-                            (
-                                "You cannot start a timeout poll for administrators."
-                                if await self.has_admin_permissions(user)
-                                else None
-                            ),
-                            (
-                                f"There is already an active timeout poll for {user.mention}."
-                                if user.id in self.active_timeout_polls
-                                else None
-                            ),
-                        ],
-                    )
-                ),
+                "Unable to ban users with management permissions. These users have special privileges that prevent them from being banned.",
             )
-            return
+            return None
 
-        embed = await self.create_embed(title="Timeout Poll", color=EmbedColor.WARN)
-        embed.add_field(name="User", value=user.mention, inline=True)
-        embed.add_field(name="Reason", value=reason, inline=True)
-        embed.add_field(name="Duration", value=f"{duration} minutes", inline=True)
-        embed.add_field(
-            name="Required difference",
-            value=f"{self.TIMEOUT_REQUIRED_DIFFERENCE} votes",
-            inline=True,
-        )
-
-        end_time = int((datetime.now(timezone.utc) + timedelta(minutes=1)).timestamp())
-        embed.add_field(
-            name="Poll duration", value=f"Ends <t:{end_time}:R>", inline=True
-        )
-
-        message = await ctx.send(embeds=[embed])
-        await message.add_reaction("👍")
-        await message.add_reaction("👎")
-
-        task = asyncio.create_task(
-            self.handle_timeout_poll(ctx, message, user, reason, duration)
-        )
-        self.active_timeout_polls[user.id] = task
-
-        await asyncio.sleep(60)
-        await self.active_timeout_polls.pop(user.id, None)
-
-    async def handle_timeout_poll(
-        self,
-        ctx: interactions.SlashContext,
-        message: interactions.Message,
-        target: Union[
-            interactions.PermissionOverwrite, interactions.Role, interactions.User
-        ],
-        reason: str,
-        duration: int,
-    ) -> None:
-        try:
-            await asyncio.sleep(60)
-            reactions = (await ctx.channel.fetch_message(message.id)).reactions
-
-            votes = {
-                r.emoji.name: r.count - 1
-                for r in reactions
-                if r.emoji.name in ("👍", "👎")
-            }
-            vote_diff = votes.get("👍", 0) - votes.get("👎", 0)
-
-            channel = ctx.channel
-            end_time = int(
-                (datetime.now(timezone.utc) + timedelta(minutes=duration)).timestamp()
-            )
-
-            if vote_diff >= self.TIMEOUT_REQUIRED_DIFFERENCE:
-                try:
-                    deny_perms = [
-                        interactions.Permissions.SEND_MESSAGES,
-                        interactions.Permissions.SEND_MESSAGES_IN_THREADS,
-                        interactions.Permissions.SEND_TTS_MESSAGES,
-                        interactions.Permissions.SEND_VOICE_MESSAGES,
-                        interactions.Permissions.ADD_REACTIONS,
-                        interactions.Permissions.ATTACH_FILES,
-                        interactions.Permissions.CREATE_INSTANT_INVITE,
-                        interactions.Permissions.MENTION_EVERYONE,
-                        interactions.Permissions.MANAGE_MESSAGES,
-                        interactions.Permissions.MANAGE_THREADS,
-                        interactions.Permissions.MANAGE_CHANNELS,
-                    ]
-
-                    forum_perms = [interactions.Permissions.CREATE_POSTS, *deny_perms]
-
-                    try:
-                        if hasattr(channel, "parent_channel"):
-                            target_channel = channel.parent_channel
-                            perms = forum_perms
-                        else:
-                            target_channel = channel
-                            perms = deny_perms
-
-                        reason_str = f"Member {target.display_name}({target.id}) timeout until <t:{end_time}:f> in Channel {target_channel.name} reason:{reason[:50] if len(reason) > 51 else reason}"
-                        await target_channel.add_permission(
-                            target, deny=perms, reason=reason_str
-                        )
-
-                    except Forbidden:
-                        await self.send_error(
-                            ctx,
-                            "The bot needs to have enough permissions! Please contact technical support!",
-                        )
-                        return
-
-                    asyncio.create_task(
-                        self.restore_permissions(target_channel, target, duration)
-                    )
-
-                    result_embed = await self.create_embed(title="Timeout Poll Result")
-                    result_embed.add_field(
-                        name="Status",
-                        value=f"{target.mention} has been timed out until <t:{end_time}:R>.",
-                        inline=True,
-                    )
-                    result_embed.add_field(
-                        name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
-                    )
-                    result_embed.add_field(
-                        name="No Votes", value=str(votes.get("👎", 0)), inline=True
-                    )
-
-                    await self.send_success(
-                        ctx,
-                        f"{target.mention} has been timed out until <t:{end_time}:R>.\n"
-                        f"- Yes Votes: {votes.get('👍', 0)}\n"
-                        f"- No Votes: {votes.get('👎', 0)}",
-                        log_to_channel=True,
-                    )
-
-                except Exception as e:
-                    logger.error(f"Failed to apply timeout: {e}")
+        if thread.parent_id == self.CONGRESS_ID:
+            if self.CONGRESS_MEMBER_ROLE in author_roles:
+                if action is ActionType.BAN or (
+                    action is ActionType.UNBAN and member.id != ctx.author.id
+                ):
                     await self.send_error(
-                        ctx, f"Failed to apply timeout to {target.mention}"
+                        ctx,
+                        f"<@&{self.CONGRESS_MEMBER_ROLE}> members can only unban themselves.",
                     )
-            else:
-                result_embed = await self.create_embed(title="Timeout Poll Result")
-                result_embed.add_field(
-                    name="Status",
-                    value=f"Timeout poll for {target.mention} failed.",
-                    inline=True,
+                    return None
+            elif self.CONGRESS_MOD_ROLE not in author_roles:
+                await self.send_error(
+                    ctx,
+                    f"You need to be a <@&{self.CONGRESS_MOD_ROLE}> to manage bans in this forum.",
                 )
-                result_embed.add_field(
-                    name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
-                )
-                result_embed.add_field(
-                    name="No Votes", value=str(votes.get("👎", 0)), inline=True
-                )
-                result_embed.add_field(
-                    name="Required difference",
-                    value=f"{self.TIMEOUT_REQUIRED_DIFFERENCE} votes",
-                    inline=True,
-                )
-
-            await ctx.channel.send(embeds=[result_embed])
-
-        except Exception as e:
-            logger.error(f"Error handling timeout poll: {e}", exc_info=True)
+                return None
+        elif not await self.can_manage_post(thread, ctx.author):
             await self.send_error(
-                ctx, "An error occurred while processing the timeout poll."
+                ctx,
+                f"You can only {action.name.lower()} users from threads you manage.",
             )
+            return None
 
-    async def restore_permissions(
-        self,
-        channel: Union[interactions.GuildChannel, interactions.ThreadChannel],
-        member: Union[
-            interactions.PermissionOverwrite, interactions.Role, interactions.User
-        ],
-        duration: int,
-    ) -> None:
-        try:
-            await asyncio.sleep(duration * 60)
-            channel = getattr(channel, "parent_channel", channel)
-
-            end_time = int(datetime.now(timezone.utc).timestamp())
-            await channel.delete_permission(
-                member, reason=f"Timeout expired at <t:{end_time}:f>"
+        if member.id == thread.owner_id:
+            await self.send_error(
+                ctx,
+                "Thread owners cannot be banned from their own threads. This is a built-in protection for thread creators.",
             )
+            return None
 
-            embed = await self.create_embed(title="Timeout Expired")
-            embed.add_field(
-                name="Status",
-                value=f"{member.mention}'s timeout has expired at <t:{end_time}:f>.",
-                inline=True,
-            )
-            await channel.send(embeds=[embed])
+        channel_id, thread_id, user_id = map(
+            str, (thread.parent_id, thread.id, member.id)
+        )
 
-        except Exception as e:
-            logger.error(f"Error restoring permissions: {e}", exc_info=True)
+        async with self.ban_lock:
+            banned_users = self.model.banned_users
+            thread_users = banned_users.setdefault(
+                channel_id, defaultdict(set)
+            ).setdefault(thread_id, set())
+
+            match action:
+                case ActionType.BAN:
+                    thread_users.add(user_id)
+                case ActionType.UNBAN:
+                    thread_users.discard(user_id)
+                case _:
+                    await self.send_error(
+                        ctx,
+                        "Invalid action requested. Please select either ban or unban and try again.",
+                    )
+                    return None
+
+            if not thread_users:
+                del banned_users[channel_id][thread_id]
+                if not banned_users[channel_id]:
+                    del banned_users[channel_id]
+            await self.model.save_banned_users(self.BANNED_USERS_FILE)
+
+        await self.model.invalidate_ban_cache(channel_id, thread_id, user_id)
+
+        action_name = "banned" if action is ActionType.BAN else "unbanned"
+        await self.send_success(
+            ctx,
+            f"User has been successfully {action_name}. {'They will no longer be able to participate in this thread.' if action is ActionType.BAN else 'They can now participate in this thread again.'}",
+        )
+
+        return ActionDetails(
+            action=action,
+            reason=f"{action_name.capitalize()} by {ctx.author.mention}",
+            post_name=thread.name,
+            actor=ctx.author,
+            target=member,
+            channel=thread,
+            additional_info={
+                "action_type": action_name.capitalize(),
+                "affected_user": str(member),
+                "affected_user_id": member.id,
+            },
+        )
 
     # List commands
 
@@ -2240,507 +3358,130 @@ class Threads(interactions.Extension):
         paginator = Paginator.create_from_embeds(self.bot, *embeds, timeout=120)
         await paginator.send(ctx)
 
-    # Serve
+    # Task methods
 
-    @log_action
-    async def share_revoke_permissions(
-        self,
-        ctx: interactions.ContextMenuContext,
-        member: interactions.Member,
-        action: ActionType,
-    ) -> Optional[ActionDetails]:
-        if not await self.validate_channel(ctx):
-            await self.send_error(
-                ctx,
-                "This command can only be used in threads. Please navigate to a thread channel and try again.",
-            )
-            return None
-
-        thread = ctx.channel
-        author = ctx.author
-
-        if thread.parent_id != self.CONGRESS_ID and thread.owner_id != author.id:
-            await self.send_error(
-                ctx,
-                "Only the thread owner can manage thread permissions. If you need to modify permissions, please contact the thread owner.",
-            )
-            return None
-
-        if thread.parent_id == self.CONGRESS_ID:
-            author_roles = {role.id for role in author.roles}
-
-            if self.CONGRESS_MEMBER_ROLE in author_roles:
-                await self.send_error(
-                    ctx,
-                    f"Members with the <@&{self.CONGRESS_MEMBER_ROLE}> role cannot manage thread permissions. This is a restricted action.",
-                )
-                return None
-
-            if self.CONGRESS_MOD_ROLE not in author_roles:
-                await self.send_error(
-                    ctx,
-                    f"You need the <@&{self.CONGRESS_MOD_ROLE}> role to manage thread permissions in this forum. Please contact a moderator for assistance.",
-                )
-                return None
-        else:
-            if not await self.can_manage_post(thread, author):
-                await self.send_error(
-                    ctx,
-                    f"You can only {action.name.lower()} permissions for threads you manage. Please ensure you have the correct permissions or contact a moderator.",
-                )
-                return None
-
-        thread_id = str(thread.id)
-        user_id = str(member.id)
-
-        match action:
-            case ActionType.SHARE_PERMISSIONS:
-                self.model.thread_permissions.setdefault(thread_id, set()).add(user_id)
-                action_name = "shared"
-            case ActionType.REVOKE_PERMISSIONS:
-                if thread_id in self.model.thread_permissions:
-                    self.model.thread_permissions[thread_id].discard(user_id)
-                action_name = "revoked"
-            case _:
-                await self.send_error(
-                    ctx,
-                    "Invalid action type detected. Please try again with a valid permission action.",
-                )
-                return None
-
-        await self.model.save_thread_permissions(self.THREAD_PERMISSIONS_FILE)
-        await self.send_success(
-            ctx,
-            f"Permissions have been {action_name} successfully for {member.mention}. They will be notified of this change.",
-        )
-
-        return ActionDetails(
-            action=action,
-            reason=f"Permissions {action_name} by {author.mention}",
-            post_name=thread.name,
-            actor=author,
-            target=member,
-            channel=thread,
-            additional_info={
-                "action_type": f"{action_name.capitalize()} permissions",
-                "affected_user": str(member),
-                "affected_user_id": member.id,
-            },
-        )
-
-    manage_user_regex_pattern = re.compile(r"manage_user:(\d+):(\d+):(\d+)")
-
-    @interactions.component_callback(manage_user_regex_pattern)
-    @log_action
-    async def on_manage_user(
-        self, ctx: interactions.ComponentContext
-    ) -> Optional[ActionDetails]:
-        logger.info(f"on_manage_user called with custom_id: {ctx.custom_id}")
-
-        if not (match := self.manage_user_regex_pattern.match(ctx.custom_id)):
-            logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
-            await self.send_error(
-                ctx,
-                "There was an issue processing your request due to an invalid format. Please try the action again, or contact a moderator if the issue persists.",
-            )
-            return None
-
-        channel_id, post_id, user_id = match.groups()
-        logger.info(
-            f"Parsed IDs - channel: {channel_id}, post: {post_id}, user: {user_id}"
-        )
-
-        if not ctx.values:
-            logger.warning("No action selected")
-            await self.send_error(
-                ctx,
-                "No action was selected from the menu. Please select an action (ban/unban or share/revoke permissions) and try again.",
-            )
-            return None
-
+    @interactions.Task.create(interactions.IntervalTrigger(hours=1))
+    async def rotate_featured_posts_periodically(self) -> None:
         try:
-            action = ActionType[ctx.values[0].upper()]
-        except KeyError:
-            logger.warning(f"Invalid action: {ctx.values[0]}")
-            await self.send_error(
-                ctx,
-                f"The selected action `{ctx.values[0]}` is not valid. Please select a valid action from the menu and try again.",
-            )
-            return None
-
-        try:
-            member = await ctx.guild.fetch_member(int(user_id))
-        except NotFound:
-            logger.warning(f"User with ID {user_id} not found in the server")
-            await self.send_error(
-                ctx,
-                "Unable to find the user in the server. They may have left or been removed. Please verify the user is still in the server before trying again.",
-            )
-            return None
-        except ValueError:
-            logger.warning(f"Invalid user ID: {user_id}")
-            await self.send_error(
-                ctx,
-                "There was an error processing the user information. Please try the action again, or contact a moderator if the issue persists.",
-            )
-            return None
-
-        match action:
-            case ActionType.BAN | ActionType.UNBAN:
-                return await self.ban_unban_user(ctx, member, action)
-            case ActionType.SHARE_PERMISSIONS | ActionType.REVOKE_PERMISSIONS:
-                return await self.share_revoke_permissions(ctx, member, action)
-            case _:
-                await self.send_error(
-                    ctx,
-                    "The selected action is not supported. Please choose either ban/unban or share/revoke permissions from the menu.",
-                )
-                return None
-
-    @log_action
-    async def ban_unban_user(
-        self,
-        ctx: interactions.ContextMenuContext,
-        member: interactions.Member,
-        action: ActionType,
-    ) -> Optional[ActionDetails]:
-        if not await self.validate_channel(ctx):
-            await self.send_error(
-                ctx,
-                "This command can only be used in threads. Please navigate to a thread channel and try again.",
-            )
-            return None
-
-        thread = ctx.channel
-        author_roles, member_roles = map(
-            lambda x: {role.id for role in x.roles}, (ctx.author, member)
-        )
-        if any(
-            role_id in member_roles and thread.parent_id in channels
-            for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
-        ):
-            await self.send_error(
-                ctx,
-                "Unable to ban users with management permissions. These users have special privileges that prevent them from being banned.",
-            )
-            return None
-
-        if thread.parent_id == self.CONGRESS_ID:
-            if self.CONGRESS_MEMBER_ROLE in author_roles:
-                if action is ActionType.BAN or (
-                    action is ActionType.UNBAN and member.id != ctx.author.id
-                ):
-                    await self.send_error(
-                        ctx,
-                        f"<@&{self.CONGRESS_MEMBER_ROLE}> members can only unban themselves.",
+            while True:
+                try:
+                    await self.adjust_thresholds()
+                    await self.update_featured_posts_rotation()
+                except Exception as e:
+                    logger.error(
+                        f"Error in rotating selected posts: {e}", exc_info=True
                     )
-                    return None
-            elif self.CONGRESS_MOD_ROLE not in author_roles:
-                await self.send_error(
-                    ctx,
-                    f"You need to be a <@&{self.CONGRESS_MOD_ROLE}> to manage bans in this forum.",
-                )
-                return None
-        elif not await self.can_manage_post(thread, ctx.author):
-            await self.send_error(
-                ctx,
-                f"You can only {action.name.lower()} users from threads you manage.",
-            )
-            return None
-
-        if member.id == thread.owner_id:
-            await self.send_error(
-                ctx,
-                "Thread owners cannot be banned from their own threads. This is a built-in protection for thread creators.",
-            )
-            return None
-
-        channel_id, thread_id, user_id = map(
-            str, (thread.parent_id, thread.id, member.id)
-        )
-
-        async with self.ban_lock:
-            banned_users = self.model.banned_users
-            thread_users = banned_users.setdefault(
-                channel_id, defaultdict(set)
-            ).setdefault(thread_id, set())
-
-            match action:
-                case ActionType.BAN:
-                    thread_users.add(user_id)
-                case ActionType.UNBAN:
-                    thread_users.discard(user_id)
-                case _:
-                    await self.send_error(
-                        ctx,
-                        "Invalid action requested. Please select either ban or unban and try again.",
-                    )
-                    return None
-
-            if not thread_users:
-                del banned_users[channel_id][thread_id]
-                if not banned_users[channel_id]:
-                    del banned_users[channel_id]
-            await self.model.save_banned_users(self.BANNED_USERS_FILE)
-
-        await self.model.invalidate_ban_cache(channel_id, thread_id, user_id)
-
-        action_name = "banned" if action is ActionType.BAN else "unbanned"
-        await self.send_success(
-            ctx,
-            f"User has been successfully {action_name}. {'They will no longer be able to participate in this thread.' if action is ActionType.BAN else 'They can now participate in this thread again.'}",
-        )
-
-        return ActionDetails(
-            action=action,
-            reason=f"{action_name.capitalize()} by {ctx.author.mention}",
-            post_name=thread.name,
-            actor=ctx.author,
-            target=member,
-            channel=thread,
-            additional_info={
-                "action_type": action_name.capitalize(),
-                "affected_user": str(member),
-                "affected_user_id": member.id,
-            },
-        )
-
-    message_action_regex_pattern = re.compile(r"message_action:(\d+)")
-
-    @interactions.component_callback(message_action_regex_pattern)
-    @log_action
-    async def on_message_action(
-        self, ctx: interactions.ComponentContext
-    ) -> Optional[ActionDetails]:
-        if not (match := self.message_action_regex_pattern.match(ctx.custom_id)):
-            await self.send_error(
-                ctx,
-                "The message action format is invalid. Please ensure you're using the correct command format.",
-            )
-            return None
-
-        message_id: int = int(match.group(1))
-        action: str = ctx.values[0].lower()
-
-        try:
-            message = await ctx.channel.fetch_message(message_id)
-        except NotFound:
-            await self.send_error(
-                ctx,
-                "The message could not be found. It may have been deleted or you may not have permission to view it.",
-            )
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching message {message_id}: {e}", exc_info=True)
-            await self.send_error(
-                ctx,
-                "Unable to retrieve the message. This could be due to a temporary issue or insufficient permissions. Please try again later.",
-            )
-            return None
-
-        if not isinstance(ctx.channel, interactions.ThreadChannel):
-            await self.send_error(
-                ctx,
-                "This action can only be performed within threads. Please ensure you're in a thread channel before using this command.",
-            )
-            return None
-
-        post = ctx.channel
-
-        match action:
-            case "delete":
-                return await self.delete_message_action(ctx, post, message)
-            case "pin" | "unpin":
-                return await self.pin_message_action(
-                    ctx, post, message, action == "pin"
-                )
-            case _:
-                await self.send_error(
-                    ctx,
-                    "The selected action is not valid. Available actions are: delete, pin, and unpin. Please choose one of these options.",
-                )
-                return None
-
-    async def delete_message_action(
-        self,
-        ctx: interactions.ComponentContext,
-        post: interactions.ThreadChannel,
-        message: interactions.Message,
-    ) -> Optional[ActionDetails]:
-        try:
-            await message.delete()
-            await self.send_success(
-                ctx, f"Message successfully deleted from thread `{post.name}`."
-            )
-
-            return ActionDetails(
-                action=ActionType.DELETE,
-                reason=f"User-initiated message deletion by {ctx.author.mention}",
-                post_name=post.name,
-                actor=ctx.author,
-                channel=post,
-                target=message.author,
-                additional_info={
-                    "deleted_message_id": str(message.id),
-                    "deleted_message_content": (
-                        message.content[:1000] if message.content else "N/A"
-                    ),
-                    "deleted_message_attachments": (
-                        [a.url for a in message.attachments]
-                        if message.attachments
-                        else []
-                    ),
-                },
-            )
-        except Exception as e:
-            logger.error(f"Failed to delete message {message.id}: {e}", exc_info=True)
-            await self.send_error(ctx, "Unable to delete the message.")
-            return None
-
-    async def pin_message_action(
-        self,
-        ctx: interactions.ComponentContext,
-        post: interactions.ThreadChannel,
-        message: interactions.Message,
-        pin: bool,
-    ) -> Optional[ActionDetails]:
-        try:
-            action_type, action_desc = (
-                (ActionType.PIN, "pinned") if pin else (ActionType.UNPIN, "unpinned")
-            )
-            await message.pin() if pin else await message.unpin()
-
-            await self.send_success(
-                ctx, f"Message has been successfully {action_desc}."
-            )
-
-            return ActionDetails(
-                action=action_type,
-                reason=f"User-initiated message {action_desc} by {ctx.author.mention}",
-                post_name=post.name,
-                actor=ctx.author,
-                channel=post,
-                target=message.author,
-                additional_info={
-                    f"{action_desc}_message_id": str(message.id),
-                    f"{action_desc}_message_content": (
-                        message.content[:10] if message.content else "N/A"
-                    ),
-                },
-            )
+                await asyncio.sleep(self.rotation_interval.total_seconds())
+        except asyncio.CancelledError:
+            logger.info("Featured posts rotation task cancelled")
+            raise
         except Exception as e:
             logger.error(
-                f"Failed to {'pin' if pin else 'unpin'} message {message.id}: {e}",
-                exc_info=True,
+                f"Fatal error in featured posts rotation task: {e}", exc_info=True
             )
-            await self.send_error(ctx, f"Unable to {action_desc} the message.")
-            return None
+            raise
 
-    manage_tags_regex_pattern = re.compile(r"manage_tags:(\d+)")
+    # Event methods
 
-    @interactions.component_callback(manage_tags_regex_pattern)
-    @log_action
-    async def on_manage_tags(
-        self, ctx: interactions.ComponentContext
-    ) -> Optional[ActionDetails]:
-        logger.info(f"on_manage_tags invoked with custom_id: {ctx.custom_id}")
-        if not (match := self.manage_tags_regex_pattern.match(ctx.custom_id)):
-            logger.warning(f"Invalid custom ID format: {ctx.custom_id}")
-            await self.send_error(ctx, "Invalid custom ID format.")
-            return None
-        post_id = int(match.group(1))
-        try:
-            post = await self.bot.fetch_channel(post_id)
-            parent_forum = await self.bot.fetch_channel(ctx.channel.parent_id)
-        except Exception as e:
-            logger.error(
-                f"Channel fetch error for post_id {post_id}: {e}", exc_info=True
-            )
-            await self.send_error(ctx, "Failed to retrieve necessary channels.")
-            return None
-        if not isinstance(post, interactions.GuildForumPost):
-            logger.warning(f"Channel {post_id} is not a GuildForumPost.")
-            await self.send_error(ctx, "Invalid forum post.")
-            return None
-        tag_updates = {
-            action: frozenset(
-                int(value.split(":")[1])
-                for value in ctx.values
-                if value.startswith(f"{action}:")
-            )
-            for action in ("add", "remove")
-        }
-        logger.info(f"Processing tag updates for post {post_id}: {tag_updates}")
-        current_tags = frozenset(tag.id for tag in post.applied_tags)
-        new_tags = (current_tags | tag_updates["add"]) - tag_updates["remove"]
+    @interactions.listen(ExtensionLoad)
+    async def on_extension_load(self) -> None:
+        self.rotate_featured_posts_periodically.start()
 
-        if new_tags == current_tags:
-            await self.send_success(ctx, "No tag changes detected.")
-            return None
+    @interactions.listen(ExtensionUnload)
+    async def on_extension_unload(self) -> None:
+        tasks_to_stop: tuple = (self.rotate_featured_posts_periodically,)
+        for task in tasks_to_stop:
+            task.stop()
 
-        if len(new_tags) > 5:
-            await self.send_error(ctx, "A post can have a maximum of 5 tags.")
-            return None
-
-        try:
-            await post.edit(applied_tags=list(new_tags))
-            logger.info(f"Tags successfully updated for post {post_id}.")
-        except Exception as e:
-            logger.exception(f"Failed to edit tags for post {post_id}: {e}")
-            await self.send_error(ctx, "Error updating tags. Please try again later.")
-            return None
-
-        tag_names = {tag.id: tag.name for tag in parent_forum.available_tags}
-        updates = [
-            f"Tag `{tag_names.get(str(tag_id), 'Unknown')}` {'added to' if action == 'add' else 'removed from'} the post."
-            for action, tag_ids in tag_updates.items()
-            if tag_ids
-            for tag_id in tag_ids
+        pending_tasks = [
+            task for task in asyncio.all_tasks() if task.get_name().startswith("Task-")
         ]
-
-        await self.send_success(ctx, "\n".join(updates))
-        return ActionDetails(
-            action=ActionType.EDIT,
-            reason="Tags modified in the post",
-            post_name=post.name,
-            actor=ctx.author,
-            channel=post,
-            additional_info={
-                "tag_updates": [
-                    {
-                        "Action": action.capitalize(),
-                        "Tag": tag_names.get(str(tag_id), "Unknown"),
-                    }
-                    for action, tag_ids in tag_updates.items()
-                    if tag_ids
-                    for tag_id in tag_ids
-                ]
-            },
+        await asyncio.gather(
+            *map(functools.partial(asyncio.wait_for, timeout=10.0), pending_tasks),
+            return_exceptions=True,
         )
 
-    @staticmethod
-    async def process_new_post(
-        thread: interactions.GuildPublicThread, create_poll: bool = True
-    ) -> None:
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_stats(self, event: MessageCreate) -> None:
+        if not event.message.guild:
+            return
+        if not isinstance(event.message.channel, interactions.GuildForumPost):
+            return
+        if event.message.channel.parent_id not in self.FEATURED_CHANNELS:
+            return
+
+        self.model.record_message(event.message.channel.id)
+        await self.increment_message_count("{}".format(event.message.channel.id))
+
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_actions(self, event: MessageCreate) -> None:
+        msg = event.message
+        if not all(
+            (
+                msg.guild,
+                msg.message_reference,
+                isinstance(msg.channel, interactions.ThreadChannel),
+            )
+        ):
+            return
+
+        action = {
+            "del": "delete",
+            "pin": "pin",
+            "unpin": "unpin",
+        }.get(msg.content.casefold().strip())
+
+        if not action:
+            return
+
         try:
-            timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
-            new_title = f"[{timestamp}] {thread.name}"
+            if not (referenced_message := await msg.fetch_referenced_message()):
+                return
 
-            tasks = [thread.edit(name=new_title)]
-            if create_poll:
-                poll = interactions.Poll.create(
-                    question="您对此持何意见？What is your position?",
-                    duration=48,
-                    answers=["正  In Favor", "反  Opposed", "无  Abstain"],
+            if not await self.can_manage_message(msg.channel, msg.author):
+                return
+
+            await msg.delete()
+
+            await (
+                self.delete_message_action(msg, msg.channel, referenced_message)
+                if action == "delete"
+                else self.pin_message_action(
+                    msg, msg.channel, referenced_message, action == "pin"
                 )
-                tasks.append(thread.send(poll=poll))
-
-            for task in tasks:
-                await task
+            )
 
         except Exception as e:
-            error_msg = f"Error processing thread {thread.id}: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            logger.error(f"Error processing message action: {e}", exc_info=True)
+
+    # Link methods
+
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_link(self, event: MessageCreate) -> None:
+        if not event.message.guild:
+            return
+
+        link_task = (
+            asyncio.create_task(self.process_link(event))
+            if self.should_process_link(event)
+            else None
+        )
+
+        if self.should_process_message(event):
+            channel_id, post_id, author_id = map(
+                str,
+                (
+                    event.message.channel.parent_id,
+                    event.message.channel.id,
+                    event.message.author.id,
+                ),
+            )
+
+            if await self.is_user_banned(channel_id, post_id, author_id):
+                await event.message.delete()
+
+        if link_task:
+            await link_task
 
     async def process_link(self, event: MessageCreate) -> None:
         if not self.should_process_link(event):
@@ -2844,127 +3585,7 @@ class Threads(interactions.Extension):
     def get_warning_message(self) -> str:
         return "The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited."
 
-    # Task methods
-
-    @interactions.Task.create(interactions.IntervalTrigger(hours=1))
-    async def rotate_featured_posts_periodically(self) -> None:
-        try:
-            while True:
-                try:
-                    await self.adjust_thresholds()
-                    await self.update_featured_posts_rotation()
-                except Exception as e:
-                    logger.error(
-                        f"Error in rotating selected posts: {e}", exc_info=True
-                    )
-                await asyncio.sleep(self.rotation_interval.total_seconds())
-        except asyncio.CancelledError:
-            logger.info("Featured posts rotation task cancelled")
-            raise
-        except Exception as e:
-            logger.error(
-                f"Fatal error in featured posts rotation task: {e}", exc_info=True
-            )
-            raise
-
-    # Event methods
-
-    @interactions.listen(ExtensionLoad)
-    async def on_extension_load(self) -> None:
-        self.rotate_featured_posts_periodically.start()
-
-    @interactions.listen(ExtensionUnload)
-    async def on_extension_unload(self) -> None:
-        tasks_to_stop: tuple = (self.rotate_featured_posts_periodically,)
-        for task in tasks_to_stop:
-            task.stop()
-
-        pending_tasks = [
-            task for task in asyncio.all_tasks() if task.get_name().startswith("Task-")
-        ]
-        await asyncio.gather(
-            *map(functools.partial(asyncio.wait_for, timeout=10.0), pending_tasks),
-            return_exceptions=True,
-        )
-
-    @interactions.listen(MessageCreate)
-    async def on_message_create_for_stats(self, event: MessageCreate) -> None:
-        if not event.message.guild:
-            return
-        if not isinstance(event.message.channel, interactions.GuildForumPost):
-            return
-        if event.message.channel.parent_id not in self.FEATURED_CHANNELS:
-            return
-
-        await self.increment_message_count("{}".format(event.message.channel.id))
-
-    @interactions.listen(MessageCreate)
-    async def on_message_create_for_actions(self, event: MessageCreate) -> None:
-        msg = event.message
-        if not all(
-            (
-                msg.guild,
-                msg.message_reference,
-                isinstance(msg.channel, interactions.ThreadChannel),
-            )
-        ):
-            return
-
-        action = {
-            "del": "delete",
-            "pin": "pin",
-            "unpin": "unpin",
-        }.get(msg.content.casefold().strip())
-
-        if not action:
-            return
-
-        try:
-            if not (referenced_message := await msg.fetch_referenced_message()):
-                return
-
-            if not await self.can_manage_message(msg.channel, msg.author):
-                return
-
-            await msg.delete()
-
-            await (
-                self.delete_message_action(msg, msg.channel, referenced_message)
-                if action == "delete"
-                else self.pin_message_action(
-                    msg, msg.channel, referenced_message, action == "pin"
-                )
-            )
-
-        except Exception as e:
-            logger.error(f"Error processing message action: {e}", exc_info=True)
-
-    @interactions.listen(MessageCreate)
-    async def on_message_create_for_link(self, event: MessageCreate) -> None:
-        if not event.message.guild:
-            return
-
-        link_task = (
-            asyncio.create_task(self.process_link(event))
-            if self.should_process_link(event)
-            else None
-        )
-
-        if self.should_process_message(event):
-            channel_id, post_id, author_id = map(
-                str,
-                (
-                    event.message.channel.parent_id,
-                    event.message.channel.id,
-                    event.message.author.id,
-                ),
-            )
-
-            if await self.is_user_banned(channel_id, post_id, author_id):
-                await event.message.delete()
-
-        if link_task:
-            await link_task
+    # Poll methods
 
     @interactions.listen(NewThreadCreate)
     async def on_new_thread_create_for_poll(self, event: NewThreadCreate) -> None:
@@ -3008,6 +3629,32 @@ class Threads(interactions.Extension):
         )
 
         await self.process_new_post(thread, create_poll=create_poll)
+
+    @staticmethod
+    async def process_new_post(
+        thread: interactions.GuildPublicThread, create_poll: bool = True
+    ) -> None:
+        try:
+            timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
+            new_title = f"[{timestamp}] {thread.name}"
+
+            tasks = [thread.edit(name=new_title)]
+            if create_poll:
+                poll = interactions.Poll.create(
+                    question="您对此持何意见？What is your position?",
+                    duration=48,
+                    answers=["正  In Favor", "反  Opposed", "无  Abstain"],
+                )
+                tasks.append(thread.send(poll=poll))
+
+            for task in tasks:
+                await task
+
+        except Exception as e:
+            error_msg = f"Error processing thread {thread.id}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+
+    # Ban methods
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_banned_users(self, event: MessageCreate) -> None:
