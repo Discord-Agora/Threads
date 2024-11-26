@@ -537,7 +537,16 @@ class Threads(interactions.Extension):
         self.model: Model = Model()
         self.ban_lock: asyncio.Lock = asyncio.Lock()
         self.client: Optional[groq.AsyncGroq] = None
+
         self.conversion_task: Optional[asyncio.Task] = None
+        self.active_timeout_polls: Dict[int, asyncio.Task] = {}
+        self.message_count_threshold: int = 200
+        self.rotation_interval: timedelta = timedelta(hours=23)
+        self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
+        self.last_log_key: Optional[str] = None
+        self.last_threshold_adjustment: datetime = datetime.now(
+            timezone.utc
+        ) - timedelta(days=8)
 
         self.GROQ_KEY_FILE: str = os.path.join(BASE_DIR, ".groq_key")
         self.BANNED_USERS_FILE: str = os.path.join(BASE_DIR, "banned_users.json")
@@ -590,15 +599,6 @@ class Threads(interactions.Extension):
         )
         self.TIMEOUT_REQUIRED_DIFFERENCE: int = 5
         self.TIMEOUT_DURATION: int = 30
-
-        self.active_timeout_polls: Dict[int, asyncio.Task] = {}
-        self.message_count_threshold: int = 200
-        self.rotation_interval: timedelta = timedelta(hours=23)
-        self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
-        self.last_log_key: Optional[str] = None
-        self.last_threshold_adjustment: datetime = datetime.now(
-            timezone.utc
-        ) - timedelta(days=8)
 
         self.AI_MODERATION_PROMPT = [
             {
@@ -1460,6 +1460,31 @@ class Threads(interactions.Extension):
                 logger.error(f"Error checking user timeout status: {e}")
 
         try:
+            current_time = datetime.now()
+            current_minute = current_time.replace(second=0, microsecond=0)
+            cache_key = f"groq_requests_{current_minute.isoformat()}"
+            token_key = f"groq_tokens_{current_minute.isoformat()}"
+
+            last_update = self.url_cache.get(f"last_update_{cache_key}", current_time)
+            request_count = self.url_cache.get(cache_key, 0)
+            token_count = self.url_cache.get(token_key, 0)
+
+            time_passed = (current_time - last_update).total_seconds()
+            requests_replenished = min(30, int(30 * time_passed / 60))
+            tokens_replenished = min(7000, int(7000 * time_passed / 60))
+
+            request_count = max(0, request_count - requests_replenished)
+            token_count = max(0, token_count - tokens_replenished)
+
+            if request_count >= 30 or token_count >= 7000:
+                wait_time = max(
+                    60 - int(time_passed), int((token_count - 7000) * 60 / 7000) + 1
+                )
+                await self.send_error(
+                    ctx, f"Rate limit reached. Please try again in {wait_time} seconds."
+                )
+                return None
+
             messages = []
             async for msg in ctx.channel.history(limit=50, before=message):
                 if msg.author == ctx.author:
@@ -1481,6 +1506,14 @@ class Threads(interactions.Extension):
                 message_text[-500:] if len(message_text) > 500 else message_text
             )
 
+            estimated_tokens = len(truncated_text) // 4
+
+            if token_count + estimated_tokens > 7000:
+                await self.send_error(
+                    ctx, "Token limit reached. Please try again in a minute."
+                )
+                return None
+
             try:
                 async with asyncio.timeout(30):
                     completion = await self.client.chat.completions.create(
@@ -1488,6 +1521,9 @@ class Threads(interactions.Extension):
                         + [{"role": "user", "content": truncated_text}],
                         **self.model_params,
                     )
+                    self.url_cache[cache_key] = request_count + 1
+                    self.url_cache[token_key] = token_count + estimated_tokens
+                    self.url_cache[f"last_update_{cache_key}"] = current_time
             except asyncio.TimeoutError:
                 await self.send_error(
                     ctx, "AI service request timed out. Please try again later."
