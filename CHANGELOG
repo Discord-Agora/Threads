@@ -1,3 +1,15 @@
+## 2024-11-26
+
+### Added
+
+- TimeoutConfig dataclass for dynamic timeout management
+- AI moderation system using Groq LLM for content analysis
+- Adaptive timeout durations based on user behavior
+- Message and violation history tracking
+- Timeout config auto-adjustment based on server activity
+- Persistence for timeout history and Groq API keys
+- Debug commands for exporting files
+
 ## 2024-11-25
 
 ### Added
