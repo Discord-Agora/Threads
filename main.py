@@ -1470,8 +1470,6 @@ class Threads(interactions.Extension):
     async def check_message(
         self, ctx: interactions.SlashContext, message_id: str
     ) -> None:
-        await ctx.defer(ephemeral=True)
-
         try:
             if message_id.startswith("https://discord.com/channels/"):
                 *_, guild_str, channel_str, msg_str = message_id.split("/")[:7]
@@ -1541,8 +1539,8 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, "Bot messages cannot be checked for abuse.")
             return None
 
-        if datetime.now(timezone.utc) - message.created_at > timedelta(days=7):
-            await self.send_error(ctx, "Messages older than 7 days cannot be checked.")
+        if datetime.now(timezone.utc) - message.created_at > timedelta(days=1):
+            await self.send_error(ctx, "Messages older than 1 days cannot be checked.")
             return None
 
         if isinstance(post, (interactions.ThreadChannel, interactions.GuildChannel)):
@@ -1559,6 +1557,16 @@ class Threads(interactions.Extension):
             except Exception as e:
                 logger.error(f"Error checking user timeout status: {e}")
 
+        if isinstance(post, interactions.ThreadChannel):
+            if message.author.id == post.owner_id or await self.can_manage_post(
+                post, message.author
+            ):
+                await self.send_error(
+                    ctx,
+                    "Cannot perform AI check on messages from thread owners or users with management permissions.",
+                )
+                return None
+
         message_cache_key = f"ai_check_{message.id}"
         if message_cache_key in self.url_cache:
             await self.send_error(
@@ -1574,6 +1582,14 @@ class Threads(interactions.Extension):
         history_messages = []
         async for msg in ctx.channel.history(limit=15, before=message.id + 1):
             history_messages.append(msg)
+
+        caller_found = next(
+            (True for msg in history_messages if msg.author.id == ctx.author.id), False
+        )
+        if not caller_found:
+            messages.append(
+                "Note: The caller was not found in recent message history. Please pay extra attention to the context and relationship between the caller and the message."
+            )
 
         for msg in reversed(history_messages):
             messages.append(
@@ -1593,14 +1609,10 @@ class Threads(interactions.Extension):
         if not image_attachments:
             user_message = "\n".join(messages)
         else:
-            message_text = (
-                "\n".join(messages)
-                + f"\n||||{message.author.display_name}: {message.content}||||"
-            )
             user_message = [
                 {
                     "type": "text",
-                    "text": message_text[-4000:],
+                    "text": messages[-4000:],
                 },
                 {"type": "image_url", "image_url": {"url": image_attachments[0].url}},
             ]
@@ -1634,7 +1646,31 @@ class Threads(interactions.Extension):
             )
             return None
 
-        ai_response = completion.choices[0].message.content.strip()
+        ai_response = re.sub(
+            r"[<>*|+]",
+            "",
+            "\n".join(
+                f"{i}. {line}"
+                for i, line in enumerate(
+                    filter(
+                        None,
+                        map(
+                            str.strip,
+                            re.sub(
+                                r"\n{2,}",
+                                "\n",
+                                re.sub(
+                                    r"(?m)^(?:(?:Severity Score|Key Concerns|Evidence):)?\s*(.+)$",
+                                    r"\1",
+                                    completion.choices[0].message.content.strip(),
+                                ),
+                            ).split("\n"),
+                        ),
+                    ),
+                    1,
+                )
+            ).replace("- ", ""),
+        )
 
         score = next(
             (
@@ -1645,15 +1681,7 @@ class Threads(interactions.Extension):
             0,
         )
 
-        # key_concerns = (lambda m: m.group(1).strip() if m else "")(
-        #     re.search(r"Key Concerns:(.*?)(?=Evidence:|$)", ai_response, re.DOTALL)
-        # )
-
-        # evidence = (lambda m: m.group(1).strip() if m else "")(
-        #     re.search(r"Evidence:(.*?)$", ai_response, re.DOTALL)
-        # )
-
-        if score >= 7 and not message.author.bot:
+        if score >= 9 and not message.author.bot:
             timeout_duration = self.model.calculate_timeout_duration(
                 str(message.author.id)
             )
@@ -1662,11 +1690,11 @@ class Threads(interactions.Extension):
             await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
             await self.model.adjust_timeout_cfg()
 
-            multiplier = 3 if score >= 9 else 2
+            multiplier = 3 if score >= 10 else 2
             timeout_duration = int(timeout_duration * multiplier)
 
             if display_result:
-                severity = "critical violation" if score >= 9 else "serious violation"
+                severity = "extreme violation" if score >= 10 else "critical violation"
 
             try:
                 deny_perms = [
@@ -1733,7 +1761,7 @@ class Threads(interactions.Extension):
                 f"The AI detected potentially offensive content:\n{ai_response}\n\n"
                 + (
                     f"User <@{message.author.id}> has been temporarily muted for {timeout_duration} seconds due to {severity}."
-                    if score >= 7
+                    if score >= 9
                     else (
                         "Content has been flagged for review by moderators."
                         if score >= 5
@@ -1743,7 +1771,7 @@ class Threads(interactions.Extension):
             ),
             color=(
                 EmbedColor.FATAL
-                if score >= 7
+                if score >= 9
                 else EmbedColor.WARN if score >= 5 else EmbedColor.INFO
             ),
         )
@@ -1769,7 +1797,7 @@ class Threads(interactions.Extension):
             )
             embed.add_field(name="Model Used", value=model, inline=True)
 
-        await ctx.send(embed=embed, ephemeral=score < 7)
+        await ctx.send(embed=embed, ephemeral=score < 9)
 
         return ActionDetails(
             action=ActionType.EDIT,
@@ -1784,7 +1812,7 @@ class Threads(interactions.Extension):
                     message.content[:1000] if message.content else "N/A"
                 ),
                 "ai_result": f"\n{ai_response}",
-                "is_offensive": score >= 7,
+                "is_offensive": score >= 9,
                 "abuse_score": score,
                 "model_used": f"`{model}` ({completion.usage.total_tokens} tokens)",
             },
@@ -2419,40 +2447,32 @@ class Threads(interactions.Extension):
     async def message_actions(
         self, ctx: interactions.ContextMenuContext
     ) -> Optional[ActionDetails]:
-        message: interactions.Message = ctx.target
-        channel = ctx.channel
-        options: List[interactions.StringSelectOption] = []
-
-        if isinstance(channel, interactions.ThreadChannel):
-            if await self.can_manage_message(channel, ctx.author):
-                options.extend(
-                    [
-                        interactions.StringSelectOption(
-                            label="Delete Message",
-                            value="delete",
-                            description="Delete this message",
-                        ),
-                        interactions.StringSelectOption(
-                            label=f"{'Unpin' if message.pinned else 'Pin'} Message",
-                            value=f"{'unpin' if message.pinned else 'pin'}",
-                            description=f"{'Unpin' if message.pinned else 'Pin'} this message",
-                        ),
-                    ]
-                )
-            else:
-                await self.send_error(
-                    ctx,
-                    "You don't have sufficient permissions to manage this message. You need to be either a moderator or the message author.",
-                )
-                return None
-
-        options.append(
+        message = ctx.target
+        options = [
             interactions.StringSelectOption(
                 label="Check with AI",
                 value="ai_check",
                 description="Use AI to check for offensive content",
             )
-        )
+        ]
+
+        if isinstance(
+            ctx.channel, interactions.ThreadChannel
+        ) and await self.can_manage_message(ctx.channel, ctx.author):
+            options.extend(
+                [
+                    interactions.StringSelectOption(
+                        label="Delete Message",
+                        value="delete",
+                        description="Delete this message",
+                    ),
+                    interactions.StringSelectOption(
+                        label=f"{'Unpin' if message.pinned else 'Pin'} Message",
+                        value=f"{'unpin' if message.pinned else 'pin'}",
+                        description=f"{'Unpin' if message.pinned else 'Pin'} this message",
+                    ),
+                ]
+            )
 
         select_menu: interactions.StringSelectMenu = interactions.StringSelectMenu(
             *options,
