@@ -603,83 +603,143 @@ class Threads(interactions.Extension):
         self.AI_MODERATION_PROMPT = [
             {
                 "role": "system",
-                "content": """You are an AI moderator evaluating messages and images for harassment and abuse in a Discord server. Your role is to protect users from targeted harassment while allowing healthy discussion and debate.
+                "content": """You are an AI moderator tasked with evaluating messages and images for harassment and abuse in a Discord server. Your goal is to protect users from targeted harassment while maintaining a healthy and respectful environment for discussion.
 
-                Rate content severity from 0-10 based on these criteria:
+                Rate content severity on a scale of 0-10 based on the following criteria:
 
-                0-2: Acceptable content
-                - Normal discussion and debate
-                - Constructive criticism
-                - Casual conversation
-                
-                3-4: Minor concerns
-                - Mild rudeness or snark
+                **0-2: Acceptable Content**
+                - Normal discussions and respectful disagreements
+                - Good-faith debates and constructive criticism
+                - Casual conversations and friendly banter
+                - Factual corrections or clarifications
+                - Expressing differing opinions respectfully
+
+                **3-4: Minor Concerns** 
+                - Passive-aggressive comments or tone
+                - Subtle mockery or condescension
                 - Borderline inappropriate content
                 - Heated but non-personal arguments
-                
-                5-6: Moderate concerns  
-                - Direct hostility or aggression
-                - Pattern of targeting specific users
+                - Pattern of subtle antagonistic behavior
+                - Deliberate misrepresentation of others' views
+
+                **5-6: Moderate Concerns**
+                - Direct hostility or aggressive language
+                - Repeated targeting of specific users
                 - Inappropriate content or imagery
-                
-                7-8: Serious concerns
-                - Sustained harassment campaign
-                - Hate speech or discrimination
-                - Explicit sexual harassment
-                - Sharing private information
-                
-                9-10: Critical violations
-                - Explicit threats of violence
-                - Extreme hate speech/harassment
-                - Encouraging self-harm/suicide
-                - Doxxing or serious privacy violations
+                - Deliberate provocation or baiting
+                - Coordinated disruptive behavior
+                - Personal attacks or insults
+                - Spreading misinformation about others
+
+                **7-8: Serious Concerns**
+                - Sustained harassment campaigns
+                - Hate speech or discriminatory language
+                - Sexual harassment or unwanted advances
+                - Sharing private/sensitive information
+                - Serious threats or intimidation
+                - Encouraging harmful behaviors
+                - Coordinated attacks
+                - Impersonation or identity theft
+
+                **9-10: Critical Violations**
+                - Explicit threats of violence or harm
+                - Extreme hate speech or targeted abuse
+                - Encouraging self-harm or suicide
+                - Doxxing or severe privacy violations
                 - Sexually predatory behavior
+                - Coordinated mass harassment
+                - Exploitation of minors
+                - Illegal content or activities
+                - Attempts to cause real-world harm
 
-                Key Evaluation Guidelines:
-                1. Focus ONLY on harassment targeting the caller/victim
-                2. Consider message history and behavioral patterns
-                3. Evaluate both text AND image content holistically
-                4. Account for context and intent
-                5. Be especially alert for:
-                   - Coordinated harassment
+                **Key Evaluation Guidelines:**
+                1. Focus on harassment specifically targeting the caller/victim
+                2. Assess message history (minimum last 20 messages) for:
+                   - Behavioral patterns and escalation
+                   - Context of interactions
+                   - Previous warnings or incidents
+                3. Evaluate all content holistically:
+                   - Text messages
+                   - Images and media
+                   - Links and embeds
+                   - Reactions and emoji usage
+                4. Consider server context:
+                   - Community guidelines
+                   - Channel-specific rules
+                   - Cultural norms
+                5. Watch for:
+                   - Coordinated group harassment
                    - Escalating hostile behavior
-                   - Manipulation tactics
-                   - Hidden threats/coded language
-                   - Inappropriate image content
+                   - Manipulation and gaslighting
+                   - Coded language and dogwhistles
+                   - Weaponized content
+                   - Moderation evasion tactics
+                   - False victimization
+                   - Alt account usage
 
-                Moderation Actions:
-                - Scores 7-8: Trigger moderator review
-                - Scores 9-10: Immediate timeout and review
-
-                Response Format:
-                1. Score: {{N}} (where N = 0-10)
-                2. Summary: Brief overview of key concerns
-                3. Evidence: Specific examples from content
-                4. Context: Relevant behavioral patterns
-                5. Recommendation: Suggested moderator action
+                **Response Format:**
+                1. **Severity Score**: [0-10]
+                2. **Summary**: 
+                   - Key violations/concerns
+                   - Pattern recognition
+                   - Severity justification
+                3. **Evidence**:
+                   - Direct quotes
+                   - Behavioral patterns
+                   - Supporting context
+                4. **Risk Analysis**:
+                   - Escalation likelihood
+                   - Community impact
+                   - Repeat offense probability
                 """,
             },
             {
                 "role": "user",
-                "content": """I will provide chat logs with the following format:
-                Line 1: "The caller is [name], the potential author is [name]"
-                
+                "content": """Input Format:
+                Line 1: "The caller is [name], the author is [name]"
+
                 Message Markers:
-                <<<<message>>>> = Caller's messages (potential victim)
-                ****message**** = Potential harasser's messages
-                ||||message|||| = Message being evaluated
-                
-                Evaluation Instructions:
-                1. Focus on the ||||marked message|||| as primary evidence
-                2. Use previous messages to establish context and patterns
-                3. Only consider harassment specifically targeting the caller
-                4. Ignore unrelated conflicts or general criticism
-                5. Provide specific examples and clear reasoning for your score
+                <<<<message>>>> = Caller's messages (victim)
+                ****message**** = Author's messages (accused)
+                ||||message|||| = Current message under review
+
+                Context Provided:
+                - User interaction history
+                - Server context
+                - Relevant media/links
+
+                Analysis Requirements:
+                1. Primary focus on ||||marked message||||
+                2. Review 20+ message history
+                3. Evaluate harassment targeting caller
+                4. Distinguish harassment vs. disagreement
+                5. Assess escalation risk
+                6. Document evidence thoroughly
+                7. Provide specific moderation steps
                 """,
             },
             {
                 "role": "assistant",
-                "content": "I will carefully analyze the content for harassment targeting the caller using the 0-10 severity scale. My evaluation will consider message content, context, patterns of behavior, and any multimedia elements. I'll provide a structured response with {{score}}, detailed reasoning, specific examples, and clear recommendations for moderation actions.",
+                "content": """I will conduct a thorough analysis of potential harassment using:
+
+                1. **Severity Assessment** [0-10]:
+                   - Message content analysis
+                   - Historical pattern review
+                   - Context evaluation
+                   - Impact assessment
+
+                2. **Documentation**:
+                   - Direct quotes
+                   - Behavioral patterns
+                   - Supporting evidence
+                   - Timeline of events
+
+                3. **Risk Evaluation**:
+                   - Escalation probability
+                   - User history impact
+                   - Community safety concerns
+                   - Repeat behavior likelihood
+                """,
             },
         ]
 
@@ -1512,6 +1572,16 @@ class Threads(interactions.Extension):
             except Exception as e:
                 logger.error(f"Error checking user timeout status: {e}")
 
+        message_cache_key = f"ai_check_{message.id}"
+        if message_cache_key in self.url_cache:
+            await self.send_error(
+                ctx,
+                "This message has already been checked. Please wait before checking the same message again.",
+            )
+            return None
+
+        self.url_cache[message_cache_key] = datetime.now(timezone.utc)
+
         try:
             current_time = datetime.now()
             current_minute = current_time.replace(second=0, microsecond=0)
@@ -1652,7 +1722,7 @@ class Threads(interactions.Extension):
                 return None
 
             messages = [
-                f"The caller is {ctx.author.display_name}, the potential author is {message.author.display_name}"
+                f"The caller is {ctx.author.display_name}, the author is {message.author.display_name}"
             ]
             async for msg in ctx.channel.history(limit=50, before=message):
                 if msg.author in (ctx.author, message.author):
@@ -1761,19 +1831,47 @@ class Threads(interactions.Extension):
             ai_response = completion.choices[0].message.content.strip()
             match = re.search(r"{(\d+)}", ai_response)
             score = int(match.group(1)) if match else 0
-            is_offensive = score >= 9
 
-            if is_offensive and not message.author.bot:
+            if score >= 3 and not message.author.bot:
                 user_id = str(message.author.id)
                 timeout_duration = self.model.calculate_timeout_duration(user_id)
+
                 self.model.record_violation(post.id)
+                self.model.record_message(post.id)
+
+                await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
+
                 await self.model.adjust_timeout_cfg()
 
+                msg_link = f"https://discord.com/channels/{ctx.guild_id}/{ctx.channel_id}/{message.id}"
+
+                if score >= 9:
+                    timeout_duration = int(timeout_duration * 3)
+                elif score >= 7:
+                    timeout_duration = int(timeout_duration * 2)
+                elif score >= 5:
+                    timeout_duration = int(timeout_duration * 1.5)
+                else:
+                    timeout_duration = int(timeout_duration * 0.5)
+
                 if display_result:
-                    msg_link = f"https://discord.com/channels/{ctx.guild_id}/{ctx.channel_id}/{message.id}"
+                    severity = (
+                        "critical violation"
+                        if score >= 9
+                        else (
+                            "serious violation"
+                            if score >= 7
+                            else (
+                                "moderate violation"
+                                if score >= 5
+                                else "minor violation"
+                            )
+                        )
+                    )
+
                     await self.send_success(
                         ctx,
-                        f"{message.author.display_name}`s GPT [abuse]({msg_link}) score is {score}, "
+                        f"{message.author.display_name}'s GPT [{severity}]({msg_link}) score is {score}, "
                         f"will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
                         log_to_channel=True,
                         ephemeral=False,
@@ -1803,11 +1901,11 @@ class Threads(interactions.Extension):
                     await target_channel.add_permission(
                         message.author,
                         deny=perms,
-                        reason=f"AI detected abuse - {timeout_duration}s timeout",
+                        reason=f"AI detected {severity} - {int(timeout_duration)}s timeout",
                     )
                     asyncio.create_task(
                         self.restore_permissions(
-                            target_channel, message.author, timeout_duration // 60
+                            target_channel, message.author, int(timeout_duration) // 60
                         )
                     )
                 except Exception as e:
@@ -1820,13 +1918,13 @@ class Threads(interactions.Extension):
                 title="AI Content Check Result",
                 description=(
                     f"The AI detected potentially offensive content:\n{ai_response}"
-                    if is_offensive
+                    if score >= 3
                     else "No offensive content was detected by the AI."
                 ),
-                color=EmbedColor.WARN if is_offensive else EmbedColor.INFO,
+                color=EmbedColor.WARN if score >= 3 else EmbedColor.INFO,
             )
 
-            if is_offensive:
+            if score >= 3:
                 embed.add_field(
                     name="Content Type",
                     value=f"{'Text and ' if message.content else ''}{'Images' if image_attachments else ''}",
@@ -1847,7 +1945,7 @@ class Threads(interactions.Extension):
                     inline=True,
                 )
 
-            await ctx.send(embed=embed, ephemeral=not is_offensive)
+            await ctx.send(embed=embed, ephemeral=score < 3)
 
             return ActionDetails(
                 action=ActionType.EDIT,
@@ -1862,7 +1960,7 @@ class Threads(interactions.Extension):
                         message.content[:1000] if message.content else "N/A"
                     ),
                     "ai_result": f"\n{ai_response}",
-                    "is_offensive": is_offensive,
+                    "is_offensive": score >= 3,
                     "abuse_score": score,
                     "model_used": f"`{current_model}` ({completion.usage.total_tokens} tokens)",
                 },
@@ -3685,7 +3783,6 @@ class Threads(interactions.Extension):
         if event.message.channel.parent_id not in self.FEATURED_CHANNELS:
             return
 
-        self.model.record_message(event.message.channel.id)
         await self.increment_message_count("{}".format(event.message.channel.id))
 
     @interactions.listen(MessageCreate)
