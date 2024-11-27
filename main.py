@@ -684,9 +684,9 @@ class Threads(interactions.Extension):
         ]
 
         self.model_params = {
-            "model": "llama-3.2-90b-vision-preview",
+            "model": "llama-3.1-70b-versatile",
             "temperature": 0,
-            "max_tokens": 1024,
+            "max_tokens": 4096,
             "top_p": 1,
         }
 
@@ -1458,12 +1458,28 @@ class Threads(interactions.Extension):
 
     async def ai_check_message_action(
         self,
-        ctx: interactions.ComponentContext,
+        ctx: Union[interactions.ComponentContext, interactions.SlashContext],
         post: Union[interactions.ThreadChannel, interactions.GuildChannel],
         message: interactions.Message,
         display_result: Optional[bool] = True,
     ) -> Optional[ActionDetails]:
+        if not await self.validate_discord_message(ctx, post, message):
+            return None
 
+        current_model, cache_keys = await self.check_rate_limits(ctx, message)
+        if not current_model:
+            return None
+
+        return await self.process_with_groq(
+            ctx, post, message, current_model, cache_keys, display_result or False
+        )
+
+    async def validate_discord_message(
+        self,
+        ctx: Union[interactions.ComponentContext, interactions.SlashContext],
+        post: Union[interactions.ThreadChannel, interactions.GuildChannel],
+        message: interactions.Message,
+    ) -> bool:
         channel_id = (
             message.channel.parent_id
             if isinstance(message.channel, interactions.ThreadChannel)
@@ -1473,12 +1489,12 @@ class Threads(interactions.Extension):
             await self.send_error(
                 ctx, "AI content check is not available in the vituperation channel."
             )
-            return None
+            return False
 
         if not (self.model.groq_api_key and self.client):
             logger.error("AI API configuration is missing")
             await self.send_error(ctx, "The AI service is not configured.")
-            return None
+            return False
 
         try:
             message = await ctx.channel.fetch_message(message.id)
@@ -1486,15 +1502,15 @@ class Threads(interactions.Extension):
             await self.send_error(
                 ctx, "The message has been deleted and cannot be checked."
             )
-            return None
+            return False
 
         if message.author.bot:
             await self.send_error(ctx, "Bot messages cannot be checked for abuse.")
-            return None
+            return False
 
         if datetime.now(timezone.utc) - message.created_at > timedelta(days=7):
             await self.send_error(ctx, "Messages older than 7 days cannot be checked.")
-            return None
+            return False
 
         if isinstance(post, (interactions.ThreadChannel, interactions.GuildChannel)):
             try:
@@ -1505,177 +1521,188 @@ class Threads(interactions.Extension):
                             ctx,
                             f"{message.author.mention} is currently timed out and cannot be checked for additional violations.",
                         )
-                        return None
+                        return False
             except Exception as e:
                 logger.error(f"Error checking user timeout status: {e}")
 
-        try:
-            current_time = datetime.now()
-            current_minute = current_time.replace(second=0, microsecond=0)
-            current_day = current_time.replace(
-                hour=0, minute=0, second=0, microsecond=0
+        return True
+
+    async def check_rate_limits(
+        self,
+        ctx: Union[interactions.ComponentContext, interactions.SlashContext],
+        message: interactions.Message,
+    ) -> Tuple[Optional[str], dict]:
+        current_time = datetime.now()
+        current_minute = current_time.replace(second=0, microsecond=0)
+        current_day = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        cache_keys = {
+            "user": {
+                "request": f"groq_requests_{ctx.author.id}_{current_minute.isoformat()}",
+                "token": f"groq_tokens_{ctx.author.id}_{current_minute.isoformat()}",
+                "update": f"last_update_{ctx.author.id}_{current_minute.isoformat()}",
+            },
+            "global": {
+                "minute_requests": f"global_groq_requests_{current_minute.isoformat()}",
+                "minute_tokens": f"global_groq_tokens_{current_minute.isoformat()}",
+                "day_requests": f"global_groq_requests_{current_day.isoformat()}",
+                "day_tokens": f"global_groq_tokens_{current_day.isoformat()}",
+                "last_update": f"global_last_update_{current_minute.isoformat()}",
+                "model": f"current_model_{current_day.isoformat()}",
+            },
+        }
+
+        last_update = self.url_cache.get(cache_keys["user"]["update"], current_time)
+        time_passed = (current_time - last_update).total_seconds()
+
+        request_count = max(
+            0,
+            self.url_cache.get(cache_keys["user"]["request"], 0)
+            - min(10, int(10 * time_passed / 60)),
+        )
+        token_count = max(
+            0,
+            self.url_cache.get(cache_keys["user"]["token"], 0)
+            - min(2000, int(2000 * time_passed / 60)),
+        )
+
+        if request_count >= 10 or token_count >= 2000:
+            wait_time = max(
+                60 - int(time_passed), int((token_count - 2000) * 60 / 2000) + 1
             )
-
-            cache_keys = {
-                "user": {
-                    "request": f"groq_requests_{ctx.author.id}_{current_minute.isoformat()}",
-                    "token": f"groq_tokens_{ctx.author.id}_{current_minute.isoformat()}",
-                    "update": f"last_update_{ctx.author.id}_{current_minute.isoformat()}",
-                },
-                "global": {
-                    "minute_requests": f"global_groq_requests_{current_minute.isoformat()}",
-                    "minute_tokens": f"global_groq_tokens_{current_minute.isoformat()}",
-                    "day_requests": f"global_groq_requests_{current_day.isoformat()}",
-                    "day_tokens": f"global_groq_tokens_{current_day.isoformat()}",
-                    "last_update": f"global_last_update_{current_minute.isoformat()}",
-                    "model": f"current_model_{current_day.isoformat()}",
-                },
-            }
-
-            last_update = self.url_cache.get(cache_keys["user"]["update"], current_time)
-            time_passed = (current_time - last_update).total_seconds()
-
-            request_count = max(
-                0,
-                self.url_cache.get(cache_keys["user"]["request"], 0)
-                - min(10, int(10 * time_passed / 60)),
+            await self.send_error(
+                ctx,
+                f"You have reached your personal rate limit. Please try again in {wait_time} seconds.",
             )
-            token_count = max(
-                0,
-                self.url_cache.get(cache_keys["user"]["token"], 0)
-                - min(2000, int(2000 * time_passed / 60)),
-            )
+            return None, cache_keys
 
-            global_last_update = self.url_cache.get(
-                cache_keys["global"]["last_update"], current_time
-            )
-            global_time_passed = (current_time - global_last_update).total_seconds()
+        image_attachments = [
+            att
+            for att in message.attachments
+            if att.content_type and att.content_type.startswith("image/")
+        ]
 
-            current_model = self.url_cache.get(
-                cache_keys["global"]["model"], "llama-3.2-90b-vision-preview"
-            )
+        current_model = (
+            "llama-3.2-90b-vision-preview"
+            if image_attachments
+            else "llama-3.1-70b-versatile"
+        )
 
-            model_limits = {
-                "llama-3.2-90b-vision-preview": {
-                    "minute_requests": 15,
-                    "day_requests": 3500,
-                    "minute_tokens": 7000,
-                    "day_tokens": 250000,
-                },
-                "llama-3.2-11b-vision-preview": {
-                    "minute_requests": 30,
-                    "day_requests": 7000,
-                    "minute_tokens": 7000,
-                    "day_tokens": 500000,
-                },
-            }
+        model_limits = {
+            "llama-3.2-90b-vision-preview": {
+                "minute_requests": 15,
+                "day_requests": 3500,
+                "minute_tokens": 7000,
+                "day_tokens": 250000,
+            },
+            "llama-3.2-11b-vision-preview": {
+                "minute_requests": 30,
+                "day_requests": 7000,
+                "minute_tokens": 7000,
+                "day_tokens": 500000,
+            },
+            "llama-3.1-70b-versatile": {
+                "minute_requests": 30,
+                "day_requests": 14400,
+                "minute_tokens": 6000,
+                "day_tokens": 200000,
+            },
+        }
 
-            global_minute_requests = max(
-                0,
-                self.url_cache.get(cache_keys["global"]["minute_requests"], 0)
-                - min(
-                    model_limits[current_model]["minute_requests"],
-                    int(
-                        model_limits[current_model]["minute_requests"]
-                        * global_time_passed
-                        / 60
-                    ),
+        global_last_update = self.url_cache.get(
+            cache_keys["global"]["last_update"], current_time
+        )
+        global_time_passed = (current_time - global_last_update).total_seconds()
+
+        global_minute_requests = max(
+            0,
+            self.url_cache.get(cache_keys["global"]["minute_requests"], 0)
+            - min(
+                model_limits[current_model]["minute_requests"],
+                int(
+                    model_limits[current_model]["minute_requests"]
+                    * global_time_passed
+                    / 60
                 ),
-            )
-            global_minute_tokens = max(
-                0,
-                self.url_cache.get(cache_keys["global"]["minute_tokens"], 0)
-                - min(7000, int(7000 * global_time_passed / 60)),
-            )
-            global_day_requests = self.url_cache.get(
-                cache_keys["global"]["day_requests"], 0
-            )
-            global_day_tokens = self.url_cache.get(
-                cache_keys["global"]["day_tokens"], 0
-            )
+            ),
+        )
+        global_minute_tokens = max(
+            0,
+            self.url_cache.get(cache_keys["global"]["minute_tokens"], 0)
+            - min(7000, int(7000 * global_time_passed / 60)),
+        )
+        global_day_requests = self.url_cache.get(
+            cache_keys["global"]["day_requests"], 0
+        )
+        global_day_tokens = self.url_cache.get(cache_keys["global"]["day_tokens"], 0)
 
-            if request_count >= 10 or token_count >= 2000:
-                wait_time = max(
-                    60 - int(time_passed), int((token_count - 2000) * 60 / 2000) + 1
-                )
-                await self.send_error(
-                    ctx,
-                    f"You have reached your personal rate limit. Please try again in {wait_time} seconds.",
-                )
-                return None
-
-            if current_model == "llama-3.2-90b-vision-preview":
-                if any(
-                    (
-                        global_minute_requests
-                        >= model_limits[current_model]["minute_requests"],
-                        global_day_requests
-                        >= model_limits[current_model]["day_requests"],
-                        global_day_tokens >= model_limits[current_model]["day_tokens"],
-                    )
-                ):
-                    current_model = "llama-3.2-11b-vision-preview"
-                    self.url_cache[cache_keys["global"]["model"]] = current_model
-                    global_minute_requests = 0
-                    global_day_requests = 0
-
+        if image_attachments and current_model == "llama-3.2-90b-vision-preview":
             if any(
                 (
                     global_minute_requests
                     >= model_limits[current_model]["minute_requests"],
-                    global_minute_tokens >= 7000,
                     global_day_requests >= model_limits[current_model]["day_requests"],
                     global_day_tokens >= model_limits[current_model]["day_tokens"],
                 )
             ):
-                await self.send_error(
-                    ctx,
-                    "The server has reached its rate limit. Please try again later.",
-                )
-                return None
+                current_model = "llama-3.2-11b-vision-preview"
+                self.url_cache[cache_keys["global"]["model"]] = current_model
+                global_minute_requests = 0
+                global_day_requests = 0
 
-            messages = [
-                f"The caller is {ctx.author.display_name}, the potential author is {message.author.display_name}"
-            ]
-            async for msg in ctx.channel.history(limit=50, before=message):
-                if msg.author in (ctx.author, message.author):
-                    messages.append(
-                        f"{'<<<<' if msg.author == ctx.author else '****'}"
-                        f"{msg.author.display_name}: {msg.content}"
-                        f"{'>>>>' if msg.author == ctx.author else '****'}"
-                    )
+        if any(
+            (
+                global_minute_requests
+                >= model_limits[current_model]["minute_requests"],
+                global_minute_tokens >= 7000,
+                global_day_requests >= model_limits[current_model]["day_requests"],
+                global_day_tokens >= model_limits[current_model]["day_tokens"],
+            )
+        ):
+            await self.send_error(
+                ctx,
+                "The server has reached its rate limit. Please try again later.",
+            )
+            return None, cache_keys
 
-            image_attachments = [
-                att
-                for att in message.attachments
-                if att.content_type and att.content_type.startswith("image/")
-            ]
+        return current_model, cache_keys
 
-            if not (message.content or image_attachments):
-                await self.send_error(ctx, "No content or images to check.")
-                return None
-
-            api_messages = self.AI_MODERATION_PROMPT.copy()
-            api_messages.append({"role": "user", "content": ""})
-
-            content_list = api_messages[-1]["content"]
-            if isinstance(content_list, list):
-                if message.content:
-                    content_list.append(
-                        {
-                            "type": "text",
-                            "text": "\n".join(messages)
-                            + f"\n||||{message.author.display_name}: {message.content}||||",
-                        }
-                    )
-
-                content_list.extend(
-                    {"type": "image_url", "image_url": {"url": att.url}}
-                    for att in image_attachments
+    async def process_with_groq(
+        self,
+        ctx: Union[interactions.ComponentContext, interactions.SlashContext],
+        post: Union[interactions.ThreadChannel, interactions.GuildChannel],
+        message: interactions.Message,
+        current_model: str,
+        cache_keys: dict,
+        display_result: bool,
+    ) -> Optional[ActionDetails]:
+        messages = [
+            f"The caller is {ctx.author.display_name}, the potential author is {message.author.display_name}"
+        ]
+        async for msg in ctx.channel.history(limit=50, before=message):
+            if msg.author in (ctx.author, message.author):
+                messages.append(
+                    f"{'<<<<' if msg.author == ctx.author else '****'}"
+                    f"{msg.author.display_name}: {msg.content}"
+                    f"{'>>>>' if msg.author == ctx.author else '****'}"
                 )
 
+        image_attachments = [
+            att
+            for att in message.attachments
+            if att.content_type and att.content_type.startswith("image/")
+        ]
+
+        if not (message.content or image_attachments):
+            await self.send_error(ctx, "No content or images to check.")
+            return None
+
+        current_time = datetime.now()
+        token_count = self.url_cache.get(cache_keys["user"]["token"], 0)
+
+        if not image_attachments:
             messages.append(f"||||{message.author.display_name}: {message.content}||||")
-            truncated_text = "\n".join(filter(None, messages))[-500:]
+            truncated_text = next(iter(["\n".join(filter(None, messages))[-500:]]))
             estimated_tokens = len(truncated_text) >> 2
 
             if token_count + estimated_tokens > 2000:
@@ -1685,154 +1712,186 @@ class Threads(interactions.Extension):
                 )
                 return None
 
-            try:
-                async with asyncio.timeout(30):
-                    self.model_params["model"] = current_model
-                    completion = await self.client.chat.completions.create(
-                        messages=api_messages, **self.model_params
-                    )
+            user_message = truncated_text
 
-                    self.url_cache.update(
-                        {
-                            cache_keys["user"]["request"]: request_count + 1,
-                            cache_keys["user"]["token"]: token_count + estimated_tokens,
-                            cache_keys["user"]["update"]: current_time,
-                            cache_keys["global"][
-                                "minute_requests"
-                            ]: global_minute_requests
-                            + 1,
-                            cache_keys["global"]["minute_tokens"]: global_minute_tokens
-                            + estimated_tokens,
-                            cache_keys["global"]["day_requests"]: global_day_requests
-                            + 1,
-                            cache_keys["global"]["day_tokens"]: global_day_tokens
-                            + estimated_tokens,
-                            cache_keys["global"]["last_update"]: current_time,
-                            cache_keys["global"]["model"]: current_model,
-                        }
-                    )
+        else:
+            message_text = (
+                "\n".join(messages)
+                + f"\n||||{message.author.display_name}: {message.content}||||"
+            )
+            content = {
+                "text": message_text,
+                "image_urls": [
+                    {"type": "image_url", "image_url": {"url": att.url}}
+                    for att in image_attachments
+                ],
+            }
 
-            except asyncio.TimeoutError:
+            truncated_text = next(iter([message_text[-500:]]))
+            estimated_tokens = len(truncated_text) >> 2
+
+            if token_count + estimated_tokens > 2000:
                 await self.send_error(
-                    ctx, "AI service request timed out. Please try again later."
+                    ctx,
+                    "You have reached your personal token limit. Please try again in a minute.",
                 )
                 return None
 
-            ai_response = completion.choices[0].message.content.strip()
-            match = re.search(r"{(\d+)}", ai_response)
-            score = int(match.group(1)) if match else 0
-            is_offensive = score >= 9
+            user_message = content
 
-            if is_offensive and not message.author.bot:
-                user_id = str(message.author.id)
-                timeout_duration = self.model.calculate_timeout_duration(user_id)
-                self.model.record_violation(post.id)
-                await self.model.adjust_timeout_cfg()
-
-                if display_result:
-                    msg_link = f"https://discord.com/channels/{ctx.guild_id}/{ctx.channel_id}/{message.id}"
-                    await self.send_success(
-                        ctx,
-                        f"{message.author.display_name}`s GPT [abuse]({msg_link}) score is {score}, "
-                        f"will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
-                    )
-
-                deny_perms = [
-                    interactions.Permissions.SEND_MESSAGES,
-                    interactions.Permissions.SEND_MESSAGES_IN_THREADS,
-                    interactions.Permissions.SEND_TTS_MESSAGES,
-                    interactions.Permissions.SEND_VOICE_MESSAGES,
-                    interactions.Permissions.ADD_REACTIONS,
-                    interactions.Permissions.ATTACH_FILES,
-                    interactions.Permissions.CREATE_INSTANT_INVITE,
-                    interactions.Permissions.MENTION_EVERYONE,
-                    interactions.Permissions.MANAGE_MESSAGES,
-                    interactions.Permissions.MANAGE_THREADS,
-                    interactions.Permissions.MANAGE_CHANNELS,
-                ]
-
-                try:
-                    target_channel = getattr(post, "parent_channel", post)
-                    perms = (
-                        [interactions.Permissions.CREATE_POSTS, *deny_perms]
-                        if hasattr(post, "parent_channel")
-                        else deny_perms
-                    )
-                    await target_channel.add_permission(
-                        message.author,
-                        deny=perms,
-                        reason=f"AI detected abuse - {timeout_duration}s timeout",
-                    )
-                    asyncio.create_task(
-                        self.restore_permissions(
-                            target_channel, message.author, timeout_duration // 60
-                        )
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to apply timeout: {e}", exc_info=True)
-                    await self.send_error(
-                        ctx, f"Failed to apply timeout to {message.author.mention}"
-                    )
-
-            embed = await self.create_embed(
-                title="AI Content Check Result",
-                description=(
-                    f"The AI detected potentially offensive content:\n{ai_response}"
-                    if is_offensive
-                    else "No offensive content was detected by the AI."
-                ),
-                color=EmbedColor.WARN if is_offensive else EmbedColor.INFO,
-            )
-
-            if is_offensive:
-                embed.add_field(
-                    name="Content Type",
-                    value=f"{'Text and ' if message.content else ''}{'Images' if image_attachments else ''}",
-                    inline=True,
-                )
-                embed.add_field(
-                    name="Suggested Action",
-                    value=(
-                        "Consider deleting this message using the delete option."
-                        if isinstance(post, interactions.ThreadChannel)
-                        else "Consider reporting this message to moderators."
-                    ),
-                    inline=True,
-                )
-                embed.add_field(
-                    name="Model Used",
-                    value=current_model,
-                    inline=True,
+        try:
+            async with asyncio.timeout(60):
+                self.model_params["model"] = current_model
+                completion = await self.client.chat.completions.create(
+                    messages=self.AI_MODERATION_PROMPT
+                    + [{"role": "user", "content": user_message}],
+                    **self.model_params,
                 )
 
-            await ctx.send(embed=embed, ephemeral=not is_offensive)
+                request_count = self.url_cache.get(cache_keys["user"]["request"], 0)
+                global_minute_requests = self.url_cache.get(
+                    cache_keys["global"]["minute_requests"], 0
+                )
+                global_minute_tokens = self.url_cache.get(
+                    cache_keys["global"]["minute_tokens"], 0
+                )
+                global_day_requests = self.url_cache.get(
+                    cache_keys["global"]["day_requests"], 0
+                )
+                global_day_tokens = self.url_cache.get(
+                    cache_keys["global"]["day_tokens"], 0
+                )
 
-            return ActionDetails(
-                action=ActionType.EDIT,
-                reason=f"AI content check performed by {ctx.author.mention}",
-                post_name=post.name,
-                actor=ctx.author,
-                channel=post if isinstance(post, interactions.ThreadChannel) else None,
-                target=message.author,
-                additional_info={
-                    "checked_message_id": str(message.id),
-                    "checked_message_content": (
-                        message.content[:1000] if message.content else "N/A"
-                    ),
-                    "ai_result": ai_response,
-                    "is_offensive": is_offensive,
-                    "abuse_score": score,
-                    "model_used": current_model,
-                },
-            )
+                self.url_cache.update(
+                    {
+                        cache_keys["user"]["request"]: request_count + 1,
+                        cache_keys["user"]["token"]: token_count + estimated_tokens,
+                        cache_keys["user"]["update"]: current_time,
+                        cache_keys["global"]["minute_requests"]: global_minute_requests
+                        + 1,
+                        cache_keys["global"]["minute_tokens"]: global_minute_tokens
+                        + estimated_tokens,
+                        cache_keys["global"]["day_requests"]: global_day_requests + 1,
+                        cache_keys["global"]["day_tokens"]: global_day_tokens
+                        + estimated_tokens,
+                        cache_keys["global"]["last_update"]: current_time,
+                        cache_keys["global"]["model"]: current_model,
+                    }
+                )
 
-        except Exception as e:
-            logger.error(
-                f"Failed to perform AI check on message {message.id}: {e}",
-                exc_info=True,
+        except asyncio.TimeoutError:
+            await self.send_error(
+                ctx, "AI service request timed out. Please try again later."
             )
-            await self.send_error(ctx, "Unable to perform the AI content check.")
             return None
+
+        ai_response = completion.choices[0].message.content.strip()
+        match = re.search(r"{(\d+)}", ai_response)
+        score = int(match.group(1)) if match else 0
+        is_offensive = score >= 9
+
+        if is_offensive and not message.author.bot:
+            user_id = str(message.author.id)
+            timeout_duration = self.model.calculate_timeout_duration(user_id)
+            self.model.record_violation(post.id)
+            await self.model.adjust_timeout_cfg()
+
+            if display_result:
+                msg_link = f"https://discord.com/channels/{ctx.guild_id}/{ctx.channel_id}/{message.id}"
+                await self.send_success(
+                    ctx,
+                    f"{message.author.display_name}'s GPT [abuse]({msg_link}) score is {score}, will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
+                    log_to_channel=True,
+                )
+
+            deny_perms = [
+                interactions.Permissions.SEND_MESSAGES,
+                interactions.Permissions.SEND_MESSAGES_IN_THREADS,
+                interactions.Permissions.SEND_TTS_MESSAGES,
+                interactions.Permissions.SEND_VOICE_MESSAGES,
+                interactions.Permissions.ADD_REACTIONS,
+                interactions.Permissions.ATTACH_FILES,
+                interactions.Permissions.CREATE_INSTANT_INVITE,
+                interactions.Permissions.MENTION_EVERYONE,
+                interactions.Permissions.MANAGE_MESSAGES,
+                interactions.Permissions.MANAGE_THREADS,
+                interactions.Permissions.MANAGE_CHANNELS,
+            ]
+
+            try:
+                target_channel = getattr(post, "parent_channel", post)
+                perms = (
+                    [interactions.Permissions.CREATE_POSTS, *deny_perms]
+                    if hasattr(post, "parent_channel")
+                    else deny_perms
+                )
+                await target_channel.add_permission(
+                    message.author,
+                    deny=perms,
+                    reason=f"AI detected abuse - {timeout_duration}s timeout",
+                )
+                asyncio.create_task(
+                    self.restore_permissions(
+                        target_channel, message.author, timeout_duration // 60
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Failed to apply timeout: {e}", exc_info=True)
+                await self.send_error(
+                    ctx, f"Failed to apply timeout to {message.author.mention}"
+                )
+
+        embed = await self.create_embed(
+            title="AI Content Check Result",
+            description=(
+                f"The AI detected potentially offensive content:\n{ai_response}"
+                if is_offensive
+                else "No offensive content was detected by the AI."
+            ),
+            color=EmbedColor.WARN if is_offensive else EmbedColor.INFO,
+        )
+
+        if is_offensive:
+            embed.add_field(
+                name="Content Type",
+                value=f"{'Text and ' if message.content else ''}{'Images' if image_attachments else ''}",
+                inline=True,
+            )
+            embed.add_field(
+                name="Suggested Action",
+                value=(
+                    "Consider deleting this message using the delete option."
+                    if isinstance(post, interactions.ThreadChannel)
+                    else "Consider reporting this message to moderators."
+                ),
+                inline=True,
+            )
+            embed.add_field(
+                name="Model Used",
+                value=current_model,
+                inline=True,
+            )
+
+        await ctx.send(embed=embed, ephemeral=not is_offensive)
+
+        return ActionDetails(
+            action=ActionType.EDIT,
+            reason=f"AI content check performed by {ctx.author.mention}",
+            post_name=post.name,
+            actor=ctx.author,
+            channel=post if isinstance(post, interactions.ThreadChannel) else None,
+            target=message.author,
+            additional_info={
+                "checked_message_id": str(message.id),
+                "checked_message_content": (
+                    message.content[:1000] if message.content else "N/A"
+                ),
+                "ai_result": f"\n{ai_response}",
+                "is_offensive": is_offensive,
+                "abuse_score": score,
+                "model_used": f"`{current_model}` ({completion.usage.total_tokens} tokens)",
+            },
+        )
 
     @module_group_timeout.subcommand(
         "poll", sub_cmd_description="Start a timeout poll for a user"
