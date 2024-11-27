@@ -656,7 +656,7 @@ class Threads(interactions.Extension):
         ]
 
         self.model_params = {
-            "model": "llama-3.2-90b-text-preview",
+            "model": "llama-3.1-70b-versatile",
             "temperature": 0,
             "max_tokens": 1024,
             "top_p": 1,
@@ -1358,7 +1358,7 @@ class Threads(interactions.Extension):
                 async with asyncio.timeout(10):
                     await client.chat.completions.create(
                         messages=messages,
-                        model="llama-3.2-90b-text-preview",
+                        model="llama-3.1-70b-versatile",
                         max_tokens=1,
                     )
                 valid = True
