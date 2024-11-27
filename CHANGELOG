@@ -1,14 +1,17 @@
 ## 2024-11-27
 
 ### Added
-
 - AI moderation system to evaluate both text and images using vision-capable models
 - Dynamic model switching between `llama-3.2-90b-vision` and `llama-3.2-11b-vision` based on usage limits
+- Support for `llama-3.1-70b-versatile` model for non-image content
+- Logging with token usage in action details
+
+### Changed
+- Separated AI check logic into `validate_discord_message`, `check_rate_limits`, and `process_with_groq` functions
 
 ## 2024-11-26
 
 ### Added
-
 - TimeoutConfig dataclass for dynamic timeout management
 - AI moderation system using Groq LLM for content analysis
 - Adaptive timeout durations based on user behavior
@@ -20,7 +23,6 @@
 ## 2024-11-25
 
 ### Added
-
 - Tag-based poll creation
 
 ## 2024-11-22
