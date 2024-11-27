@@ -2,25 +2,23 @@
 
 The **Threads** module is designed to manage thread-based conversations, user interactions, and content moderation within a Discord server. It supports all thread types.
 
+Inspired by a bot from Discord server (ID: 1284782072484986993).
+
 ## Features
 
-- Prevent or allow further interactions within any thread
-- Remove inappropriate or unwanted messages from threads
-- Add or remove tags to categorize and highlight posts
-- Rename new posts with timestamps and set up polls automatically
-- Automatically select and rotate featured posts based on activity metrics
-- Restrict or allow specific users from participating in particular threads
-- Dynamically manage user permissions for specific threads
-- Automatically process and sanitize links to protect user privacy
-- Record all moderation actions for auditing and review
-- Track message counts and activity within each post
-- Manage post tags with an interactive interface
-- Automatically feature high-activity posts
-- Pin and unpin messages within threads
-- View comprehensive statistics for posts and forums
-- Dynamic threshold adjustment based on server activity
+- Lock/unlock threads to control interactions
+- Delete inappropriate or unwanted messages
+- Manage thread tags and permissions
+- Automatic timestamp prefixing for new posts
+- Automatic poll creation for new posts (configurable)
+- Featured posts system with dynamic rotation
+- User ban/unban system for threads
+- Permission management for specific users
+- Link sanitization for privacy protection
+- Comprehensive logging system
+- Message count tracking
 - AI-powered content moderation
-- Timeout voting system for temporary user restrictions
+- Timeout voting system
 
 ## Usage
 
@@ -74,10 +72,10 @@ The **Threads** module is designed to manage thread-based conversations, user in
 
 - Message Context Menu:
   - **Message in Thread**: Manage messages (delete, pin/unpin, AI check)
-  - **Tags in Post**: Manage tags associated with a post (add or remove) through an interactive interface
+  - **Tags in Post**: Manage tags associated with a post
 
 - User Context Menu:
-  - **User in Thread**: Ban, unban, share permissions, or revoke permissions for a specific user within a thread
+  - **User in Thread**: Ban/unban users or manage their thread permissions
 
 ### Quick Replies
 
@@ -89,35 +87,35 @@ Messages can be managed by replying with these commands:
 
 ## Configuration
 
-Customize the module by adjusting the configuration variables and constants defined in `main.py`. Key configuration options include:
+Key configuration options include:
 
-- `LOG_CHANNEL_ID`: ID of the channel where logs will be sent
-- `LOG_FORUM_ID`: ID of the forum channel for logging purposes
-- `LOG_POST_ID`: ID of the post where logs will be sent
-- `POLL_FORUM_ID`: ID of the forum channel where polls are created
-- `TAIWAN_ROLE_ID`: ID of the role exempt from link transformation
-- `THREADS_ROLE_ID`: ID of the role required for debug commands
+- `LOG_CHANNEL_ID`: ID of the log channel
+- `LOG_FORUM_ID`: ID of the log forum
+- `LOG_POST_ID`: ID of the log post
+- `POLL_FORUM_ID`: ID(s) of forums where polls are created
+- `TAIWAN_ROLE_ID`: ID of role exempt from link transformation
+- `THREADS_ROLE_ID`: ID of role required for debug commands
 - `GUILD_ID`: ID of your Discord server
 - `CONGRESS_ID`: ID of the congress channel
-- `CONGRESS_MEMBER_ROLE`: ID of the congress member role
-- `CONGRESS_MOD_ROLE`: ID of the congress moderator role
-- `ROLE_CHANNEL_PERMISSIONS`: Defines roles and their associated channels for permission management
-- `ALLOWED_CHANNELS`: Tuple of channel IDs where the module is active
-- `FEATURED_CHANNELS`: Channels where featured posts are selected
+- `CONGRESS_MEMBER_ROLE`: ID of congress member role
+- `CONGRESS_MOD_ROLE`: ID of congress moderator role
+- `ROLE_CHANNEL_PERMISSIONS`: Role-channel permission mappings
+- `ALLOWED_CHANNELS`: Channels where the module is active
+- `FEATURED_CHANNELS`: Channels eligible for featured posts
 - `TIMEOUT_CHANNEL_IDS`: Channels where timeout voting is allowed
-- `TIMEOUT_REQUIRED_DIFFERENCE`: Required vote difference for timeout action
+- `TIMEOUT_REQUIRED_DIFFERENCE`: Required vote difference for timeout
 - `TIMEOUT_DURATION`: Default timeout duration in minutes
 
 ### Files
 
-The module uses several JSON files to store data:
+The module uses several JSON files for data storage:
 
-- `banned_users.json`: Stores banned user information
-- `thread_permissions.json`: Stores thread permission assignments
-- `post_stats.json`: Stores post activity statistics
-- `featured_posts.json`: Stores featured post information
-- `timeout_history.json`: Stores timeout history for users
-- `.groq_key`: Stores the GROQ API key for AI moderation
+- `banned_users.json`: Banned user records
+- `thread_permissions.json`: Thread permission assignments
+- `post_stats.json`: Post activity statistics
+- `featured_posts.json`: Featured post tracking
+- `timeout_history.json`: User timeout history
+- `.groq_key`: GROQ API key for AI moderation
 
 ### AI Moderation
 
@@ -129,76 +127,84 @@ The module uses GROQ's API for content moderation. Messages are scored on a scal
   - Casual conversation
 
 - 3-4: Minor concerns
-  - Mild rudeness or snark
+  - Mild rudeness
   - Borderline inappropriate content
   - Heated but non-personal arguments
 
 - 5-6: Moderate concerns
-  - Direct hostility or aggression
-  - Pattern of targeting specific users
-  - Inappropriate content or imagery
+  - Direct hostility
+  - Pattern of targeting
+  - Inappropriate content
 
 - 7-8: Serious concerns
-  - Sustained harassment campaign
-  - Hate speech or discrimination
-  - Explicit sexual harassment
-  - Sharing private information
+  - Sustained harassment
+  - Hate speech
+  - Sexual harassment
+  - Privacy violations
 
 - 9-10: Critical violations
-  - Explicit threats of violence
-  - Extreme hate speech/harassment
-  - Encouraging self-harm/suicide
-  - Doxxing or serious privacy violations
-  - Sexually predatory behavior
+  - Explicit threats
+  - Extreme hate speech
+  - Encouraging self-harm
+  - Doxxing
+  - Predatory behavior
 
-Scores of 9 or higher will result in automatic timeout actions.
+Scores of 9 or higher trigger automatic timeout actions.
 
 ### Algorithms
 
-1. Featured Posts Threshold
-   - Calculates average message count across all posts
-   - Adjusts threshold based on server activity:
+1. Featured Posts
+   - Adjusts thresholds based on server activity:
      - Reduces threshold by 50% if activity stays below minimum for 7 days
      - Minimum threshold is maintained at 10 messages
-   - Dynamically adjusts based on recent activity:
-     - High activity (>100 messages/day): 12 hours rotation interval
-     - Low activity (<10 messages/day): 48 hours rotation interval
-     - Normal activity: 24 hours rotation interval
-   - Prevents excessive rotations during low activity periods
-   - Uses exponential moving average to smooth out activity spikes
-   - Considers thread age and engagement patterns
-   - Factors in reactions and replies separately from messages
+   - Dynamic rotation intervals:
+     - High activity (>100 messages/day): 12 hours
+     - Low activity (<10 messages/day): 48 hours
+     - Normal activity: 24 hours
+   - Selection criteria:
+     - Message count weight: 40%
+     - Recent activity weight: 30%
+     - User engagement weight: 20%
+     - Age factor weight: 10%
 
-2. Base Duration Calculation
-   - `base_duration`: Starting timeout duration (default: 300s)
-   - `multiplier`: Increases with each violation (1.2-2.0)
-   - `violation_count`: Number of previous violations
-   - Adjusts parameters based on:
-     - Server activity level (busier servers get longer timeouts)
-     - Violation rate (frequent violations increase duration)
-     - Time since last violation (decay factor)
-     - Severity of current violation (AI score impact)
-   - Decay period reduces violation count over time:
-     - 30 days for minor violations
-     - 90 days for severe violations
-   - Maximum duration cap of 28 days
-   - Minimum duration floor of 5 minutes
+2. Timeout Duration
+   - Base duration calculation:
+     - Initial duration: 300 seconds
+     - Multiplier range: 1.2 to 2.0
+   - Dynamic adjustments:
+     - Server activity factor:
+       - High activity: +20% duration
+       - Low activity: -20% duration
+     - Violation rate impact:
+       - High rate (>5/hour): +50% multiplier
+       - Low rate (<1/day): -25% multiplier
+     - Time decay:
+       - 30 days for minor violations
+       - 90 days for severe violations
+       - Exponential decay function
+   - AI severity integration:
+     - Score 9: 2x multiplier
+     - Score 10: 3x multiplier
+   - Limits and constraints:
+     - Minimum duration: 5 minutes
+     - Maximum duration: 28 days
+     - Cooldown periods between timeouts
 
-3. Rate Limiting AI Moderation
+3. Rate Limiting
    - Per-user limits:
-     - 10 requests per minute
-     - 2000 tokens per minute
-     - Cooldown period: 5 minutes after hitting limit
+     - Request quotas:
+       - 10 requests per minute
+       - 2000 tokens per minute
+     - Cooldown:
+       - 5 minutes after limit breach
+       - Progressive backoff
    - Global limits:
-     - 30 requests per minute
-     - 7000 tokens per minute
-     - 7000 requests per day
-     - 500000 tokens per day
-   - Priority queue system:
-     - Higher priority for moderator requests
-     - Emergency override for critical situations
-   - Automatic backoff when approaching limits
-   - Token usage optimization:
-     - Message batching when possible
-     - Content truncation for long messages
-     - Caching of recent similar checks
+     - Rate constraints:
+       - 30 requests per minute
+       - 7000 tokens per minute
+       - 7000 requests per day
+       - 500000 tokens per day
+     - Distribution:
+       - 70% for user requests
+       - 20% for moderation
+       - 10% for system tasks
