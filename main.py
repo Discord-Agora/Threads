@@ -688,20 +688,6 @@ class Threads(interactions.Extension):
             "temperature": 0,
             "max_tokens": 1024,
             "top_p": 1,
-            "stop": None,
-            "stream": False,
-            "frequency_penalty": 0,
-            "presence_penalty": 0,
-            "logit_bias": None,
-            "user": None,
-            "n": 1,
-            "logprobs": None,
-            "seed": None,
-            "response_format": None,
-            "tools": None,
-            "tool_choice": None,
-            "parallel_tool_calls": None,
-            "top_logprobs": None,
         }
 
         asyncio.create_task(self.initialize_data())
