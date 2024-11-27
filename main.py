@@ -988,16 +988,17 @@ class Threads(interactions.Extension):
         message: str,
         color: EmbedColor,
         log_to_channel: bool = True,
+        ephemeral: bool = True,
     ) -> None:
         embed: interactions.Embed = await self.create_embed(title, message, color)
 
         if ctx:
-            await ctx.send(embed=embed, ephemeral=True)
+            await ctx.send(embed=embed, ephemeral=ephemeral)
 
         if log_to_channel:
-            log_channel_id, log_post_id, log_forum_id = self.get_log_channels()
-            await self.send_to_channel(log_channel_id, embed)
-            await self.send_to_forum_post(log_forum_id, log_post_id, embed)
+            LOG_CHANNEL_ID, LOG_POST_ID, LOG_FORUM_ID = self._get_log_channels()
+            await self.send_to_channel(LOG_CHANNEL_ID, embed)
+            await self.send_to_forum_post(LOG_FORUM_ID, LOG_POST_ID, embed)
 
     async def send_to_channel(self, channel_id: int, embed: interactions.Embed) -> None:
         try:
@@ -1054,9 +1055,10 @@ class Threads(interactions.Extension):
         ],
         message: str,
         log_to_channel: bool = False,
+        ephemeral: bool = True,
     ) -> None:
         await self.send_response(
-            ctx, "Error", message, EmbedColor.ERROR, log_to_channel
+            ctx, "Error", message, EmbedColor.ERROR, log_to_channel, ephemeral
         )
 
     async def send_success(
@@ -1069,10 +1071,11 @@ class Threads(interactions.Extension):
             ]
         ],
         message: str,
-        log_to_channel: bool = False,
+        log_to_channel: bool = True,
+        ephemeral: bool = True,
     ) -> None:
         await self.send_response(
-            ctx, "Success", message, EmbedColor.INFO, log_to_channel
+            ctx, "Success", message, EmbedColor.INFO, log_to_channel, ephemeral
         )
 
     async def log_action_internal(self, details: ActionDetails) -> None:
@@ -1773,6 +1776,7 @@ class Threads(interactions.Extension):
                         f"{message.author.display_name}`s GPT [abuse]({msg_link}) score is {score}, "
                         f"will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
                         log_to_channel=True,
+                        ephemeral=False,
                     )
 
                 deny_perms = [
@@ -2056,6 +2060,7 @@ class Threads(interactions.Extension):
                         f"- Yes Votes: {votes.get('👍', 0)}\n"
                         f"- No Votes: {votes.get('👎', 0)}",
                         log_to_channel=True,
+                        ephemeral=False,
                     )
 
                 except Exception as e:
