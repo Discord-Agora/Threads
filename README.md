@@ -33,9 +33,18 @@ The **Threads** module is designed to manage thread-based conversations, user in
   - Options: `reason` (string, required) - Reason for unlocking the thread
 - `/threads convert`: Convert channel names between different Chinese variants
   - Options:
-    - `source` (choice, required) - Source language variant
-    - `target` (choice, required) - Target language variant
-    - `scope` (choice, required) - What to convert (all/server/roles/channels)
+    - `source` (choice, required) - Source language variant:
+      - Simplified Chinese (Mainland China)
+      - Traditional Chinese (Taiwan)
+      - Traditional Chinese (Hong Kong)
+      - Traditional Chinese (Mainland China)
+      - Japanese Shinjitai
+    - `target` (choice, required) - Target language variant (same options as source)
+    - `scope` (choice, required) - What to convert:
+      - All
+      - Server Name Only
+      - Roles Only
+      - Channels Only
 - `/threads timeout`: Timeout management commands
   - `/threads timeout poll`: Start a timeout poll for a user
     - Options:
@@ -112,12 +121,35 @@ The module uses several JSON files to store data:
 
 ### AI Moderation
 
-The module uses GROQ's AI API for content moderation. Messages are scored on a scale of 0-10:
+The module uses GROQ's API for content moderation. Messages are scored on a scale of 0-10:
 
-- 0-3: No abuse or very mild negative language
-- 4-6: Moderate negativity but not direct harassment
-- 7-8: Clear harassment or hostile personal attacks
-- 9-10: Severe harassment, threats, or extreme personal attacks
+- 0-2: Acceptable content
+  - Normal discussion and debate
+  - Constructive criticism
+  - Casual conversation
+
+- 3-4: Minor concerns
+  - Mild rudeness or snark
+  - Borderline inappropriate content
+  - Heated but non-personal arguments
+
+- 5-6: Moderate concerns
+  - Direct hostility or aggression
+  - Pattern of targeting specific users
+  - Inappropriate content or imagery
+
+- 7-8: Serious concerns
+  - Sustained harassment campaign
+  - Hate speech or discrimination
+  - Explicit sexual harassment
+  - Sharing private information
+
+- 9-10: Critical violations
+  - Explicit threats of violence
+  - Extreme hate speech/harassment
+  - Encouraging self-harm/suicide
+  - Doxxing or serious privacy violations
+  - Sexually predatory behavior
 
 Scores of 9 or higher will result in automatic timeout actions.
 
