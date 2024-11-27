@@ -1,3 +1,10 @@
+## 2024-11-27
+
+### Added
+
+- AI moderation system to evaluate both text and images using vision-capable models
+- Dynamic model switching between `llama-3.2-90b-vision` and `llama-3.2-11b-vision` based on usage limits
+
 ## 2024-11-26
 
 ### Added
