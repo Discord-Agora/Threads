@@ -603,67 +603,105 @@ class Threads(interactions.Extension):
         self.AI_MODERATION_PROMPT = [
             {
                 "role": "system",
-                "content": """You are an AI moderator evaluating messages for harassment and abuse in a Discord server. Your role is to protect users from targeted harassment while allowing normal discussion.
+                "content": """You are an AI moderator evaluating messages and images for harassment and abuse in a Discord server. Your role is to protect users from targeted harassment while allowing healthy discussion and debate.
 
-                Analyze messages and score them from 0-10 based on severity:
+                Rate content severity from 0-10 based on these criteria:
 
-                0-2: No abuse, normal conversation
-                3-4: Mild negativity or rudeness
-                5-6: Clear hostility or personal attacks
-                7-8: Serious harassment, threats, or hate speech
-                9-10: Extreme harassment, violent threats, or severe hate speech
+                0-2: Acceptable content
+                - Normal discussion and debate
+                - Constructive criticism
+                - Casual conversation
+                
+                3-4: Minor concerns
+                - Mild rudeness or snark
+                - Borderline inappropriate content
+                - Heated but non-personal arguments
+                
+                5-6: Moderate concerns  
+                - Direct hostility or aggression
+                - Pattern of targeting specific users
+                - Inappropriate content or imagery
+                
+                7-8: Serious concerns
+                - Sustained harassment campaign
+                - Hate speech or discrimination
+                - Explicit sexual harassment
+                - Sharing private information
+                
+                9-10: Critical violations
+                - Explicit threats of violence
+                - Extreme hate speech/harassment
+                - Encouraging self-harm/suicide
+                - Doxxing or serious privacy violations
+                - Sexually predatory behavior
 
-                Critical Guidelines:
-                - ONLY evaluate harassment directed at the caller/victim
-                - Ignore criticism of public figures or other users
-                - Consider context and pattern of behavior
-                - Sexual harassment scores:
-                  * Unwanted sexual comments: 6-7
-                  * Sexual threats or extreme comments: 8-9
-                  * Sexual comments about family members: 9-10
-                - Hate speech based on protected characteristics: 8-10
-                - Credible threats of violence: 9-10
-                - Encouraging self-harm: 9-10
+                Key Evaluation Guidelines:
+                1. Focus ONLY on harassment targeting the caller/victim
+                2. Consider message history and behavioral patterns
+                3. Evaluate both text AND image content holistically
+                4. Account for context and intent
+                5. Be especially alert for:
+                   - Coordinated harassment
+                   - Escalating hostile behavior
+                   - Manipulation tactics
+                   - Hidden threats/coded language
+                   - Inappropriate image content
 
-                Scores of 7+ trigger moderator review
-                Scores of 9+ result in immediate timeout
+                Moderation Actions:
+                - Scores 7-8: Trigger moderator review
+                - Scores 9-10: Immediate timeout and review
 
-                Format response as: {{N}} followed by a clear explanation of the score, citing specific concerning language and context.
+                Response Format:
+                1. Score: {{N}} (where N = 0-10)
+                2. Summary: Brief overview of key concerns
+                3. Evidence: Specific examples from content
+                4. Context: Relevant behavioral patterns
+                5. Recommendation: Suggested moderator action
                 """,
             },
             {
                 "role": "user",
-                "content": """I will provide chat logs in this format:
-                First line: "The caller is [name], the potential author is [name]"
+                "content": """I will provide chat logs with the following format:
+                Line 1: "The caller is [name], the potential author is [name]"
                 
-                Message markers:
-                <<<<message>>>> = caller's messages (potential victim)
-                ****message**** = potential attacker's messages
-                ||||message|||| = message being evaluated
+                Message Markers:
+                <<<<message>>>> = Caller's messages (potential victim)
+                ****message**** = Potential harasser's messages
+                ||||message|||| = Message being evaluated
                 
-                Instructions:
-                1. Focus primarily on the ||||marked message||||
-                2. Consider previous messages for context
-                3. Only evaluate harassment directed at the caller
-                4. Ignore unrelated conflicts or criticism
-                5. Be specific about why language is concerning
+                Evaluation Instructions:
+                1. Focus on the ||||marked message|||| as primary evidence
+                2. Use previous messages to establish context and patterns
+                3. Only consider harassment specifically targeting the caller
+                4. Ignore unrelated conflicts or general criticism
+                5. Provide specific examples and clear reasoning for your score
                 """,
             },
             {
                 "role": "assistant",
-                "content": "I will carefully evaluate messages for harassment directed at the caller using the 0-10 severity scale. I'll analyze both the specific message and surrounding context, focusing only on harassment targeting the caller. My response will include {{score}} followed by a detailed explanation citing specific concerning language and contextual factors.",
+                "content": "I will carefully analyze the content for harassment targeting the caller using the 0-10 severity scale. My evaluation will consider message content, context, patterns of behavior, and any multimedia elements. I'll provide a structured response with {{score}}, detailed reasoning, specific examples, and clear recommendations for moderation actions.",
             },
         ]
 
         self.model_params = {
-            "model": "llama-3.1-70b-versatile",
+            "model": "llama-3.2-90b-vision-preview",
             "temperature": 0,
             "max_tokens": 1024,
             "top_p": 1,
             "stop": None,
             "stream": False,
-            "presence_penalty": 0,
             "frequency_penalty": 0,
+            "presence_penalty": 0,
+            "logit_bias": None,
+            "user": None,
+            "n": 1,
+            "logprobs": None,
+            "seed": None,
+            "response_format": None,
+            "tools": None,
+            "tool_choice": None,
+            "parallel_tool_calls": None,
+            "top_logprobs": None,
         }
 
         asyncio.create_task(self.initialize_data())
@@ -1185,7 +1223,7 @@ class Threads(interactions.Extension):
             if details.additional_info and "tag_updates" in details.additional_info:
                 updates = details.additional_info["tag_updates"]
                 actions = [
-                    f"{update['Action']}ed tag '{update['Tag']}'" for update in updates
+                    f"{update['Action']}ed tag `{update['Tag']}`" for update in updates
                 ]
                 return f"Tags have been modified in {cm}: {', '.join(actions)}."
             return f"Changes have been made to {cm}."
@@ -1237,20 +1275,23 @@ class Threads(interactions.Extension):
         required=True,
         opt_type=interactions.OptionType.STRING,
         autocomplete=True,
+        argument_name="file_type",
     )
     @interactions.slash_default_member_permission(
         interactions.Permissions.ADMINISTRATOR
     )
-    async def command_export(self, ctx: interactions.SlashContext, type: str) -> None:
+    async def command_export(
+        self, ctx: interactions.SlashContext, file_type: str
+    ) -> None:
         await ctx.defer(ephemeral=True)
         filename: str = ""
 
         if not os.path.exists(BASE_DIR):
             return await self.send_error(ctx, "Extension directory does not exist.")
 
-        if type != "all" and not os.path.isfile(os.path.join(BASE_DIR, type)):
+        if file_type != "all" and not os.path.isfile(os.path.join(BASE_DIR, file_type)):
             return await self.send_error(
-                ctx, f"File '{type}' does not exist in the extension directory."
+                ctx, f"File `{file_type}` does not exist in the extension directory."
             )
 
         try:
@@ -1264,7 +1305,7 @@ class Threads(interactions.Extension):
                     base_name,
                     "gztar",
                     BASE_DIR,
-                    "." if type == "all" else type,
+                    "." if file_type == "all" else file_type,
                 )
 
             if not os.path.exists(filename):
@@ -1278,8 +1319,8 @@ class Threads(interactions.Extension):
 
             message = (
                 "All extension files attached."
-                if type == "all"
-                else f"File '{type}' attached."
+                if file_type == "all"
+                else f"File `{file_type}` attached."
             )
             await ctx.send(
                 message,
@@ -1287,12 +1328,12 @@ class Threads(interactions.Extension):
             )
 
         except PermissionError:
-            logger.error(f"Permission denied while exporting {type}")
+            logger.error(f"Permission denied while exporting {file_type}")
             await self.send_error(ctx, "Permission denied while accessing files.")
         except Exception as e:
-            logger.error(f"Error exporting {type}: {e}", exc_info=True)
+            logger.error(f"Error exporting {file_type}: {e}", exc_info=True)
             await self.send_error(
-                ctx, f"An error occurred while exporting {type}: {str(e)}"
+                ctx, f"An error occurred while exporting {file_type}: {str(e)}"
             )
         finally:
             if filename and os.path.exists(filename):
@@ -1313,6 +1354,7 @@ class Threads(interactions.Extension):
                     f
                     for f in os.listdir(BASE_DIR)
                     if os.path.isfile(os.path.join(BASE_DIR, f))
+                    and not f.startswith(".")
                 ]
 
                 choices.extend({"name": file, "value": file} for file in sorted(files))
@@ -1441,11 +1483,9 @@ class Threads(interactions.Extension):
             if isinstance(message.channel, interactions.ThreadChannel)
             else message.channel.id
         )
-
         if channel_id == 1151301324143603712:
             await self.send_error(
-                ctx,
-                "AI content check is not available in the vituperation channel.",
+                ctx, "AI content check is not available in the vituperation channel."
             )
             return None
 
@@ -1462,20 +1502,12 @@ class Threads(interactions.Extension):
             )
             return None
 
-        if any(
-            (
-                message.author.bot,
-                datetime.now(timezone.utc) - message.created_at > timedelta(days=7),
-            )
-        ):
-            await self.send_error(
-                ctx,
-                (
-                    "Bot messages cannot be checked for abuse."
-                    if message.author.bot
-                    else "Messages older than 7 days cannot be checked."
-                ),
-            )
+        if message.author.bot:
+            await self.send_error(ctx, "Bot messages cannot be checked for abuse.")
+            return None
+
+        if datetime.now(timezone.utc) - message.created_at > timedelta(days=7):
+            await self.send_error(ctx, "Messages older than 7 days cannot be checked.")
             return None
 
         if isinstance(post, (interactions.ThreadChannel, interactions.GuildChannel)):
@@ -1498,13 +1530,11 @@ class Threads(interactions.Extension):
                 hour=0, minute=0, second=0, microsecond=0
             )
 
-            user_id = str(ctx.author.id)
-
             cache_keys = {
                 "user": {
-                    "request": f"groq_requests_{user_id}_{current_minute.isoformat()}",
-                    "token": f"groq_tokens_{user_id}_{current_minute.isoformat()}",
-                    "update": f"last_update_{user_id}_{current_minute.isoformat()}",
+                    "request": f"groq_requests_{ctx.author.id}_{current_minute.isoformat()}",
+                    "token": f"groq_tokens_{ctx.author.id}_{current_minute.isoformat()}",
+                    "update": f"last_update_{ctx.author.id}_{current_minute.isoformat()}",
                 },
                 "global": {
                     "minute_requests": f"global_groq_requests_{current_minute.isoformat()}",
@@ -1512,11 +1542,13 @@ class Threads(interactions.Extension):
                     "day_requests": f"global_groq_requests_{current_day.isoformat()}",
                     "day_tokens": f"global_groq_tokens_{current_day.isoformat()}",
                     "last_update": f"global_last_update_{current_minute.isoformat()}",
+                    "model": f"current_model_{current_day.isoformat()}",
                 },
             }
 
             last_update = self.url_cache.get(cache_keys["user"]["update"], current_time)
             time_passed = (current_time - last_update).total_seconds()
+
             request_count = max(
                 0,
                 self.url_cache.get(cache_keys["user"]["request"], 0)
@@ -1532,10 +1564,37 @@ class Threads(interactions.Extension):
                 cache_keys["global"]["last_update"], current_time
             )
             global_time_passed = (current_time - global_last_update).total_seconds()
+
+            current_model = self.url_cache.get(
+                cache_keys["global"]["model"], "llama-3.2-90b-vision-preview"
+            )
+
+            model_limits = {
+                "llama-3.2-90b-vision-preview": {
+                    "minute_requests": 15,
+                    "day_requests": 3500,
+                    "minute_tokens": 7000,
+                    "day_tokens": 250000,
+                },
+                "llama-3.2-11b-vision-preview": {
+                    "minute_requests": 30,
+                    "day_requests": 7000,
+                    "minute_tokens": 7000,
+                    "day_tokens": 500000,
+                },
+            }
+
             global_minute_requests = max(
                 0,
                 self.url_cache.get(cache_keys["global"]["minute_requests"], 0)
-                - min(30, int(30 * global_time_passed / 60)),
+                - min(
+                    model_limits[current_model]["minute_requests"],
+                    int(
+                        model_limits[current_model]["minute_requests"]
+                        * global_time_passed
+                        / 60
+                    ),
+                ),
             )
             global_minute_tokens = max(
                 0,
@@ -1559,12 +1618,28 @@ class Threads(interactions.Extension):
                 )
                 return None
 
+            if current_model == "llama-3.2-90b-vision-preview":
+                if any(
+                    (
+                        global_minute_requests
+                        >= model_limits[current_model]["minute_requests"],
+                        global_day_requests
+                        >= model_limits[current_model]["day_requests"],
+                        global_day_tokens >= model_limits[current_model]["day_tokens"],
+                    )
+                ):
+                    current_model = "llama-3.2-11b-vision-preview"
+                    self.url_cache[cache_keys["global"]["model"]] = current_model
+                    global_minute_requests = 0
+                    global_day_requests = 0
+
             if any(
                 (
-                    global_minute_requests >= 30,
+                    global_minute_requests
+                    >= model_limits[current_model]["minute_requests"],
                     global_minute_tokens >= 7000,
-                    global_day_requests >= 7000,
-                    global_day_tokens >= 500000,
+                    global_day_requests >= model_limits[current_model]["day_requests"],
+                    global_day_tokens >= model_limits[current_model]["day_tokens"],
                 )
             ):
                 await self.send_error(
@@ -1579,12 +1654,43 @@ class Threads(interactions.Extension):
             async for msg in ctx.channel.history(limit=50, before=message):
                 if msg.author in (ctx.author, message.author):
                     messages.append(
-                        f"{'<<<<' if msg.author == ctx.author else '****'}{msg.author.display_name}: {msg.content}{'>>>>' if msg.author == ctx.author else '****'}"
+                        f"{'<<<<' if msg.author == ctx.author else '****'}"
+                        f"{msg.author.display_name}: {msg.content}"
+                        f"{'>>>>' if msg.author == ctx.author else '****'}"
                     )
+
+            image_attachments = [
+                att
+                for att in message.attachments
+                if att.content_type and att.content_type.startswith("image/")
+            ]
+
+            if not (message.content or image_attachments):
+                await self.send_error(ctx, "No content or images to check.")
+                return None
+
+            api_messages = self.AI_MODERATION_PROMPT.copy()
+            api_messages.append({"role": "user", "content": ""})
+
+            content_list = api_messages[-1]["content"]
+            if isinstance(content_list, list):
+                if message.content:
+                    content_list.append(
+                        {
+                            "type": "text",
+                            "text": "\n".join(messages)
+                            + f"\n||||{message.author.display_name}: {message.content}||||",
+                        }
+                    )
+
+                content_list.extend(
+                    {"type": "image_url", "image_url": {"url": att.url}}
+                    for att in image_attachments
+                )
 
             messages.append(f"||||{message.author.display_name}: {message.content}||||")
             truncated_text = "\n".join(filter(None, messages))[-500:]
-            estimated_tokens = len(truncated_text) // 4
+            estimated_tokens = len(truncated_text) >> 2
 
             if token_count + estimated_tokens > 2000:
                 await self.send_error(
@@ -1595,10 +1701,9 @@ class Threads(interactions.Extension):
 
             try:
                 async with asyncio.timeout(30):
+                    self.model_params["model"] = current_model
                     completion = await self.client.chat.completions.create(
-                        messages=self.AI_MODERATION_PROMPT
-                        + [{"role": "user", "content": truncated_text}],
-                        **self.model_params,
+                        messages=api_messages, **self.model_params
                     )
 
                     self.url_cache.update(
@@ -1617,6 +1722,7 @@ class Threads(interactions.Extension):
                             cache_keys["global"]["day_tokens"]: global_day_tokens
                             + estimated_tokens,
                             cache_keys["global"]["last_update"]: current_time,
+                            cache_keys["global"]["model"]: current_model,
                         }
                     )
 
@@ -1641,7 +1747,8 @@ class Threads(interactions.Extension):
                     msg_link = f"https://discord.com/channels/{ctx.guild_id}/{ctx.channel_id}/{message.id}"
                     await self.send_success(
                         ctx,
-                        f"{message.author.display_name}'s GPT [abuse]({msg_link}) score is {score}, will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
+                        f"{message.author.display_name}`s GPT [abuse]({msg_link}) score is {score}, "
+                        f"will be temporarily muted for {timeout_duration} seconds. Reason: {ai_response}",
                     )
 
                 deny_perms = [
@@ -1693,12 +1800,22 @@ class Threads(interactions.Extension):
 
             if is_offensive:
                 embed.add_field(
+                    name="Content Type",
+                    value=f"{'Text and ' if message.content else ''}{'Images' if image_attachments else ''}",
+                    inline=True,
+                )
+                embed.add_field(
                     name="Suggested Action",
                     value=(
                         "Consider deleting this message using the delete option."
                         if isinstance(post, interactions.ThreadChannel)
                         else "Consider reporting this message to moderators."
                     ),
+                    inline=True,
+                )
+                embed.add_field(
+                    name="Model Used",
+                    value=current_model,
                     inline=True,
                 )
 
@@ -1719,6 +1836,7 @@ class Threads(interactions.Extension):
                     "ai_result": ai_response,
                     "is_offensive": is_offensive,
                     "abuse_score": score,
+                    "model_used": current_model,
                 },
             )
 
@@ -1979,7 +2097,7 @@ class Threads(interactions.Extension):
             embed = await self.create_embed(title="Timeout Expired")
             embed.add_field(
                 name="Status",
-                value=f"{member.mention}'s timeout has expired at <t:{end_time}:f>.",
+                value=f"{member.mention}`s timeout has expired at <t:{end_time}:f>.",
                 inline=True,
             )
             await channel.send(embeds=[embed])
