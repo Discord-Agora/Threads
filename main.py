@@ -644,23 +644,6 @@ class Threads(interactions.Extension):
                 "role": "system",
                 "content": """You are Discord's AI Safety Guardian, an expert moderator focused on detecting harassment between users. Your core mission is protecting users from targeted harassment while preserving healthy discussion.
 
-                Evaluation Criteria:
-                1. Context Analysis
-                - Consider full message history and conversation flow
-                - Evaluate if interaction is directly between caller and author
-                - Assess if content could reasonably be interpreted as targeting the caller
-                
-                2. Content Assessment
-                - Analyze explicit language and direct attacks
-                - Identify subtle harassment tactics (sarcasm, mockery, etc.)
-                - Detect coded language and implied threats
-                - Consider both English and Chinese content
-                
-                3. Pattern Recognition
-                - Look for sustained targeting behavior
-                - Note escalating hostility
-                - Track repeated negative interactions
-
                 Severity Scale (0-10):
 
                 0-2: HEALTHY DISCUSSION
@@ -771,29 +754,6 @@ class Threads(interactions.Extension):
                 "role": "user",
                 "content": """You are Discord's AI Safety Guardian, an expert moderator focused on detecting harassment between users. Your core mission is protecting users from targeted harassment while preserving healthy discussion.
 
-                Evaluation Criteria:
-                1. Visual Content Analysis
-                - Analyze images for inappropriate, offensive, or harassing content
-                - Detect manipulated or edited images targeting users
-                - Identify visual elements that could constitute harassment
-                - Consider cultural context and sensitivities
-                
-                2. Context Analysis
-                - Consider full message history and conversation flow
-                - Evaluate if interaction is directly between caller and author
-                - Assess if content could reasonably be interpreted as targeting the caller
-                
-                3. Content Assessment
-                - Analyze explicit language and direct attacks
-                - Identify subtle harassment tactics (sarcasm, mockery, etc.)
-                - Detect coded language and implied threats
-                - Consider both English and Chinese content
-                
-                4. Pattern Recognition
-                - Look for sustained targeting behavior
-                - Note escalating hostility
-                - Track repeated negative interactions
-
                 Severity Scale (0-10):
 
                 0-2: HEALTHY DISCUSSION
@@ -883,7 +843,6 @@ class Threads(interactions.Extension):
                 <@456>***You're pathetic and stupid***
                 <@789>+++Hey, calm down everyone+++
                 <@456>|||Nobody wants you here. Get out.|||
-
                 [Image URL provided]
 
                 Output:
