@@ -160,19 +160,19 @@ The module uses several JSON files for data storage:
    - Criteria:
      - Message count vs threshold
      - Activity within rotation window
-     - Post status validation
+     - Post status (not archived/locked)
 
 3. Timeout
    - Base Duration:
      - Initial: 300 seconds
      - Multiplier: 1.2-2.0x
-     - Maximum: 3600 seconds
    - Adjustments:
      - Activity-based: ±20%
      - Violation rate: +50%/-25% multiplier
      - AI severity: 2-3x multiplier
      - Progressive penalties with 24-48h decay
      - Global triggers after 3+ violations
+     - Hard cap at 1 hour
 
 4. Rate Limiting
    - Per-User Limits:
