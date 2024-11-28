@@ -1773,7 +1773,6 @@ class Threads(interactions.Extension):
             return None
 
         user_message = "\n".join(messages)
-        logger.info(user_message)
 
         models = [
             {
