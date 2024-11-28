@@ -25,48 +25,53 @@ Inspired by a bot from Discord server (ID: 1284782072484986993).
 ### Slash Commands
 
 - `/threads top`: Navigate to the top of the current thread
+
 - `/threads lock`: Lock the current thread
-  - Options: `reason` (string, required) - Reason for locking the thread
+  - `reason` (string, required): Reason for locking the thread
+
 - `/threads unlock`: Unlock the current thread
-  - Options: `reason` (string, required) - Reason for unlocking the thread
+  - `reason` (string, required): Reason for unlocking the thread
+
 - `/threads convert`: Convert channel names between different Chinese variants
-  - Options:
-    - `source` (choice, required) - Source language variant:
-      - Simplified Chinese (Mainland China)
-      - Traditional Chinese (Taiwan)
-      - Traditional Chinese (Hong Kong)
-      - Traditional Chinese (Mainland China)
-      - Japanese Shinjitai
-    - `target` (choice, required) - Target language variant (same options as source)
-    - `scope` (choice, required) - What to convert:
-      - All
-      - Server Name Only
-      - Roles Only
-      - Channels Only
+  - `source` (choice, required): Source language variant
+    - Simplified Chinese (Mainland China)
+    - Traditional Chinese (Taiwan)
+    - Traditional Chinese (Hong Kong)
+    - Traditional Chinese (Mainland China)
+    - Japanese Shinjitai
+  - `target` (choice, required): Target language variant (same choices as source)
+  - `scope` (choice, required): What to convert
+    - All
+    - Server Name Only
+    - Roles Only
+    - Channels Only
+
 - `/threads timeout`: Timeout management commands
   - `/threads timeout poll`: Start a timeout poll for a user
-    - Options:
-      - `user` (user, required) - The user to timeout
-      - `reason` (string, required) - Reason for timeout
-      - `duration` (integer, required) - Timeout duration in minutes (1-10)
+    - `user` (user, required): The user to timeout
+    - `reason` (string, required): Reason for timeout
+    - `duration` (integer, required): Timeout duration in minutes (1-10)
   - `/threads timeout check`: Check message content with AI
-    - Options: `message` (string, required) - ID or URL of the message to check
-  - `/threads timeout set`: Set bot configurations (Admin only)
-    - Options: `key` (string, required) - Set the GROQ API key
+    - `message` (string, required): ID or URL of the message to check
+  - `/threads timeout set`: Set bot configurations (ADMIN only)
+    - `key` (string, required): Set the GROQ API key
+
 - `/threads list`: List information for current thread
-  - Options: `type` (choice, required) - Select data type to view:
+  - `type` (choice, required): Select data type to view
     - `Banned Users`: View banned users in current thread
     - `Thread Permissions`: View users with special permissions in current thread
     - `Post Statistics`: View statistics for current post
-- `/threads view`: View configuration data (requires Threads role)
-  - Options: `type` (choice, required) - Select data type to view:
+
+- `/threads view`: View configuration data (requires role)
+  - `type` (choice, required): Select data type to view
     - `Banned Users`: View all banned users across threads
     - `Thread Permissions`: View all thread permission assignments
     - `Post Statistics`: View post activity statistics
     - `Featured Threads`: View featured threads and their metrics
-- `/threads debug`: Debug commands (Admin only)
+
+- `/threads debug`: Debug commands (ADMIN only)
   - `/threads debug export`: Export files from the extension directory
-    - Options: `type` (choice, required) - Type of files to export
+    - `type` (choice, required): Type of files to export
 
 ### Context Menus
 
@@ -117,94 +122,73 @@ The module uses several JSON files for data storage:
 - `timeout_history.json`: User timeout history
 - `.groq_key`: GROQ API key for AI moderation
 
-### AI Moderation
+### Algorithm
 
-The module uses GROQ's API for content moderation. Messages are scored on a scale of 0-10:
+1. AI Moderation
+   - Message Analysis:
+     - Evaluates message content and up to 15 messages of context
+     - Considers user roles, permissions, and interaction history
+     - Checks channel type and permission settings
+   - Severity Scoring (0-10):
+     - 0-2: Normal discussion, constructive criticism, casual conversation
+     - 3-4: Mild hostility, borderline content, heated but non-personal arguments
+     - 5-7: Direct hostility, targeted behavior, inappropriate content
+     - 8: Triggers warning, logs violation, notifies user
+     - 9-10: Automatic timeout with multipliers (2x for 9, 3x for 10)
+   - Permission Restrictions on Violations:
+     - Message sending (regular and thread)
+     - File attachments and reactions
+     - Channel/thread management
+     - Mention privileges
+     - Forum post creation
+   - System Constraints:
+     - Excludes bot messages
+     - 24-hour message age limit
+     - Exempts thread owners and managers
+     - Prevents duplicate checks
 
-- 0-2: Acceptable content
-  - Normal discussion and debate
-  - Constructive criticism
-  - Casual conversation
+2. Featured Posts
+   - Threshold:
+     - Calculates average post message count
+     - Reduces threshold 50% if activity < 50 msgs for 7 days
+     - Maintains 10 message minimum
+     - Weekly threshold updates
+   - Rotation:
+     - High activity (>100 msgs/day): 12h rotation
+     - Low activity (<10 msgs/day): 48h rotation
+     - Normal activity: 24h rotation
+   - Criteria:
+     - Message count vs threshold
+     - Activity within rotation window
+     - Post status validation
 
-- 3-4: Minor concerns
-  - Mild rudeness
-  - Borderline inappropriate content
-  - Heated but non-personal arguments
+3. Timeout
+   - Base Duration:
+     - Initial: 300 seconds
+     - Multiplier: 1.2-2.0x
+     - Maximum: 3600 seconds
+   - Adjustments:
+     - Activity-based: ±20%
+     - Violation rate: +50%/-25% multiplier
+     - AI severity: 2-3x multiplier
+     - Progressive penalties with 24-48h decay
+     - Global triggers after 3+ violations
 
-- 5-6: Moderate concerns
-  - Direct hostility
-  - Pattern of targeting
-  - Inappropriate content
-
-- 7-8: Serious concerns
-  - Sustained harassment
-  - Hate speech
-  - Sexual harassment
-  - Privacy violations
-
-- 9-10: Critical violations
-  - Explicit threats
-  - Extreme hate speech
-  - Encouraging self-harm
-  - Doxxing
-  - Predatory behavior
-
-Scores of 9 or higher trigger automatic timeout actions.
-
-### Algorithms
-
-1. Featured Posts
-   - Adjusts thresholds based on server activity:
-     - Reduces threshold by 50% if activity stays below minimum for 7 days
-     - Minimum threshold is maintained at 10 messages
-   - Dynamic rotation intervals:
-     - High activity (>100 messages/day): 12 hours
-     - Low activity (<10 messages/day): 48 hours
-     - Normal activity: 24 hours
-   - Selection criteria:
-     - Message count weight: 40%
-     - Recent activity weight: 30%
-     - User engagement weight: 20%
-     - Age factor weight: 10%
-
-2. Timeout Duration
-   - Base duration calculation:
-     - Initial duration: 300 seconds
-     - Multiplier range: 1.2 to 2.0
-   - Dynamic adjustments:
-     - Server activity factor:
-       - High activity: +20% duration
-       - Low activity: -20% duration
-     - Violation rate impact:
-       - High rate (>5/hour): +50% multiplier
-       - Low rate (<1/day): -25% multiplier
-     - Time decay:
-       - 30 days for minor violations
-       - 90 days for severe violations
-       - Exponential decay function
-   - AI severity integration:
-     - Score 9: 2x multiplier
-     - Score 10: 3x multiplier
-   - Limits and constraints:
-     - Minimum duration: 5 minutes
-     - Maximum duration: 28 days
-     - Cooldown periods between timeouts
-
-3. Rate Limiting
-   - Per-user limits:
-     - Request quotas:
-       - 10 requests per minute
-       - 2000 tokens per minute
-     - Cooldown:
-       - 5 minutes after limit breach
-       - Progressive backoff
-   - Global limits:
-     - Rate constraints:
-       - 30 requests per minute
-       - 7000 tokens per minute
-       - 7000 requests per day
-       - 500000 tokens per day
-     - Distribution:
-       - 70% for user requests
-       - 20% for moderation
-       - 10% for system tasks
+4. Rate Limiting
+   - Per-User Limits:
+     - 10 requests/minute
+     - 2000 tokens/minute
+     - 5-minute breach cooldown
+     - 1-hour cache expiry
+   - Global Constraints:
+     - 30 requests/minute
+     - 7000 tokens/minute
+     - Daily: 7000 requests, 500000 tokens
+   - Resource Distribution:
+     - 70% user checks
+     - 20% auto-moderation
+     - 10% maintenance
+   - Model Hierarchy:
+     - Primary: `llama-3.2-90b-vision-preview`
+     - Secondary: `llama-3.2-11b-vision-preview`
+     - Fallback: `llama-3.1-70b-versatile`
