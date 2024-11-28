@@ -100,7 +100,9 @@ class ActionDetails:
     actor: interactions.Member
     target: Optional[interactions.Member] = None
     result: str = "successful"
-    channel: Optional[interactions.GuildForumPost] = None
+    channel: Optional[
+        Union[interactions.GuildForumPost, interactions.ThreadChannel]
+    ] = None
     additional_info: Optional[Mapping[str, Any]] = None
 
 
@@ -177,18 +179,16 @@ class Model:
         cfg.base_duration = max(
             60, min(600, cfg.base_duration + total_factor * cfg.base_duration_step)
         )
+
         cfg.multiplier = max(
             1.2, min(2.0, cfg.multiplier + total_factor * cfg.multiplier_step)
         )
+
         cfg.decay_hours = max(
             12, min(48, cfg.decay_hours - activity_factor * cfg.decay_hours_step)
         )
 
-        if violation_factor:
-            cfg.max_duration = max(
-                1800,
-                min(7200, cfg.max_duration + violation_factor * cfg.max_duration_step),
-            )
+        cfg.max_duration = 3600
 
         self.last_timeout_adjustment = current_time
         logger.info(
@@ -218,15 +218,12 @@ class Model:
         violations = user_data["violation_count"]
         user_data["last_timeout"] = current_ts
 
-        return max(
-            self.timeout_config.base_duration,
-            min(
-                int(
-                    self.timeout_config.base_duration
-                    * self.timeout_config.multiplier ** (violations - 1)
-                ),
-                self.timeout_config.max_duration,
+        return min(
+            int(
+                self.timeout_config.base_duration
+                * self.timeout_config.multiplier ** (violations - 1)
             ),
+            3600,
         )
 
     async def load_timeout_history(self, file_path: str) -> None:
@@ -1671,7 +1668,6 @@ class Threads(interactions.Extension):
         ctx: Union[interactions.ComponentContext, interactions.SlashContext],
         post: Union[interactions.ThreadChannel, interactions.GuildChannel],
         message: interactions.Message,
-        display_result: Optional[bool] = True,
     ) -> Optional[ActionDetails]:
         await ctx.defer(ephemeral=True)
 
@@ -1929,7 +1925,7 @@ class Threads(interactions.Extension):
         for concern in key_concerns:
             concerns_text.append(f'    - {concern["type"]}')
             concerns_text.append(f'        - Evidence: {concern["evidence"]}')
-            concerns_text.append(f'        - Impact: {concern["impact"]}')
+            concerns_text.append(f'    - Impact: {concern["impact"]}')
 
         formatted_response = f"""
 1. Severity Score: {severity_score}
@@ -1963,7 +1959,7 @@ class Threads(interactions.Extension):
 
             if score >= 9:
                 multiplier = 3 if score >= 10 else 2
-                timeout_duration = int(timeout_duration * multiplier)
+                timeout_duration = min(int(timeout_duration * multiplier), 3600)
 
                 try:
                     deny_perms = [
@@ -2004,9 +2000,7 @@ class Threads(interactions.Extension):
                         violation_count = user_data.get("violation_count", 0)
 
                         if violation_count >= 3:
-                            global_timeout_duration = min(
-                                timeout_duration * 2, 60 * 60 * 24 * 28
-                            )
+                            global_timeout_duration = min(timeout_duration * 2, 3600)
                             timeout_until = datetime.now(timezone.utc) + timedelta(
                                 seconds=global_timeout_duration
                             )
@@ -2102,7 +2096,12 @@ class Threads(interactions.Extension):
                 ),
                 "ai_result": f"\n{ai_response}",
                 "is_offensive": score >= 9,
-                "abuse_score": score,
+                "timeout_duration": timeout_duration if score >= 9 else "N/A",
+                "global_timeout_duration": (
+                    global_timeout_duration
+                    if "global_timeout_duration" in locals()
+                    else "N/A"
+                ),
                 "model_used": f"`{model}` ({completion.usage.total_tokens} tokens)",
             },
         )
