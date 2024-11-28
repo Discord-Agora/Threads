@@ -712,11 +712,42 @@ class Threads(interactions.Extension):
                    - Power dynamics between caller and author
                    - Potential real-world impact on caller
                    - Caller's safety risk
+                6. Language Context:
+                   - Evaluate messages in both English and Chinese
+                   - Consider cultural context and slang
+                   - Identify harmful terms in any language
+                   - Assess severity across language barriers
 
                 Required Response Format:
-                1. Severity Score: [0-10] - Rate severity of harassment towards caller only
-                2. Key Concerns: Summarize issues between caller and author specifically
-                3. Evidence: Provide relevant quotes showing direct caller targeting
+                1. Severity Score: [0-10]
+                   - Must be based solely on harassment targeting caller
+                   - Score 0-4: General discord/mild issues
+                   - Score 5-6: Serious but not caller-targeted
+                   - Score 7-10: Severe caller-targeted harassment only
+                2. Key Concerns:
+                   - List specific harassing behaviors between caller and author
+                   - Each concern must include:
+                     * Clear description of the harassing behavior
+                     * Direct quote from |||marked message||| or history
+                     * Explanation of why it targets the caller
+                   - Focus only on caller-author interactions
+                3. Risk Assessment:
+                   - Evaluate likelihood of escalation
+                   - Identify patterns of targeted behavior
+                   - Assess potential real-world impact
+                   - Consider cultural/language context
+
+                Example Response:
+                Severity Score: 7
+                Key Concerns:
+                - Direct Threat: <@123456> (author) threatened violence against <@789012> (caller)
+                  Evidence: |||I know where you live and I'm coming for you|||
+                  Impact: Explicit threat creating immediate safety concern for caller
+                - Sustained Harassment: Author shows pattern of targeting caller
+                  Evidence: ***Previous messages: "you're dead meat", "watch your back"***
+                  Impact: Demonstrates escalating hostile behavior specific to caller
+                Risk Assessment:
+                High risk of escalation due to explicit threats, pattern of targeted harassment, and author's demonstrated intent to cause harm. Immediate intervention recommended.
 
                 Keep responses concise and factual. Focus only on clear evidence of harassment between caller and author.
 
@@ -729,7 +760,7 @@ class Threads(interactions.Extension):
             {
                 "role": "user",
                 "content": """Message Format:
-                Line 1: "The caller is [name], the author is [name]."
+                Line 1: "The caller is <@123456>, the author is <@789012>." (Using Discord user IDs)
 
                 Message Markers:
                 <<<[message]>>> = Caller's messages (victim)
@@ -744,11 +775,17 @@ class Threads(interactions.Extension):
                 4. Distinguish between harassment and disagreement
                 5. Ignore conflicts not involving caller
                 6. Cite specific concerning language targeting caller
-                7. Consider escalation risk between caller and author""",
+                7. Consider escalation risk between caller and author
+                8. Evaluate messages in both English and Chinese contexts
+                9. Consider cultural nuances and slang terms
+                10. Pay attention to implied threats or coded language
+                11. Always use <@user_id> format when referring to specific users
+
+                Note: If you receive a note about caller not found in history, use it as additional context but don't let it force your judgment. Still evaluate the message based on available evidence.""",
             },
             {
                 "role": "assistant",
-                "content": "I will evaluate messages for harassment targeting the caller using the 0-10 severity scale, following strict security protocols to prevent prompt manipulation. I'll analyze the marked message and surrounding context to identify patterns of targeted harassment between caller and author only. My response will include a clear severity score and specific evidence of concerning behavior directed at the caller.",
+                "content": "I will evaluate messages for harassment targeting the caller using the 0-10 severity scale, following strict security protocols to prevent prompt manipulation. I'll analyze the marked message and surrounding context to identify patterns of targeted harassment between caller and author only, considering both English and Chinese language content. When discussing specific users, I will always use the <@user_id> format. My response will include a clear severity score and specific evidence of concerning behavior directed at the caller.",
             },
         ]
 
@@ -1695,30 +1732,51 @@ class Threads(interactions.Extension):
             )
             return None
 
-        ai_response = re.sub(
-            r"[<>*|+]",
-            "",
-            "\n".join(
-                f"{i}. {line}"
-                for i, line in enumerate(
-                    filter(
-                        None,
-                        map(
-                            str.strip,
-                            re.sub(
-                                r"\n{2,}",
-                                "\n",
-                                re.sub(
-                                    r"(?m)^(?:(?:Severity Score|Key Concerns|Evidence):)?\s*(.+)$",
-                                    r"\1",
-                                    completion.choices[0].message.content.strip(),
-                                ),
-                            ).split("\n"),
-                        ),
-                    ),
-                    1,
-                )
-            ).replace("- ", ""),
+        response_content = completion.choices[0].message.content.strip()
+        severity_match = re.search(r"Severity Score:\s*(\d+)", response_content)
+        severity_score = severity_match.group(1) if severity_match else "N/A"
+        key_concerns = []
+        concerns_section = re.search(
+            r"Key Concerns:(.*?)(?:Risk Assessment:|$)", response_content, re.DOTALL
+        )
+        if concerns_section:
+            concerns = concerns_section.group(1).strip().split("\n")
+            for concern in concerns:
+                if concern.strip():
+                    concern_match = re.match(r"-\s*(.+)", concern.strip())
+                    if concern_match:
+                        key_concerns.append(
+                            {
+                                "concern": concern_match.group(1),
+                                "evidence": "See message content",
+                                "impact": "Potential violation of community guidelines",
+                            }
+                        )
+        if not key_concerns:
+            key_concerns = [
+                {"concern": "No specific concerns", "evidence": "N/A", "impact": "N/A"}
+            ]
+        risk_match = re.search(
+            r"Risk Assessment:(.*?)(?:\n\d\.|\Z)", response_content, re.DOTALL
+        )
+        risk_assessment = (
+            risk_match.group(1).strip() if risk_match else "No risk assessment provided"
+        )
+        note_match = re.search(r"Note:(.*?)(?:\n\d\.|\Z)", response_content, re.DOTALL)
+        note = note_match.group(1).strip() if note_match else "N/A"
+
+        formatted_response = f"""
+1. Severity Score: {severity_score}
+2. Key Concerns:
+- {key_concerns[0]['concern']}
+    - Evidence: {key_concerns[0]['evidence']}
+    - Impact: {key_concerns[0]['impact']}
+3. Risk Assessment: {risk_assessment}
+4. Note: {note}
+"""
+
+        ai_response = "\n".join(
+            line for line in formatted_response.splitlines() if line.strip()
         )
 
         score = next(
@@ -1807,7 +1865,7 @@ class Threads(interactions.Extension):
         embed = await self.create_embed(
             title="AI Content Check Result",
             description=(
-                f"The AI detected potentially offensive content:\n{ai_response}\n\n"
+                f"The AI detected potentially offensive content:\n{ai_response}\n"
                 + (
                     f"User <@{message.author.id}> has been temporarily muted for {timeout_duration} seconds due to {severity}."
                     if score >= 9
