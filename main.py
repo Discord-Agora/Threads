@@ -31,6 +31,7 @@ from typing import (
 import aiofiles
 import aiofiles.os
 import aiofiles.ospath
+import aiohttp
 import aioshutil
 import groq
 import interactions
@@ -284,6 +285,41 @@ class Model:
         except Exception as e:
             logger.error(f"Error saving GROQ API key: {e}")
             raise
+
+    async def load_phishing_db(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, mode="rb") as f:
+                content = await f.read()
+                self.phishing_domains = orjson.loads(content) if content.strip() else {}
+                logger.info(f"Loaded {len(self.phishing_domains)} phishing domains")
+        except FileNotFoundError:
+            logger.warning(
+                f"Phishing database file not found: {file_path}. Creating a new one"
+            )
+            self.phishing_domains = {}
+            await self.save_phishing_db(file_path)
+        except orjson.JSONDecodeError as e:
+            logger.error(f"Error decoding phishing database JSON data: {e}")
+            self.phishing_domains = {}
+        except Exception as e:
+            logger.error(
+                f"Unexpected error loading phishing database: {e}", exc_info=True
+            )
+            self.phishing_domains = {}
+
+    async def save_phishing_db(self, file_path: str) -> None:
+        try:
+            json_data = orjson.dumps(
+                self.phishing_domains,
+                option=orjson.OPT_INDENT_2
+                | orjson.OPT_SORT_KEYS
+                | orjson.OPT_SERIALIZE_NUMPY,
+            )
+            async with aiofiles.open(file_path, mode="wb") as f:
+                await f.write(json_data)
+            logger.info(f"Saved {len(self.phishing_domains)} phishing domains")
+        except Exception as e:
+            logger.error(f"Error saving phishing database: {e}", exc_info=True)
 
     async def load_banned_users(self, file_path: str) -> None:
         try:
@@ -540,6 +576,8 @@ class Threads(interactions.Extension):
 
         self.conversion_task: Optional[asyncio.Task] = None
         self.active_timeout_polls: Dict[int, asyncio.Task] = {}
+        self.phishing_domains: Dict[str, Dict[str, Any]] = {}
+        self.phishing_cache_duration = timedelta(hours=24)
         self.message_count_threshold: int = 200
         self.rotation_interval: timedelta = timedelta(hours=23)
         self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
@@ -549,6 +587,7 @@ class Threads(interactions.Extension):
         ) - timedelta(days=8)
 
         self.GROQ_KEY_FILE: str = os.path.join(BASE_DIR, ".groq_key")
+        self.PHISHING_DB_FILE: str = os.path.join(BASE_DIR, "phishing_domains.json")
         self.BANNED_USERS_FILE: str = os.path.join(BASE_DIR, "banned_users.json")
         self.THREAD_PERMISSIONS_FILE: str = os.path.join(
             BASE_DIR, "thread_permissions.json"
@@ -730,6 +769,7 @@ class Threads(interactions.Extension):
             self.model.load_featured_posts(self.FEATURED_POSTS_FILE),
             self.model.load_groq_key(self.GROQ_KEY_FILE),
             self.model.load_timeout_history(self.TIMEOUT_HISTORY_FILE),
+            self.model.load_phishing_db(self.PHISHING_DB_FILE),
         )
         try:
             if self.model.groq_api_key:
@@ -982,12 +1022,21 @@ class Threads(interactions.Extension):
         title: str,
         description: str = "",
         color: Union[EmbedColor, int] = EmbedColor.INFO,
+        fields: Optional[List[Dict[str, str]]] = None,
     ) -> interactions.Embed:
         color_value: int = color.value if isinstance(color, EmbedColor) else color
 
         embed: interactions.Embed = interactions.Embed(
             title=title, description=description, color=color_value
         )
+
+        if fields:
+            for field in fields:
+                embed.add_field(
+                    name=field.get("name", ""),
+                    value=field.get("value", ""),
+                    inline=field.get("inline", True),
+                )
 
         guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
         if guild and guild.icon:
@@ -3672,6 +3721,9 @@ class Threads(interactions.Extension):
         if not event.message.guild:
             return
 
+        if await self.malicious_url(event.message):
+            return
+
         link_task = (
             asyncio.create_task(self.process_link(event))
             if self.should_process_link(event)
@@ -3693,6 +3745,116 @@ class Threads(interactions.Extension):
 
         if link_task:
             await link_task
+
+    async def malicious_url(self, message: interactions.Message) -> bool:
+        url_pattern = re.compile(
+            r"(?:[A-z0-9](?:[A-z0-9-]{0,61}[A-z0-9])?\.)+[A-z0-9][A-z0-9-]{0,61}[A-z0-9]"
+        )
+
+        found_domains = url_pattern.findall(message.content)
+
+        if not found_domains:
+            return False
+
+        now = datetime.now(timezone.utc)
+
+        for domain in found_domains:
+            domain = domain.lower()
+
+            if domain in self.phishing_domains:
+                cache = self.phishing_domains[domain]
+                if (
+                    datetime.fromisoformat(cache["timestamp"])
+                    + self.phishing_cache_duration
+                    > now
+                ):
+                    if cache["is_malicious"]:
+                        await self.handle_malicious_url(
+                            message, domain, cache["reason"]
+                        )
+                        return True
+                    continue
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://anti-fish.bitflow.dev/check",
+                        json={"message": message.content},
+                        headers={
+                            "Application-Name": "键政大舞台",
+                            "Application-Link": "https://github.com/kazuki388/Threads",
+                        },
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status == 404:
+                            self.phishing_domains[domain] = {
+                                "is_malicious": False,
+                                "timestamp": now.isoformat(),
+                                "reason": [],
+                            }
+                            continue
+
+                        if resp.status != 200:
+                            logger.warning(
+                                f"Anti-fish API returned status {resp.status} for {domain}"
+                            )
+                            continue
+
+                        data = await resp.json()
+                        matches = data.get("matches", [])
+                        is_malicious = bool(data.get("match"))
+
+                        self.phishing_domains[domain] = {
+                            "is_malicious": is_malicious,
+                            "timestamp": now.isoformat(),
+                            "reason": [
+                                f"{m['source']} ({m['type']}): {m['domain']} "
+                                f"(Trust: {m['trust_rating']:.1f})"
+                                for m in matches
+                            ],
+                        }
+
+                        if is_malicious:
+                            await self.handle_malicious_url(
+                                message, domain, self.phishing_domains[domain]["reason"]
+                            )
+                            await self.model.save_phishing_db(self.PHISHING_DB_FILE)
+                            return True
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout checking URL {domain}")
+            except Exception as e:
+                logger.error(f"Error checking URL {domain}: {e}")
+
+        await self.model.save_phishing_db(self.PHISHING_DB_FILE)
+        return False
+
+    async def handle_malicious_url(
+        self, message: interactions.Message, domain: str, reasons: list[str]
+    ) -> None:
+        logger.info(
+            f"Malicious URL from domain `{domain}` detected in message {message.id}"
+        )
+
+        embed = await self.create_embed(
+            title="Malicious URL Detected",
+            description="A potentially dangerous URL was detected and removed.",
+            color=EmbedColor.ERROR,
+            fields=[
+                {"name": "Domain", "value": f"`{domain}`"},
+                {"name": "Reasons", "value": "\n".join(f"- {r}" for r in reasons)},
+                {
+                    "name": "Warning",
+                    "value": "Please be careful when clicking on unknown links!",
+                },
+            ],
+        )
+
+        try:
+            await message.delete()
+            await message.channel.send(embeds=[embed])
+        except Exception as e:
+            logger.error(f"Failed to handle malicious URL: {e}")
 
     async def process_link(self, event: MessageCreate) -> None:
         if not self.should_process_link(event):
