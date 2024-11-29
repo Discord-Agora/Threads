@@ -1665,7 +1665,11 @@ class Threads(interactions.Extension):
 
     async def ai_check_message_action(
         self,
-        ctx: Union[interactions.ComponentContext, interactions.SlashContext],
+        ctx: Union[
+            interactions.ComponentContext,
+            interactions.SlashContext,
+            interactions.Message,
+        ],
         post: Union[interactions.ThreadChannel, interactions.GuildChannel],
         message: interactions.Message,
     ) -> Optional[ActionDetails]:
@@ -3916,43 +3920,59 @@ class Threads(interactions.Extension):
     @interactions.listen(MessageCreate)
     async def on_message_create_for_actions(self, event: MessageCreate) -> None:
         msg = event.message
-        if not all(
-            (
-                msg.guild,
-                msg.message_reference,
-                isinstance(msg.channel, interactions.ThreadChannel),
-            )
+        if not (
+            msg.guild
+            and msg.message_reference
+            and isinstance(msg.channel, (interactions.ThreadChannel, interactions.GuildChannel))
         ):
             return
 
-        action = {
-            "del": "delete",
-            "pin": "pin",
-            "unpin": "unpin",
-        }.get(msg.content.casefold().strip())
+        content = msg.content.casefold().strip()
 
-        if not action:
-            return
+        match content:
+            case "shoot":
+                try:
+                    if referenced_message := await msg.fetch_referenced_message():
+                        await asyncio.shield(msg.delete())
+                        await self.ai_check_message_action(
+                            msg, msg.channel, referenced_message
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Error processing AI check action: {e}", exc_info=True
+                    )
+                finally:
+                    return
 
-        try:
-            if not (referenced_message := await msg.fetch_referenced_message()):
-                return
+            case action if action in {"del", "pin", "unpin"}:
+                try:
+                    if not isinstance(msg.channel, interactions.ThreadChannel):
+                        return
+                        
+                    if not (referenced_message := await msg.fetch_referenced_message()):
+                        return
 
-            if not await self.can_manage_message(msg.channel, msg.author):
-                return
+                    if not await self.can_manage_message(msg.channel, msg.author):
+                        return
 
-            await msg.delete()
+                    await asyncio.shield(msg.delete())
 
-            await (
-                self.delete_message_action(msg, msg.channel, referenced_message)
-                if action == "delete"
-                else self.pin_message_action(
-                    msg, msg.channel, referenced_message, action == "pin"
-                )
-            )
+                    action_map = {
+                        "del": lambda: self.delete_message_action(
+                            msg, msg.channel, referenced_message
+                        ),
+                        "pin": lambda: self.pin_message_action(
+                            msg, msg.channel, referenced_message, True
+                        ),
+                        "unpin": lambda: self.pin_message_action(
+                            msg, msg.channel, referenced_message, False
+                        ),
+                    }
 
-        except Exception as e:
-            logger.error(f"Error processing message action: {e}", exc_info=True)
+                    await action_map[content]()
+
+                except Exception as e:
+                    logger.error(f"Error processing message action: {e}", exc_info=True)
 
     # Link methods
 
