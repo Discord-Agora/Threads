@@ -42,6 +42,8 @@ from interactions.api.events import (
     ExtensionLoad,
     ExtensionUnload,
     MessageCreate,
+    MessageReactionAdd,
+    MessageReactionRemove,
     NewThreadCreate,
 )
 from interactions.client.errors import Forbidden, NotFound
@@ -147,6 +149,123 @@ class Model:
         self.last_timeout_adjustment = datetime.now(timezone.utc)
         self.timeout_adjustment_interval = timedelta(hours=1)
         self.groq_api_key: Optional[str] = None
+        self.starred_messages: Dict[str, int] = {}
+        self.starboard_messages: Dict[str, str] = {}
+        self.star_threshold: int = 1
+        self.star_stats: Dict[str, Dict[str, Any]] = {
+            "hourly": {"stats": defaultdict(int)},
+            "daily": {"stats": defaultdict(int)},
+            "weekly": {"stats": defaultdict(int)},
+            "last_adjustment": {"timestamp": datetime.now(timezone.utc)},
+            "threshold_history": {"history": []},
+        }
+        self.star_config: Dict[str, Union[int, float]] = {
+            "min_threshold": 3,
+            "max_threshold": 15,
+            "adjustment_interval": 3600,
+            "decay_factor": 0.95,
+            "growth_factor": 1.05,
+            "activity_weight": 0.3,
+            "time_weight": 0.2,
+            "quality_weight": 0.5,
+        }
+
+    async def adjust_star_threshold(self) -> None:
+        current_time = datetime.now(timezone.utc)
+
+        if (
+            current_time - self.star_stats["last_adjustment"]["timestamp"]
+        ).total_seconds() < self.star_config["adjustment_interval"]:
+            return
+
+        try:
+            hourly_stars = sum(self.star_stats["hourly"]["stats"].values())
+            daily_stars = sum(self.star_stats["daily"]["stats"].values())
+            weekly_stars = sum(self.star_stats["weekly"]["stats"].values())
+
+            activity_score = (
+                sum((hourly_stars / 10, daily_stars / 200, weekly_stars / 1000)) / 3
+            )
+
+            time_factors = {range(0, 6): 0.8, range(6, 12): 1.1, range(12, 18): 1.2}
+            time_factor = next(
+                (
+                    factor
+                    for hours, factor in time_factors.items()
+                    if current_time.hour in hours
+                ),
+                1.0,
+            )
+
+            quality_score = len(self.starboard_messages) / (
+                len(self.starred_messages) or 1
+            )
+
+            weights = (
+                (activity_score, self.star_config["activity_weight"]),
+                (time_factor, self.star_config["time_weight"]),
+                (quality_score, self.star_config["quality_weight"]),
+            )
+            final_score = sum(score * weight for score, weight in weights)
+
+            new_threshold = (
+                min(
+                    int(self.star_threshold * self.star_config["growth_factor"]),
+                    int(self.star_config["max_threshold"]),
+                )
+                if final_score > 1.0
+                else max(
+                    int(self.star_threshold * self.star_config["decay_factor"]),
+                    int(self.star_config["min_threshold"]),
+                )
+            )
+
+            if new_threshold != self.star_threshold:
+                self.star_threshold = new_threshold
+                history = self.star_stats["threshold_history"]["history"]
+                history.append(
+                    {
+                        "timestamp": current_time.isoformat(),
+                        "new_threshold": new_threshold,
+                        "activity_score": activity_score,
+                        "time_factor": time_factor,
+                        "quality_score": quality_score,
+                        "final_score": final_score,
+                    }
+                )
+
+                if len(history) > 100:
+                    self.star_stats["threshold_history"]["history"] = history[-100:]
+
+            current_hour = current_time.replace(minute=0, second=0, microsecond=0)
+            current_day = current_time.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            current_week = current_day - timedelta(days=current_day.weekday())
+
+            time_ranges = {
+                "hourly": (current_hour - timedelta(hours=24), "hourly"),
+                "daily": (current_day - timedelta(days=7), "daily"),
+                "weekly": (current_week - timedelta(weeks=4), "weekly"),
+            }
+
+            for period, (cutoff, stat_key) in time_ranges.items():
+                self.star_stats[period]["stats"] = {
+                    k: v
+                    for k, v in self.star_stats[stat_key]["stats"].items()
+                    if k >= cutoff.isoformat()
+                }
+
+            self.star_stats["last_adjustment"]["timestamp"] = current_time
+
+            logger.info(
+                f"Star threshold adjusted to {self.star_threshold} "
+                f"(Activity: {activity_score:.2f}, Time: {time_factor:.2f}, "
+                f"Quality: {quality_score:.2f}, Final: {final_score:.2f})"
+            )
+
+        except Exception as e:
+            logger.error(f"Error adjusting star threshold: {e}", exc_info=True)
 
     async def adjust_timeout_cfg(self) -> None:
         current_time = datetime.now(timezone.utc)
@@ -225,6 +344,38 @@ class Model:
             ),
             3600,
         )
+
+    async def load_starred_messages(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, mode="rb") as file:
+                content: bytes = await file.read()
+                data = orjson.loads(content) if content.strip() else {}
+                self.starred_messages = data.get("starred_messages", {})
+                self.starboard_messages = data.get("starboard_messages", {})
+            logger.info("Successfully loaded starred messages data")
+        except FileNotFoundError:
+            logger.warning(f"Starred messages file not found: {file_path}")
+            await self.save_starred_messages(file_path)
+        except orjson.JSONDecodeError as e:
+            logger.error(f"Error decoding starred messages JSON data: {e}")
+        except Exception as e:
+            logger.error(f"Error loading starred messages: {e}", exc_info=True)
+
+    async def save_starred_messages(self, file_path: str) -> None:
+        try:
+            data = {
+                "starred_messages": self.starred_messages,
+                "starboard_messages": self.starboard_messages,
+            }
+            json_data = orjson.dumps(
+                data,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            )
+            async with aiofiles.open(file_path, mode="wb") as file:
+                await file.write(json_data)
+            logger.info("Successfully saved starred messages data")
+        except Exception as e:
+            logger.error(f"Error saving starred messages: {e}", exc_info=True)
 
     async def load_timeout_history(self, file_path: str) -> None:
         try:
@@ -592,8 +743,13 @@ class Threads(interactions.Extension):
         self.POST_STATS_FILE: str = os.path.join(BASE_DIR, "post_stats.json")
         self.FEATURED_POSTS_FILE: str = os.path.join(BASE_DIR, "featured_posts.json")
         self.TIMEOUT_HISTORY_FILE: str = os.path.join(BASE_DIR, "timeout_history.json")
+        self.STARRED_MESSAGES_FILE: str = os.path.join(
+            BASE_DIR, "starred_messages.json"
+        )
         self.LOG_CHANNEL_ID: int = 1166627731916734504
         self.LOG_FORUM_ID: int = 1159097493875871784
+        self.STARBOARD_FORUM_ID: int = 1168209956802142360
+        self.STARBOARD_POST_ID: int = 1312109214533025904
         self.LOG_POST_ID: int = 1279118293936111707
         self.POLL_FORUM_ID: Tuple[int, ...] = (1155914521907568740,)
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
@@ -635,6 +791,7 @@ class Threads(interactions.Extension):
         )
         self.TIMEOUT_REQUIRED_DIFFERENCE: int = 5
         self.TIMEOUT_DURATION: int = 30
+        self.STAR_EMOJIS: tuple[str, ...] = ("✨", "⭐", "", "🌟💫")
 
         self.AI_TEXT_MODERATION_PROMPT = [
             {
@@ -881,6 +1038,7 @@ class Threads(interactions.Extension):
             self.model.load_groq_key(self.GROQ_KEY_FILE),
             self.model.load_timeout_history(self.TIMEOUT_HISTORY_FILE),
             self.model.load_phishing_db(self.PHISHING_DB_FILE),
+            self.model.load_starred_messages(self.STARRED_MESSAGES_FILE),
         )
         try:
             if self.model.groq_api_key:
@@ -1130,15 +1288,18 @@ class Threads(interactions.Extension):
 
     async def create_embed(
         self,
-        title: str,
-        description: str = "",
+        title: Optional[str] = None,
+        description: Optional[str] = None,
         color: Union[EmbedColor, int] = EmbedColor.INFO,
         fields: Optional[List[Dict[str, str]]] = None,
+        timestamp: Optional[datetime] = None,
     ) -> interactions.Embed:
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc)
         color_value: int = color.value if isinstance(color, EmbedColor) else color
 
         embed: interactions.Embed = interactions.Embed(
-            title=title, description=description, color=color_value
+            title=title, description=description, color=color_value, timestamp=timestamp
         )
 
         if fields:
@@ -1152,9 +1313,9 @@ class Threads(interactions.Extension):
         guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
         if guild and guild.icon:
             embed.set_footer(text=guild.name, icon_url=guild.icon.url)
+        else:
+            embed.set_footer(text="鍵政大舞台")
 
-        embed.timestamp = datetime.now(timezone.utc)
-        embed.set_footer(text="鍵政大舞台")
         return embed
 
     @functools.lru_cache(maxsize=1)
@@ -3891,6 +4052,157 @@ class Threads(interactions.Extension):
                 f"Fatal error in featured posts rotation task: {e}", exc_info=True
             )
             raise
+
+    # Starboard
+
+    @interactions.listen(MessageReactionAdd)
+    async def on_reaction_add(self, event: MessageReactionAdd) -> None:
+        if not (event.emoji.name in self.STAR_EMOJIS and event.message.id):
+            return
+
+        try:
+            channel = await self.bot.fetch_channel(event.message.channel.id)
+            message = await channel.fetch_message(event.message.id)
+
+            if message.author.id == event.author.id:
+                return
+
+            message_id = str(message.id)
+            star_reactions = sum(
+                r.emoji.name in self.STAR_EMOJIS for r in message.reactions
+            )
+            self.model.starred_messages[message_id] = star_reactions
+
+            current_time = datetime.now(timezone.utc)
+            current_hour = current_time.replace(minute=0, second=0, microsecond=0)
+            current_day = current_time.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            current_week = current_day - timedelta(days=current_day.weekday())
+
+            stats = self.model.star_stats
+            stats["hourly"]["stats"][current_hour.isoformat()] += 1
+            stats["daily"]["stats"][current_day.isoformat()] += 1
+            stats["weekly"]["stats"][current_week.isoformat()] += 1
+
+            await self.model.adjust_star_threshold()
+
+            if (
+                star_reactions >= self.model.star_threshold
+                and message_id not in self.model.starboard_messages
+            ):
+                await self.add_to_starboard(message)
+
+            await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
+
+        except Exception as e:
+            logger.error(f"Error processing reaction add: {e}", exc_info=True)
+
+    @interactions.listen(MessageReactionRemove)
+    async def on_reaction_remove(self, event: MessageReactionRemove) -> None:
+        if not (event.emoji.name in self.STAR_EMOJIS and event.message.id):
+            return
+
+        try:
+            channel = await self.bot.fetch_channel(event.message.channel.id)
+            message = await channel.fetch_message(event.message.id)
+            message_id = str(message.id)
+
+            star_reactions = sum(
+                r.emoji.name in self.STAR_EMOJIS for r in message.reactions
+            )
+            self.model.starred_messages[message_id] = star_reactions
+
+            if (
+                star_reactions < self.model.star_threshold
+                and message_id in self.model.starboard_messages
+            ):
+                await self.remove_from_starboard(message_id)
+
+            await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
+
+        except Exception as e:
+            logger.error(f"Error processing reaction remove: {e}", exc_info=True)
+
+    async def add_to_starboard(self, message: interactions.Message) -> None:
+        try:
+            starboard_forum = await self.bot.fetch_channel(
+                self.STARBOARD_FORUM_ID, force=True
+            )
+            starboard = await starboard_forum.fetch_post(self.STARBOARD_POST_ID)
+
+            embed = await self.create_embed(
+                description=message.content,
+                color=EmbedColor.WARN,
+                timestamp=message.created_at,
+            )
+
+            embed.add_field(
+                name="Source",
+                value=f"[Jump to Message]({message.jump_url})",
+                inline=True,
+            )
+
+            embed.add_field(name="Author", value=message.author.mention, inline=True)
+
+            embed.add_field(
+                name="Channel", value=f"<#{message.channel.id}>", inline=True
+            )
+
+            if message.attachments:
+                embed.set_image(url=message.attachments[0].url)
+
+            embed.set_author(
+                name=message.author.display_name, icon_url=message.author.avatar_url
+            )
+
+            webhook = await starboard.create_webhook(name="Starboard Webhook")
+            try:
+                await webhook.send(
+                    content=f"# {message.content}",
+                    username=message.author.display_name,
+                    avatar_url=message.author.avatar_url,
+                )
+                starboard_message = await starboard.send(
+                    embeds=[embed],
+                    username=message.author.display_name,
+                    avatar_url=message.author.avatar_url,
+                    wait=True,
+                )
+                if starboard_message:
+                    self.model.starboard_messages[str(message.id)] = str(
+                        starboard_message.id
+                    )
+                    await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
+            except Exception as e:
+                logger.exception(f"Failed to send message: {str(e)}")
+            finally:
+                with contextlib.suppress(Exception):
+                    await webhook.delete()
+
+        except Exception as e:
+            logger.error(f"Error adding message to starboard: {e}", exc_info=True)
+
+    async def remove_from_starboard(self, message_id: str) -> None:
+        try:
+            if not (
+                starboard_message_id := self.model.starboard_messages.get(message_id)
+            ):
+                return
+
+            starboard_forum = await self.bot.fetch_channel(self.STARBOARD_FORUM_ID)
+            starboard = await starboard_forum.fetch_post(self.STARBOARD_POST_ID)
+            try:
+                message = await starboard.fetch_message(int(starboard_message_id))
+                await message.delete()
+            except NotFound:
+                pass
+            finally:
+                self.model.starboard_messages.pop(message_id, None)
+                await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
+
+        except Exception as e:
+            logger.error(f"Error removing message from starboard: {e}", exc_info=True)
 
     # Event methods
 
