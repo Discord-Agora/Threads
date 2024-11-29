@@ -484,16 +484,16 @@ class Model:
             logger.exception(f"Unexpected error while loading selected posts: {e}")
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
-        cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
+        ban_cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
         current_time: datetime = datetime.now(timezone.utc)
 
-        if cache_key in self.ban_cache:
-            cached_result, timestamp = self.ban_cache[cache_key]
+        if ban_cache_key in self.ban_cache:
+            cached_result, timestamp = self.ban_cache[ban_cache_key]
             if current_time - timestamp < self.CACHE_DURATION:
                 return cached_result
 
         result: bool = user_id in self.banned_users[channel_id][post_id]
-        self.ban_cache[cache_key] = (result, current_time)
+        self.ban_cache[ban_cache_key] = (result, current_time)
         return result
 
     async def invalidate_ban_cache(
@@ -1668,7 +1668,6 @@ class Threads(interactions.Extension):
         ctx: Union[
             interactions.ComponentContext,
             interactions.SlashContext,
-            interactions.Message,
         ],
         post: Union[interactions.ThreadChannel, interactions.GuildChannel],
         message: interactions.Message,
@@ -1730,14 +1729,21 @@ class Threads(interactions.Extension):
                 )
                 return None
 
-        message_cache_key = f"ai_check_{message.id}"
-        if message_cache_key in self.url_cache:
-            await self.send_error(
-                ctx,
-                "This message has already been checked. Please wait before checking the same message again.",
-            )
-            return None
-        self.url_cache[message_cache_key] = datetime.now(timezone.utc)
+        ai_cache_key = f"ai_check_{message.id}"
+        try:
+            if cached := self.url_cache.get(ai_cache_key):
+                await self.send_error(
+                    ctx,
+                    f"This message has already been checked by {'you' if cached['checker_id'] == ctx.author.id else 'another user'}.",
+                )
+                return None
+        except Exception:
+            pass
+
+        self.url_cache[ai_cache_key] = {
+            "timestamp": datetime.now(timezone.utc),
+            "checker_id": ctx.author.id,
+        }
 
         messages = [f"Caller: <@{ctx.author.id}>", f"Author: <@{message.author.id}>"]
         history_messages = []
@@ -3923,32 +3929,20 @@ class Threads(interactions.Extension):
         if not (
             msg.guild
             and msg.message_reference
-            and isinstance(msg.channel, (interactions.ThreadChannel, interactions.GuildChannel))
+            and isinstance(
+                msg.channel, (interactions.ThreadChannel, interactions.GuildChannel)
+            )
         ):
             return
 
         content = msg.content.casefold().strip()
 
         match content:
-            case "shoot":
-                try:
-                    if referenced_message := await msg.fetch_referenced_message():
-                        await asyncio.shield(msg.delete())
-                        await self.ai_check_message_action(
-                            msg, msg.channel, referenced_message
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Error processing AI check action: {e}", exc_info=True
-                    )
-                finally:
-                    return
-
             case action if action in {"del", "pin", "unpin"}:
                 try:
                     if not isinstance(msg.channel, interactions.ThreadChannel):
                         return
-                        
+
                     if not (referenced_message := await msg.fetch_referenced_message()):
                         return
 
