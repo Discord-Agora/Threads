@@ -1261,7 +1261,7 @@ class Threads(interactions.Extension):
             ]
         ],
         message: str,
-        log_to_channel: bool = True,
+        log_to_channel: bool = False,
         ephemeral: bool = True,
     ) -> None:
         await self.send_response(
@@ -2292,6 +2292,7 @@ class Threads(interactions.Extension):
                         f"{target.mention} has been timed out until <t:{end_time}:R>.\n"
                         f"- Yes Votes: {votes.get('👍', 0)}\n"
                         f"- No Votes: {votes.get('👎', 0)}",
+                        log_to_channel=True,
                         ephemeral=False,
                     )
 
