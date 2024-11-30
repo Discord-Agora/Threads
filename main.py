@@ -139,7 +139,7 @@ class Model:
         self.ban_cache: Dict[Tuple[str, str, str], Tuple[bool, datetime]] = {}
         self.CACHE_DURATION: timedelta = timedelta(minutes=5)
         self.post_stats: Dict[str, PostStats] = {}
-        self.featured_posts: Dict[str, str] = {}
+        self.featured_posts: Dict[str, List[str]] = {}
         self.current_pinned_post: Optional[str] = None
         self.converters: Dict[str, StarCC.PresetConversion] = {}
         self.message_history: DefaultDict[int, List[datetime]] = defaultdict(list)
@@ -1061,13 +1061,15 @@ class Threads(interactions.Extension):
         )
         logger.debug("Current featured posts: %s", self.model.featured_posts)
 
-        eligible_posts = {
-            post_id
-            for forum_id in self.FEATURED_CHANNELS
-            if (post_id := self.model.featured_posts.get(str(forum_id)))
-            and (stats := self.model.post_stats.get(post_id))
-            and stats.message_count >= self.message_count_threshold
-        }
+        eligible_posts = set()
+        for forum_id in self.FEATURED_CHANNELS:
+            forum_id_str = str(forum_id)
+            if forum_id_str in self.model.featured_posts:
+                for post_id in self.model.featured_posts[forum_id_str]:
+                    if (
+                        stats := self.model.post_stats.get(post_id)
+                    ) and stats.message_count >= self.message_count_threshold:
+                        eligible_posts.add(post_id)
 
         for post_id in eligible_posts:
             try:
@@ -1105,6 +1107,9 @@ class Threads(interactions.Extension):
 
     async def pin_featured_post(self, new_post_id: str) -> None:
         try:
+            if new_post_id == "1310198482564284446":
+                return
+
             new_post = await self.bot.fetch_channel(int(new_post_id))
             if not isinstance(new_post, interactions.GuildForumPost):
                 return
@@ -1163,31 +1168,21 @@ class Threads(interactions.Extension):
             (forum_id, new_post_id)
             for forum_id, new_post_id in zip(forum_ids, top_posts)
             if new_post_id
-            and new_post_id != self.model.featured_posts.get(str(forum_id))
         )
 
         if not updates:
             return
 
-        featured_posts_update = {
-            str(forum_id): new_post_id for forum_id, new_post_id in updates
-        }
-        self.model.featured_posts.update(featured_posts_update)
-
         for forum_id, new_post_id in updates:
-            current = self.model.featured_posts.get(str(forum_id))
-            logger.info(
-                "".join(
-                    [
-                        "Rotating featured post for forum ",
-                        str(forum_id),
-                        " from ",
-                        str(current),
-                        " to ",
-                        new_post_id,
-                    ]
+            forum_id_str = str(forum_id)
+            if forum_id_str not in self.model.featured_posts:
+                self.model.featured_posts[forum_id_str] = []
+
+            if new_post_id not in self.model.featured_posts[forum_id_str]:
+                self.model.featured_posts[forum_id_str].append(new_post_id)
+                logger.info(
+                    f"Added new featured post {new_post_id} to forum {forum_id}"
                 )
-            )
 
         try:
             await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
@@ -1622,6 +1617,213 @@ class Threads(interactions.Extension):
     )
 
     @module_group_debug.subcommand(
+        "config", sub_cmd_description="Manage configuration files"
+    )
+    @interactions.slash_option(
+        name="file",
+        description="Configuration file to manage",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="major",
+        description="Major section to modify",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="minor",
+        description="Minor section to modify (leave empty to delete major section)",
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="value",
+        description="New value for minor section (ignored if minor is empty)",
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_default_member_permission(
+        interactions.Permissions.ADMINISTRATOR
+    )
+    async def debug_config(
+        self,
+        ctx: interactions.SlashContext,
+        file: str,
+        major: str,
+        minor: Optional[str] = None,
+        value: Optional[str] = None,
+    ) -> None:
+        if not next(
+            (True for r in ctx.author.roles if r.id == self.THREADS_ROLE_ID), False
+        ):
+            await self.send_error(
+                ctx, "You do not have permission to use this command."
+            )
+            return
+
+        try:
+            file_paths = {
+                name.lower().removesuffix(".json"): path
+                for name, path in (
+                    (entry.name, entry.path)
+                    for entry in os.scandir(BASE_DIR)
+                    if entry.is_file() and entry.name.endswith(".json")
+                )
+            }
+
+            if file not in file_paths:
+                await self.send_error(ctx, f"Invalid file selection: {file}")
+                return
+
+            file_path = file_paths[file]
+            data = await getattr(self.model, f"load_{file}")(file_path) or {}
+            data = {str(k): v for k, v in data.items()}
+
+            is_nested = any(map(lambda x: isinstance(x, dict), data.values()))
+            is_list_values = any(map(lambda x: isinstance(x, list), data.values()))
+            major_str = str(major)
+
+            if minor is None:
+                if value is None:
+                    if major_str not in data:
+                        await self.send_error(
+                            ctx, f"Major section `{major}` not found in {file}"
+                        )
+                        return
+                    del data[major_str]
+                    action = f"Deleted major section `{major}`"
+                else:
+                    try:
+                        parsed_value = orjson.loads(value)
+                        data[major_str] = (
+                            {} if is_nested else [] if is_list_values else parsed_value
+                        )
+                    except orjson.JSONDecodeError:
+                        data[major_str] = value
+                    action = f"Created major section `{major}`"
+            else:
+                if major_str not in data:
+                    if not is_nested:
+                        await self.send_error(
+                            ctx,
+                            f"Cannot add minor section to non-nested structure in {file}",
+                        )
+                        return
+                    data[major_str] = {}
+
+                major_data = data[major_str]
+                if not isinstance(major_data, dict):
+                    await self.send_error(
+                        ctx, f"Major section `{major}` does not support minor sections"
+                    )
+                    return
+
+                if value is None:
+                    if minor not in major_data:
+                        await self.send_error(
+                            ctx, f"Minor section `{minor}` not found in `{major}`"
+                        )
+                        return
+                    del major_data[minor]
+                    action = f"Deleted minor section `{minor}` from `{major}`"
+                else:
+                    try:
+                        parsed = orjson.loads(value)
+                        major_data[minor] = parsed
+                    except orjson.JSONDecodeError:
+                        major_data[minor] = value
+                    action = (
+                        f"Updated minor section `{minor}` in `{major}` to `{value}`"
+                    )
+
+            await getattr(self.model, f"save_{file}")(file_path, data)
+            await self.send_success(
+                ctx, f"{action} in {file_path.rpartition('/')[-1]}", log_to_channel=True
+            )
+
+        except Exception as e:
+            logger.error(f"Error managing config file: {e}", exc_info=True)
+            await self.send_error(ctx, f"Error managing config file: {str(e)}")
+
+    @debug_config.autocomplete("file")
+    async def autocomplete_debug_config_file(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        try:
+            files = {
+                entry.name.split(".")[0].lower(): (
+                    entry.name.translate(str.maketrans("_", " "))
+                    .title()
+                    .replace(".Json", ""),
+                    entry.path,
+                )
+                for entry in os.scandir(BASE_DIR)
+                if entry.is_file() and entry.name.endswith(".json")
+            }
+
+            choices = [
+                {"name": name, "value": key}
+                for key, (name, path) in files.items()
+                if await aiofiles.ospath.exists(path)
+            ][:25]
+
+            await ctx.send(choices)
+
+        except Exception as e:
+            logger.error(f"Error in file autocomplete: {e}")
+            await ctx.send([])
+
+    @debug_config.autocomplete("major")
+    async def autocomplete_debug_config_major(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        if not (file := ctx.kwargs.get("file")):
+            await ctx.send([])
+            return
+
+        try:
+            file_path = os.path.join(BASE_DIR, f"{file}.json")
+            data = orjson.loads(
+                await aiofiles.os.path.exists(file_path)
+                and await (await aiofiles.open(file_path, mode="rb")).read()
+                or b"{}"
+            )
+
+            await ctx.send([{"name": k, "value": k} for k in data][:25])
+
+        except Exception as e:
+            logger.error(f"Error in major section autocomplete: {e}")
+            await ctx.send([])
+
+    @debug_config.autocomplete("minor")
+    async def autocomplete_debug_config_minor(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        if not all(ctx.kwargs.get(k) for k in ("file", "major")):
+            await ctx.send([])
+            return
+
+        try:
+            file_path = os.path.join(BASE_DIR, f"{ctx.kwargs['file']}.json")
+
+            async with aiofiles.open(file_path, mode="rb") as f:
+                data = orjson.loads(await f.read() or b"{}")
+
+            if not isinstance(major_section := data.get(ctx.kwargs["major"]), dict):
+                await ctx.send([])
+                return
+
+            await ctx.send(
+                [dict(name=str(k), value=str(k)) for k in major_section][:25]
+            )
+
+        except Exception as e:
+            logger.error(f"Error in minor section autocomplete: {e}")
+            await ctx.send([])
+
+    @module_group_debug.subcommand(
         "export", sub_cmd_description="Export files from the extension directory"
     )
     @interactions.slash_option(
@@ -1635,7 +1837,7 @@ class Threads(interactions.Extension):
     @interactions.slash_default_member_permission(
         interactions.Permissions.ADMINISTRATOR
     )
-    async def command_export(
+    async def debug_export(
         self, ctx: interactions.SlashContext, file_type: str
     ) -> None:
         await ctx.defer(ephemeral=True)
@@ -1697,8 +1899,8 @@ class Threads(interactions.Extension):
                 except Exception as e:
                     logger.error(f"Error cleaning up temp file: {e}")
 
-    @command_export.autocomplete("type")
-    async def export_type_autocomplete(
+    @debug_export.autocomplete("type")
+    async def autocomplete_debug_export_type(
         self, ctx: interactions.AutocompleteContext
     ) -> None:
         choices: list[dict[str, str]] = [{"name": "All Files", "value": "all"}]
@@ -3788,7 +3990,12 @@ class Threads(interactions.Extension):
             case "featured":
                 featured_posts = await self._get_merged_featured_posts()
                 stats = await self._get_merged_stats()
-                embeds = await self._create_featured_embeds(featured_posts, stats)
+                featured_posts_dict = {
+                    post_id: post_id
+                    for forum_posts in featured_posts.values()
+                    for post_id in forum_posts
+                }
+                embeds = await self._create_featured_embeds(featured_posts_dict, stats)
                 await self.send_paginated_response(
                     ctx, embeds, "No featured threads found."
                 )
@@ -3826,7 +4033,7 @@ class Threads(interactions.Extension):
             logger.error(f"Error loading post stats: {e}", exc_info=True)
             return {}
 
-    async def _get_merged_featured_posts(self) -> Dict[str, str]:
+    async def _get_merged_featured_posts(self) -> Dict[str, List[str]]:
         try:
             await self.model.load_featured_posts(self.FEATURED_POSTS_FILE)
             return self.model.featured_posts
