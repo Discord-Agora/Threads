@@ -756,6 +756,7 @@ class Threads(interactions.Extension):
         self.GUILD_ID: int = 1150630510696075404
         self.CONGRESS_ID: int = 1196707789859459132
         self.CONGRESS_MEMBER_ROLE: int = 1200254783110525010
+        self.FEATURED_TAG_ID: int = 1275098388718813215
         self.CONGRESS_MOD_ROLE: int = 1300132191883235368
         self.ROLE_CHANNEL_PERMISSIONS: Dict[int, Tuple[int, ...]] = {
             1223635198327914639: (
@@ -1093,24 +1094,52 @@ class Threads(interactions.Extension):
             ):
                 return
 
-            featured_tag_id = 1275098388718813215
             current_tags = frozenset(tag.id for tag in channel.applied_tags)
 
-            if featured_tag_id not in current_tags:
-                new_tags = list(current_tags | {featured_tag_id})
+            if self.FEATURED_TAG_ID not in current_tags:
+                new_tags = list(current_tags | {self.FEATURED_TAG_ID})
                 if len(new_tags) <= 5:
                     await channel.edit(applied_tags=new_tags)
                     logger.info(f"Added featured tag to post {post_id}")
 
-        except (ValueError, NotFound, Exception) as e:
+        except (ValueError, NotFound) as e:
             logger.error(f"Error adding featured tag to post {post_id}: {e}")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error adding featured tag to post {post_id}: {e}",
+                exc_info=True,
+            )
 
     async def pin_featured_post(self, new_post_id: str) -> None:
         try:
             if new_post_id == "1310198482564284446":
                 return
 
-            new_post = await self.bot.fetch_channel(int(new_post_id))
+            all_featured_posts = []
+            for forum_posts in self.model.featured_posts.values():
+                all_featured_posts.extend(forum_posts)
+
+            available_posts = list(
+                set(
+                    post_id
+                    for post_id in all_featured_posts
+                    if post_id != "1310198482564284446"
+                )
+            )
+
+            if not available_posts:
+                return
+
+            current_hour = int(datetime.now(timezone.utc).timestamp() / 3600)
+            if self.model.current_pinned_post in available_posts:
+                available_posts.remove(self.model.current_pinned_post)
+
+            if not available_posts:
+                return
+
+            selected_post_id = available_posts[current_hour % len(available_posts)]
+
+            new_post = await self.bot.fetch_channel(int(selected_post_id))
             if not isinstance(new_post, interactions.GuildForumPost):
                 return
 
@@ -1133,17 +1162,17 @@ class Threads(interactions.Extension):
                 await new_post.pin(reason="New featured post.")
                 await asyncio.sleep(0.25)
 
-                updated_post = await self.bot.fetch_channel(int(new_post_id))
+                updated_post = await self.bot.fetch_channel(int(selected_post_id))
                 if (
                     isinstance(updated_post, interactions.GuildForumPost)
                     and updated_post.pinned
                 ):
-                    self.model.current_pinned_post = new_post_id
+                    self.model.current_pinned_post = selected_post_id
                 else:
-                    logger.error(f"Failed to pin new post {new_post_id}")
+                    logger.error(f"Failed to pin new post {selected_post_id}")
                     return
             else:
-                self.model.current_pinned_post = new_post_id
+                self.model.current_pinned_post = selected_post_id
 
             posts = await forum.fetch_posts()
             final_pinned = [post for post in posts if post.pinned]
@@ -1151,7 +1180,7 @@ class Threads(interactions.Extension):
                 logger.warning(f"Multiple posts pinned in channel {new_post.parent_id}")
 
         except (ValueError, NotFound) as e:
-            logger.error(f"Error pinning post {new_post_id}: {e}")
+            logger.error(f"Error pinning post {selected_post_id}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error pinning new post: {e}", exc_info=True)
 
@@ -1164,11 +1193,36 @@ class Threads(interactions.Extension):
             result = await task
             top_posts.append(result)
 
-        updates: tuple[tuple[int, str], ...] = tuple(
+        featured_tagged_posts: list[tuple[int, str]] = []
+        for forum_id in forum_ids:
+            try:
+                forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
+                    forum_id
+                )
+                if not isinstance(forum_channel, interactions.GuildForum):
+                    continue
+
+                posts: List[interactions.GuildForumPost] = (
+                    await forum_channel.fetch_posts()
+                )
+                for post in posts:
+                    if self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}:
+                        featured_tagged_posts.append((forum_id, str(post.id)))
+            except Exception as e:
+                logger.error(
+                    f"Error fetching posts with featured tag from forum {forum_id}: {e}"
+                )
+                continue
+
+        updates: list[tuple[int, str]] = []
+
+        updates.extend(
             (forum_id, new_post_id)
             for forum_id, new_post_id in zip(forum_ids, top_posts)
             if new_post_id
         )
+
+        updates.extend(featured_tagged_posts)
 
         if not updates:
             return
@@ -1233,7 +1287,7 @@ class Threads(interactions.Extension):
 
     async def adjust_thresholds(self) -> None:
         current_time: datetime = datetime.now(timezone.utc)
-        post_stats: tuple[PostStats, ...] = tuple(self.model.post_stats.values())
+        post_stats = tuple(self.model.post_stats.values())
 
         if not post_stats:
             logger.info("No posts available to adjust thresholds.")
@@ -3990,11 +4044,9 @@ class Threads(interactions.Extension):
             case "featured":
                 featured_posts = await self._get_merged_featured_posts()
                 stats = await self._get_merged_stats()
-                featured_posts_dict = {
-                    post_id: post_id
-                    for forum_posts in featured_posts.values()
-                    for post_id in forum_posts
-                }
+                featured_posts_dict = {}
+                for forum_id, forum_posts in featured_posts.items():
+                    featured_posts_dict[forum_id] = forum_posts
                 embeds = await self._create_featured_embeds(featured_posts_dict, stats)
                 await self.send_paginated_response(
                     ctx, embeds, "No featured threads found."
@@ -4187,32 +4239,35 @@ class Threads(interactions.Extension):
         return embeds
 
     async def _create_featured_embeds(
-        self, featured_posts: Dict[str, str], stats: Dict[str, PostStats]
+        self, featured_posts: Dict[str, List[str]], stats: Dict[str, PostStats]
     ) -> List[interactions.Embed]:
         embeds: List[interactions.Embed] = []
         current_embed: interactions.Embed = await self.create_embed(
             title="Featured Posts"
         )
 
-        for forum_id, post_id in featured_posts.items():
+        for forum_id, posts in featured_posts.items():
             try:
-                post_stats = stats.get(post_id, PostStats())
-                timestamp = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
+                for post_id in posts:
+                    post_stats = stats.get(post_id, PostStats())
+                    timestamp = post_stats.last_activity.strftime(
+                        "%Y-%m-%d %H:%M:%S UTC"
+                    )
 
-                field_value = (
-                    f"- Forum: <#{forum_id}>\n"
-                    f"- Post: <#{post_id}>\n"
-                    f"- Messages: {post_stats.message_count}\n"
-                    f"- Last Active: {timestamp}"
-                )
+                    field_value = (
+                        f"- Forum: <#{forum_id}>\n"
+                        f"- Post: <#{post_id}>\n"
+                        f"- Messages: {post_stats.message_count}\n"
+                        f"- Last Active: {timestamp}"
+                    )
 
-                current_embed.add_field(
-                    name="Featured Post", value=field_value, inline=True
-                )
+                    current_embed.add_field(
+                        name="Featured Post", value=field_value, inline=True
+                    )
 
-                if len(current_embed.fields) >= 5:
-                    embeds.append(current_embed)
-                    current_embed = await self.create_embed(title="Featured Posts")
+                    if len(current_embed.fields) >= 5:
+                        embeds.append(current_embed)
+                        current_embed = await self.create_embed(title="Featured Posts")
 
             except Exception as e:
                 logger.error(f"Error fetching featured post info: {e}", exc_info=True)
