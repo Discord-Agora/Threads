@@ -13,7 +13,6 @@ from enum import Enum, auto
 from logging.handlers import RotatingFileHandler
 from typing import (
     Any,
-    AsyncGenerator,
     Callable,
     DefaultDict,
     Dict,
@@ -791,7 +790,7 @@ class Threads(interactions.Extension):
         )
         self.TIMEOUT_REQUIRED_DIFFERENCE: int = 5
         self.TIMEOUT_DURATION: int = 30
-        self.STAR_EMOJIS: tuple[str, ...] = ("✨", "⭐", "", "🌟💫")
+        self.STAR_EMOJIS: tuple[str, ...] = ("✨", "⭐", "🌟", "💫")
 
         self.AI_TEXT_MODERATION_PROMPT = [
             {
@@ -2096,7 +2095,7 @@ class Threads(interactions.Extension):
         for concern in key_concerns:
             concerns_text.append(f'    - {concern["type"]}')
             concerns_text.append(f'        - Evidence: {concern["evidence"]}')
-            concerns_text.append(f'    - Impact: {concern["impact"]}')
+            concerns_text.append(f'        - Impact: {concern["impact"]}')
 
         formatted_response = f"""
 1. Severity Score: {severity_score}
@@ -4061,8 +4060,7 @@ class Threads(interactions.Extension):
             return
 
         try:
-            channel = await self.bot.fetch_channel(event.message.channel.id)
-            message = await channel.fetch_message(event.message.id)
+            message = event.message
 
             if message.author.id == event.author.id:
                 return
@@ -4126,11 +4124,6 @@ class Threads(interactions.Extension):
 
     async def add_to_starboard(self, message: interactions.Message) -> None:
         try:
-            starboard_forum = await self.bot.fetch_channel(
-                self.STARBOARD_FORUM_ID, force=True
-            )
-            starboard = await starboard_forum.fetch_post(self.STARBOARD_POST_ID)
-
             embed = await self.create_embed(
                 description=message.content,
                 color=EmbedColor.WARN,
@@ -4156,17 +4149,19 @@ class Threads(interactions.Extension):
                 name=message.author.display_name, icon_url=message.author.avatar_url
             )
 
-            webhook = await starboard.create_webhook(name="Starboard Webhook")
+            starboard_channel = await self.bot.fetch_channel(self.STARBOARD_POST_ID)
+            webhook = await starboard_channel.create_webhook(name="Starboard Webhook")
             try:
                 await webhook.send(
                     content=f"# {message.content}",
                     username=message.author.display_name,
                     avatar_url=message.author.avatar_url,
-                )
-                starboard_message = await starboard.send(
+                    thread_id=message.channel.id,
                     embeds=[embed],
-                    username=message.author.display_name,
-                    avatar_url=message.author.avatar_url,
+                    wait=True,
+                )
+                starboard_message = await starboard_channel.send(
+                    embeds=[embed],
                     wait=True,
                 )
                 if starboard_message:
@@ -4249,13 +4244,15 @@ class Threads(interactions.Extension):
 
         content = msg.content.casefold().strip()
 
+        if not (referenced_message := await msg.fetch_referenced_message()):
+            return
+
         match content:
+            case action if action in {"shoot"}:
+                await self.perform_ai_check(msg, msg.channel, referenced_message)
             case action if action in {"del", "pin", "unpin"}:
                 try:
                     if not isinstance(msg.channel, interactions.ThreadChannel):
-                        return
-
-                    if not (referenced_message := await msg.fetch_referenced_message()):
                         return
 
                     if not await self.can_manage_message(msg.channel, msg.author):
@@ -4279,6 +4276,574 @@ class Threads(interactions.Extension):
 
                 except Exception as e:
                     logger.error(f"Error processing message action: {e}", exc_info=True)
+
+    async def perform_ai_check(
+        self,
+        message: interactions.Message,
+        post: Union[interactions.ThreadChannel, interactions.GuildChannel],
+        referenced_message: interactions.Message,
+    ) -> Optional[ActionDetails]:
+        """
+        Similar to ai_check_message_action but handles Message context instead of Component/Slash context.
+        """
+        try:
+            await asyncio.shield(message.delete())
+
+            channel_id = (
+                message.channel.parent_id
+                if isinstance(message.channel, interactions.ThreadChannel)
+                else message.channel.id
+            )
+
+            if channel_id == 1151301324143603712:
+                return None
+
+            if not (self.model.groq_api_key and self.client):
+                await message.channel.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="Error",
+                            description="The AI service is not configured.",
+                            color=EmbedColor.ERROR,
+                        )
+                    ],
+                    delete_after=5,
+                )
+                return None
+
+            if referenced_message.author.bot:
+                await message.channel.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="Error",
+                            description="Bot messages cannot be checked for abuse.",
+                            color=EmbedColor.ERROR,
+                        )
+                    ],
+                    delete_after=5,
+                )
+                return None
+
+            if datetime.now(timezone.utc) - referenced_message.created_at > timedelta(
+                days=1
+            ):
+                await message.channel.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="Error",
+                            description="Messages older than 1 day cannot be checked.",
+                            color=EmbedColor.ERROR,
+                        )
+                    ],
+                    delete_after=5,
+                )
+                return None
+
+            if isinstance(
+                post, (interactions.ThreadChannel, interactions.GuildChannel)
+            ):
+                try:
+                    target_channel = getattr(post, "parent_channel", post)
+                    if member_perms := target_channel.permissions_for(
+                        referenced_message.author
+                    ):
+                        if not (member_perms & interactions.Permissions.SEND_MESSAGES):
+                            await message.channel.send(
+                                embeds=[
+                                    await self.create_embed(
+                                        title="Error",
+                                        description=f"{referenced_message.author.mention} is currently timed out and cannot be checked for additional violations.",
+                                        color=EmbedColor.ERROR,
+                                    )
+                                ],
+                                delete_after=5,
+                            )
+                            return None
+                except Exception as e:
+                    logger.error(f"Error checking user timeout status: {e}")
+
+            if isinstance(post, interactions.ThreadChannel):
+                if (
+                    referenced_message.author.id == post.owner_id
+                    or await self.can_manage_post(post, referenced_message.author)
+                ):
+                    await message.channel.send(
+                        embeds=[
+                            await self.create_embed(
+                                title="Error",
+                                description="Cannot perform AI check on messages from thread owners or users with management permissions.",
+                                color=EmbedColor.ERROR,
+                            )
+                        ],
+                        delete_after=5,
+                    )
+                    return None
+
+            ai_cache_key = f"ai_check_{referenced_message.id}"
+            try:
+                if cached := self.url_cache.get(ai_cache_key):
+                    await message.channel.send(
+                        embeds=[
+                            await self.create_embed(
+                                title="Error",
+                                description=f"This message has already been checked by {'you' if cached['checker_id'] == message.author.id else 'another user'}.",
+                                color=EmbedColor.ERROR,
+                            )
+                        ],
+                        delete_after=5,
+                    )
+                    return None
+            except Exception:
+                pass
+
+            self.url_cache[ai_cache_key] = {
+                "timestamp": datetime.now(timezone.utc),
+                "checker_id": message.author.id,
+            }
+
+            messages = [
+                f"Caller: <@{message.author.id}>",
+                f"Author: <@{referenced_message.author.id}>",
+            ]
+
+            history_messages = []
+            async for msg in message.channel.history(
+                limit=15, before=referenced_message.id + 1
+            ):
+                history_messages.append(msg)
+
+            caller_found = next(
+                (
+                    True
+                    for msg in history_messages
+                    if msg.author.id == message.author.id
+                ),
+                False,
+            )
+            messages.append(
+                "Note: "
+                + (
+                    "No direct interaction history found"
+                    if not caller_found
+                    else "Direct interaction history present"
+                )
+            )
+
+            messages.append("History:")
+            for msg in reversed(history_messages):
+                messages.append(
+                    f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message.author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message.author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}"
+                )
+
+            image_attachments = [
+                att
+                for att in referenced_message.attachments
+                if att.content_type and att.content_type.startswith("image/")
+            ]
+
+            if not (referenced_message.content or image_attachments):
+                await message.channel.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="Error",
+                            description="No content or images to check.",
+                            color=EmbedColor.ERROR,
+                        )
+                    ],
+                    delete_after=5,
+                )
+                return None
+
+            user_message = "\n".join(messages)
+
+            models = [
+                {
+                    "name": "llama-3.2-90b-vision-preview",
+                    "rpm": 15,
+                    "rpd": 3500,
+                    "tpm": 7000,
+                    "tpd": 250000,
+                },
+                {
+                    "name": "llama-3.2-11b-vision-preview",
+                    "rpm": 30,
+                    "rpd": 7000,
+                    "tpm": 7000,
+                    "tpd": 500000,
+                },
+                {
+                    "name": "llama-3.1-70b-versatile",
+                    "rpm": 30,
+                    "rpd": 14400,
+                    "tpm": 6000,
+                    "tpd": 200000,
+                },
+            ]
+
+            completion = None
+            for model_config in models:
+                model = model_config["name"]
+
+                user_bucket_key = f"rate_limit_{message.author.id}_{model}"
+                if user_bucket_key not in self.url_cache:
+                    self.url_cache[user_bucket_key] = {
+                        "requests": 0,
+                        "tokens": 0,
+                        "last_reset": datetime.now(timezone.utc),
+                    }
+
+                guild_bucket_key = f"rate_limit_{message.guild.id}_{model}"
+                if guild_bucket_key not in self.url_cache:
+                    self.url_cache[guild_bucket_key] = {
+                        "requests": 0,
+                        "tokens": 0,
+                        "last_reset": datetime.now(timezone.utc),
+                    }
+
+                now = datetime.now(timezone.utc)
+                for bucket_key in [user_bucket_key, guild_bucket_key]:
+                    bucket = self.url_cache[bucket_key]
+                    if (now - bucket["last_reset"]).total_seconds() >= 60:
+                        bucket["requests"] = 0
+                        bucket["tokens"] = 0
+                        bucket["last_reset"] = now
+
+                if (
+                    self.url_cache[user_bucket_key]["requests"] >= model_config["rpm"]
+                    or self.url_cache[guild_bucket_key]["requests"]
+                    >= model_config["rpm"]
+                ):
+                    continue
+
+                try:
+                    async with asyncio.timeout(60):
+                        self.model_params["model"] = model
+
+                        if image_attachments:
+                            completion = await self.client.chat.completions.create(
+                                messages=self.AI_VISION_MODERATION_PROMPT
+                                + [
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": (
+                                                    user_message
+                                                    if isinstance(user_message, str)
+                                                    else orjson.dumps(user_message)
+                                                ),
+                                            },
+                                            {
+                                                "type": "image_url",
+                                                "image_url": {
+                                                    "url": image_attachments[0].url
+                                                },
+                                            },
+                                        ],
+                                    }
+                                ],
+                                **self.model_params,
+                            )
+                        else:
+                            completion = await self.client.chat.completions.create(
+                                messages=self.AI_TEXT_MODERATION_PROMPT
+                                + [
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            user_message
+                                            if isinstance(user_message, str)
+                                            else orjson.dumps(user_message)
+                                        ),
+                                    }
+                                ],
+                                **self.model_params,
+                            )
+
+                        for bucket_key in [user_bucket_key, guild_bucket_key]:
+                            self.url_cache[bucket_key]["requests"] += (
+                                1 if not image_attachments else 2
+                            )
+                            self.url_cache[bucket_key][
+                                "tokens"
+                            ] += completion.usage.total_tokens
+
+                        break
+
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    logger.error(f"Error with model {model}: {e}")
+                    continue
+            else:
+                logger.error(f"AI analysis failed for message {referenced_message.id}")
+                await message.channel.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="Error",
+                            description="AI service request failed. Please try again later.",
+                            color=EmbedColor.ERROR,
+                        )
+                    ],
+                    delete_after=5,
+                )
+                return None
+
+            response_content = completion.choices[0].message.content.strip()
+            try:
+                response_json = orjson.loads(response_content)
+                severity_score = str(response_json.get("severity_score", "N/A"))
+                key_concerns = response_json.get("key_concerns", [])
+                if not key_concerns:
+                    key_concerns = [
+                        {
+                            "type": "No specific concerns",
+                            "evidence": "N/A",
+                            "impact": "N/A",
+                        }
+                    ]
+                for concern in key_concerns:
+                    concern["type"] = " ".join(
+                        word.capitalize() for word in concern["type"].split("_")
+                    )
+                risk_assessment = response_json.get(
+                    "reasoning", "No risk assessment provided"
+                )
+            except Exception as e:
+                logger.error(f"Error parsing AI response JSON: {e}")
+                severity_score = "N/A"
+                key_concerns = [
+                    {"type": "No specific concerns", "evidence": "N/A", "impact": "N/A"}
+                ]
+                risk_assessment = "No risk assessment provided"
+
+            concerns_text = []
+            for concern in key_concerns:
+                concerns_text.append(f'    - {concern["type"]}')
+                concerns_text.append(f'        - Evidence: {concern["evidence"]}')
+                concerns_text.append(f'        - Impact: {concern["impact"]}')
+
+            formatted_response = f"""
+1. Severity Score: {severity_score}
+2. Key Concerns:
+{chr(10).join(concerns_text)}
+3. Risk Assessment: {risk_assessment}
+"""
+
+            ai_response = "\n".join(
+                line for line in formatted_response.splitlines() if line.strip()
+            )
+
+            score = next(
+                (
+                    int(m.group(1))
+                    for m in [re.search(r"Severity Score:\s*(\d+)", ai_response)]
+                    if m
+                ),
+                0,
+            )
+
+            if score >= 8 and not referenced_message.author.bot:
+                self.model.record_violation(post.id)
+                self.model.record_message(post.id)
+
+                timeout_duration = self.model.calculate_timeout_duration(
+                    str(referenced_message.author.id)
+                )
+                await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
+                await self.model.adjust_timeout_cfg()
+
+                if score >= 9:
+                    multiplier = 3 if score >= 10 else 2
+                    timeout_duration = min(int(timeout_duration * multiplier), 3600)
+
+                    try:
+                        deny_perms = [
+                            interactions.Permissions.SEND_MESSAGES,
+                            interactions.Permissions.SEND_MESSAGES_IN_THREADS,
+                            interactions.Permissions.SEND_TTS_MESSAGES,
+                            interactions.Permissions.SEND_VOICE_MESSAGES,
+                            interactions.Permissions.ADD_REACTIONS,
+                            interactions.Permissions.ATTACH_FILES,
+                            interactions.Permissions.CREATE_INSTANT_INVITE,
+                            interactions.Permissions.MENTION_EVERYONE,
+                            interactions.Permissions.MANAGE_MESSAGES,
+                            interactions.Permissions.MANAGE_THREADS,
+                            interactions.Permissions.MANAGE_CHANNELS,
+                        ]
+                        forum_perms = [
+                            interactions.Permissions.CREATE_POSTS,
+                            *deny_perms,
+                        ]
+                        target_channel = getattr(post, "parent_channel", post)
+
+                        try:
+                            if hasattr(target_channel, "parent_channel"):
+                                target_channel = target_channel.parent_channel
+                                perms = forum_perms
+                            else:
+                                perms = deny_perms
+
+                            severity = (
+                                "extreme violation"
+                                if score >= 10
+                                else "critical violation"
+                            )
+                            await target_channel.add_permission(
+                                referenced_message.author,
+                                deny=perms,
+                                reason=f"AI detected {severity} - {timeout_duration}s timeout",
+                            )
+
+                            user_data = self.model.timeout_history.get(
+                                str(referenced_message.author.id), {}
+                            )
+                            violation_count = user_data.get("violation_count", 0)
+
+                            if violation_count >= 3:
+                                global_timeout_duration = min(
+                                    timeout_duration * 2, 3600
+                                )
+                                timeout_until = datetime.now(timezone.utc) + timedelta(
+                                    seconds=global_timeout_duration
+                                )
+
+                                try:
+                                    await referenced_message.author.timeout(
+                                        communication_disabled_until=timeout_until,
+                                        reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Failed to apply global timeout: {e}")
+
+                            logger.info(
+                                f"Successfully applied permissions for user {referenced_message.author.id}"
+                            )
+
+                        except Forbidden:
+                            logger.error(
+                                f"Permission denied when trying to timeout user {referenced_message.author.id}"
+                            )
+                            await message.channel.send(
+                                embeds=[
+                                    await self.create_embed(
+                                        title="Error",
+                                        description="The bot needs to have enough permissions.",
+                                        color=EmbedColor.ERROR,
+                                    )
+                                ],
+                                delete_after=5,
+                            )
+                            return None
+
+                        asyncio.create_task(
+                            self.restore_permissions(
+                                target_channel,
+                                referenced_message.author,
+                                timeout_duration // 60,
+                            )
+                        )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to apply timeout for user {referenced_message.author.id}: {e}",
+                            exc_info=True,
+                        )
+                        await message.channel.send(
+                            embeds=[
+                                await self.create_embed(
+                                    title="Error",
+                                    description=f"Failed to apply timeout to {referenced_message.author.mention}",
+                                    color=EmbedColor.ERROR,
+                                )
+                            ],
+                            delete_after=5,
+                        )
+                        return None
+                else:
+                    warning_message = "Content warning issued for potentially inappropriate content (Score: 8)"
+                    try:
+                        await referenced_message.author.send(warning_message)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to send DM to user {referenced_message.author.id}: {e}"
+                        )
+
+            embed = await self.create_embed(
+                title="AI Content Check Result",
+                description=(
+                    f"The AI detected potentially offensive content:\n{ai_response}\n"
+                    + (
+                        f"User <@{referenced_message.author.id}> has been temporarily muted for {timeout_duration} seconds."
+                        + (
+                            f" and globally muted for {global_timeout_duration} seconds."
+                            if "global_timeout_duration" in locals()
+                            else ""
+                        )
+                        if score >= 9
+                        else (
+                            "Content has been flagged for review."
+                            if score >= 5
+                            else "No serious violations detected."
+                        )
+                    )
+                ),
+                color=(
+                    EmbedColor.FATAL
+                    if score >= 9
+                    else EmbedColor.WARN if score >= 5 else EmbedColor.INFO
+                ),
+            )
+
+            if score >= 5:
+                msg_link = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{referenced_message.id}"
+                embed.add_field(
+                    name="Message", value=f"[Link]({msg_link})", inline=True
+                )
+                embed.add_field(name="Model", value=model, inline=True)
+
+            await message.channel.send(embed=embed, ephemeral=score < 9)
+
+            return ActionDetails(
+                action=ActionType.EDIT,
+                reason=f"AI content check performed by {message.author.mention}",
+                post_name=post.name,
+                actor=message.author,
+                channel=post if isinstance(post, interactions.ThreadChannel) else None,
+                target=referenced_message.author,
+                additional_info={
+                    "checked_message_id": str(referenced_message.id),
+                    "checked_message_content": (
+                        referenced_message.content[:1000]
+                        if referenced_message.content
+                        else "N/A"
+                    ),
+                    "ai_result": f"\n{ai_response}",
+                    "is_offensive": score >= 9,
+                    "timeout_duration": timeout_duration if score >= 9 else "N/A",
+                    "global_timeout_duration": (
+                        global_timeout_duration
+                        if "global_timeout_duration" in locals()
+                        else "N/A"
+                    ),
+                    "model_used": f"`{model}` ({completion.usage.total_tokens} tokens)",
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error in perform_ai_check: {e}", exc_info=True)
+            await message.channel.send(
+                embeds=[
+                    await self.create_embed(
+                        title="Error",
+                        description="An error occurred while processing the AI check.",
+                        color=EmbedColor.ERROR,
+                    )
+                ],
+                delete_after=5,
+            )
+            return None
 
     # Link methods
 
@@ -4447,34 +5012,25 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.warning(f"Failed to send warning DM to {user.mention}: {e}")
 
-    @contextlib.asynccontextmanager
-    async def create_temp_webhook(
-        self,
-        channel: Union[interactions.GuildText, interactions.ThreadChannel],
-        name: str,
-    ) -> AsyncGenerator[interactions.Webhook, None]:
-        webhook: interactions.Webhook = await channel.create_webhook(name=name)
+    @staticmethod
+    async def replace_message(
+        event: MessageCreate,
+        new_content: str,
+    ) -> None:
+        webhook: interactions.Webhook = await event.message.channel.create_webhook(
+            name="Link Webhook"
+        )
         try:
-            yield webhook
+            await webhook.send(
+                content=new_content,
+                username=event.message.author.display_name,
+                avatar_url=event.message.author.avatar_url,
+                thread=event.message.channel.id,
+            )
+            await event.message.delete()
         finally:
             with contextlib.suppress(Exception):
                 await webhook.delete()
-
-    async def replace_message(self, event: MessageCreate, new_content: str) -> None:
-        channel: Union[interactions.GuildText, interactions.ThreadChannel] = (
-            event.message.channel
-        )
-        async with self.create_temp_webhook(channel, "Temp Webhook") as webhook:
-            try:
-                await webhook.send(
-                    content=new_content,
-                    username=event.message.author.display_name,
-                    avatar_url=event.message.author.avatar_url,
-                )
-                await event.message.delete()
-            except Exception as e:
-                logger.exception(f"Failed to replace message: {str(e)}")
-                raise
 
     @functools.lru_cache(maxsize=1024)
     def sanitize_url(
