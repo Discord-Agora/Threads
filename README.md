@@ -192,3 +192,31 @@ The module uses several JSON files for data storage:
      - Primary: `llama-3.2-90b-vision-preview`
      - Secondary: `llama-3.2-11b-vision-preview`
      - Fallback: `llama-3.1-70b-versatile`
+
+5. Starboard
+   - Threshold:
+     - Dynamic threshold (5-15 stars)
+     - Adjusts based on:
+       - Activity score (hourly/daily/weekly stars)
+       - Time factors (peak hours multiplier)
+       - Quality score (starboard/total ratio)
+     - Weighted scoring:
+       - Activity weight: 30%
+       - Time weight: 20%
+       - Quality weight: 50%
+   - Statistics Tracking:
+     - Hourly stats (24-hour window)
+     - Daily stats (7-day window)
+     - Weekly stats (4-week window)
+     - Threshold history (last 100 adjustments)
+   - Adjustment Factors:
+     - Growth: 5% increase when score > 1.0
+     - Decay: 5% decrease when score < 1.0
+     - Time-based multipliers:
+       - 0:00-6:00: 0.8x
+       - 6:00-12:00: 1.1x
+       - 12:00-18:00: 1.2x
+       - 18:00-24:00: 1.0x
+   - System Constraints:
+     - Self-star prevention
+     - Duplicate entry prevention
