@@ -150,7 +150,7 @@ class Model:
         self.groq_api_key: Optional[str] = None
         self.starred_messages: Dict[str, int] = {}
         self.starboard_messages: Dict[str, str] = {}
-        self.star_threshold: int = 1
+        self.star_threshold: int = 5
         self.star_stats: Dict[str, Dict[str, Any]] = {
             "hourly": {"stats": defaultdict(int)},
             "daily": {"stats": defaultdict(int)},
@@ -159,7 +159,7 @@ class Model:
             "threshold_history": {"history": []},
         }
         self.star_config: Dict[str, Union[int, float]] = {
-            "min_threshold": 3,
+            "min_threshold": 5,
             "max_threshold": 15,
             "adjustment_interval": 3600,
             "decay_factor": 0.95,
@@ -4079,9 +4079,20 @@ class Threads(interactions.Extension):
             current_week = current_day - timedelta(days=current_day.weekday())
 
             stats = self.model.star_stats
-            stats["hourly"]["stats"][current_hour.isoformat()] += 1
-            stats["daily"]["stats"][current_day.isoformat()] += 1
-            stats["weekly"]["stats"][current_week.isoformat()] += 1
+            current_hour_iso = current_hour.isoformat()
+            current_day_iso = current_day.isoformat()
+            current_week_iso = current_week.isoformat()
+
+            if current_hour_iso not in stats["hourly"]["stats"]:
+                stats["hourly"]["stats"][current_hour_iso] = 0
+            if current_day_iso not in stats["daily"]["stats"]:
+                stats["daily"]["stats"][current_day_iso] = 0
+            if current_week_iso not in stats["weekly"]["stats"]:
+                stats["weekly"]["stats"][current_week_iso] = 0
+
+            stats["hourly"]["stats"][current_hour_iso] += 1
+            stats["daily"]["stats"][current_day_iso] += 1
+            stats["weekly"]["stats"][current_week_iso] += 1
 
             await self.model.adjust_star_threshold()
 
