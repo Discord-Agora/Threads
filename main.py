@@ -4419,21 +4419,15 @@ class Threads(interactions.Extension):
                 embed.set_image(url=message.attachments[0].url)
 
             embed.set_author(
-                name=message.author.display_name, icon_url=message.author.avatar_url
+                name=message.author.display_name,
+                icon_url=message.author.avatar.url if message.author.avatar else None,
             )
 
-            starboard_channel = await self.bot.fetch_channel(self.STARBOARD_POST_ID)
+            starboard_channel = await self.bot.fetch_channel(self.STARBOARD_FORUM_ID)
+            starboard = await self.bot.fetch_channel(self.STARBOARD_POST_ID)
             webhook = await starboard_channel.create_webhook(name="Starboard Webhook")
             try:
-                await webhook.send(
-                    content=f"# {message.content}",
-                    username=message.author.display_name,
-                    avatar_url=message.author.avatar_url,
-                    thread_id=message.channel.id,
-                    embeds=[embed],
-                    wait=True,
-                )
-                starboard_message = await starboard_channel.send(
+                starboard_message = await starboard.send(
                     embeds=[embed],
                     wait=True,
                 )
@@ -4442,6 +4436,16 @@ class Threads(interactions.Extension):
                         starboard_message.id
                     )
                     await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
+
+                    await webhook.send(
+                        content=f"# {message.content}",
+                        username=message.author.display_name,
+                        avatar_url=(
+                            message.author.avatar.url if message.author.avatar else None
+                        ),
+                        thread=starboard.id,
+                        wait=True,
+                    )
             except Exception as e:
                 logger.exception(f"Failed to send message: {str(e)}")
             finally:
@@ -5290,20 +5294,31 @@ class Threads(interactions.Extension):
         event: MessageCreate,
         new_content: str,
     ) -> None:
-        webhook: interactions.Webhook = await event.message.channel.create_webhook(
-            name="Link Webhook"
-        )
+        channel = event.message.channel
+        webhook = None
+        thread_id = None
+
         try:
+            if isinstance(channel, interactions.ThreadChannel):
+                webhook = await channel.parent_channel.create_webhook(
+                    name="Link Webhook"
+                )
+                thread_id = channel.id
+            else:
+                webhook = await channel.create_webhook(name="Link Webhook")
+
             await webhook.send(
                 content=new_content,
                 username=event.message.author.display_name,
                 avatar_url=event.message.author.avatar_url,
-                thread=event.message.channel.id,
+                thread=thread_id,
             )
             await event.message.delete()
+
         finally:
-            with contextlib.suppress(Exception):
-                await webhook.delete()
+            if webhook:
+                with contextlib.suppress(Exception):
+                    await webhook.delete()
 
     @functools.lru_cache(maxsize=1024)
     def sanitize_url(
