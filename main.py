@@ -296,9 +296,7 @@ class Model:
             self.star_stats["last_adjustment"]["timestamp"] = current_time
 
             logger.info(
-                f"Star threshold adjusted to {self.star_threshold} "
-                f"(Activity: {activity_score:.2f}, Time: {time_factor:.2f}, "
-                f"Quality: {quality_score:.2f}, Final: {final_score:.2f})"
+                f"Star threshold adjusted to {self.star_threshold} (Activity: {activity_score:.2f}, Time: {time_factor:.2f}, Quality: {quality_score:.2f}, Final: {final_score:.2f})"
             )
 
         except Exception as e:
@@ -765,6 +763,7 @@ class Threads(interactions.Extension):
         self.phishing_domains: Dict[str, Dict[str, Any]] = {}
         self.phishing_cache_duration = timedelta(hours=24)
         self.message_count_threshold: int = 200
+        self.star_threshold: int = 3
         self.rotation_interval: timedelta = timedelta(hours=23)
         self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
         self.last_log_key: Optional[str] = None
@@ -4395,7 +4394,7 @@ class Threads(interactions.Extension):
             await self.model.adjust_star_threshold()
 
             if (
-                star_count >= self.model.star_threshold
+                star_count >= self.star_threshold
                 and message_id not in self.model.starboard_messages
             ):
                 await self.add_to_starboard(message)
@@ -4421,7 +4420,7 @@ class Threads(interactions.Extension):
             self.model.starred_messages[message_id] = star_count
 
             if (
-                star_count < self.model.star_threshold
+                star_count < self.star_threshold
                 and message_id in self.model.starboard_messages
             ):
                 await self.remove_from_starboard(message_id)
