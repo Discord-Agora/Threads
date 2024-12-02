@@ -150,7 +150,7 @@ class Model:
         self.groq_api_key: Optional[str] = None
         self.starred_messages: Dict[str, int] = {}
         self.starboard_messages: Dict[str, str] = {}
-        self.star_threshold: int = 5
+        self.star_threshold: int = 3
         self.star_stats: Dict[str, Dict[str, Any]] = {
             "hourly": {"stats": defaultdict(int)},
             "daily": {"stats": defaultdict(int)},
@@ -159,7 +159,7 @@ class Model:
             "threshold_history": {"history": []},
         }
         self.star_config: Dict[str, Union[int, float]] = {
-            "min_threshold": 5,
+            "min_threshold": 3,
             "max_threshold": 10,
             "adjustment_interval": 3600,
             "decay_factor": 0.95,
