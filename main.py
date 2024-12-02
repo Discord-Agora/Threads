@@ -171,18 +171,21 @@ class Model:
 
     async def adjust_star_threshold(self) -> None:
         current_time = datetime.now(timezone.utc)
+        last_adjustment = self.star_stats["last_adjustment"]["timestamp"]
 
-        logger.debug(
-            f"Last adjustment: {self.star_stats['last_adjustment']['timestamp']}"
-        )
+        if isinstance(last_adjustment, str):
+            last_adjustment = datetime.fromisoformat(last_adjustment)
+            self.star_stats["last_adjustment"]["timestamp"] = last_adjustment
+
+        logger.debug(f"Last adjustment: {last_adjustment}")
         logger.debug(f"Current time: {current_time}")
         logger.debug(
-            f"Time difference: {(current_time - self.star_stats['last_adjustment']['timestamp']).total_seconds()}"
+            f"Time difference: {(current_time - last_adjustment).total_seconds()}"
         )
 
-        if (
-            current_time - self.star_stats["last_adjustment"]["timestamp"]
-        ).total_seconds() < self.star_config["adjustment_interval"]:
+        if (current_time - last_adjustment).total_seconds() < self.star_config[
+            "adjustment_interval"
+        ]:
             logger.debug(
                 "Skipping star threshold adjustment - too soon since last adjustment"
             )
@@ -374,16 +377,14 @@ class Model:
         except Exception as e:
             logger.error(f"Error loading starred messages: {e}", exc_info=True)
 
-    async def save_starred_messages(
-        self, file_path: str
-    ) -> None:
+    async def save_starred_messages(self, file_path: str) -> None:
         try:
             data = {
                 "starred_messages": self.starred_messages,
                 "starboard_messages": self.starboard_messages,
                 "star_stats": self.star_stats,
                 "star_threshold": self.star_threshold,
-                "star_config": self.star_config
+                "star_config": self.star_config,
             }
             json_data = orjson.dumps(
                 data,
@@ -393,7 +394,9 @@ class Model:
                 await file.write(json_data)
             logger.info("Successfully saved starred messages and related data")
         except Exception as e:
-            logger.error(f"Error saving starred messages and related data: {e}", exc_info=True)
+            logger.error(
+                f"Error saving starred messages and related data: {e}", exc_info=True
+            )
 
     async def load_timeout_history(self, file_path: str) -> None:
         try:
@@ -1203,7 +1206,7 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Unexpected error pinning new post: {e}", exc_info=True)
 
-    async def update_featured_posts_rotation(self) -> None:
+    async def update_posts_rotation(self) -> None:
         forum_ids: Sequence[int] = tuple(self.FEATURED_CHANNELS)
 
         top_posts: list[Optional[str]] = []
@@ -1248,7 +1251,9 @@ class Threads(interactions.Extension):
 
         for forum_id, new_post_id in updates:
             forum_id_str = str(forum_id)
-            if forum_id_str not in self.model.featured_posts:
+            if forum_id_str not in self.model.featured_posts or isinstance(
+                self.model.featured_posts[forum_id_str], str
+            ):
                 self.model.featured_posts[forum_id_str] = []
 
             if new_post_id not in self.model.featured_posts[forum_id_str]:
@@ -1304,7 +1309,7 @@ class Threads(interactions.Extension):
             )
             return None
 
-    async def adjust_thresholds(self) -> None:
+    async def adjust_posts_thresholds(self) -> None:
         current_time: datetime = datetime.now(timezone.utc)
         post_stats = tuple(self.model.post_stats.values())
 
@@ -4317,8 +4322,8 @@ class Threads(interactions.Extension):
         try:
             while True:
                 try:
-                    await self.adjust_thresholds()
-                    await self.update_featured_posts_rotation()
+                    await self.adjust_posts_thresholds()
+                    await self.update_posts_rotation()
                 except Exception as e:
                     logger.error(
                         f"Error in rotating selected posts: {e}", exc_info=True
@@ -4346,23 +4351,36 @@ class Threads(interactions.Extension):
                 return
 
             message_id = str(message.id)
-            star_count = sum(r.emoji.name in self.STAR_EMOJIS for r in message.reactions)
+            star_count = sum(
+                r.emoji.name in self.STAR_EMOJIS for r in message.reactions
+            )
             self.model.starred_messages[message_id] = star_count
 
             now = datetime.now(timezone.utc)
             hour = now.replace(minute=0, second=0, microsecond=0).isoformat()
             day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-            week = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            week = (
+                (now - timedelta(days=now.weekday()))
+                .replace(hour=0, minute=0, second=0, microsecond=0)
+                .isoformat()
+            )
 
             stats = self.model.star_stats
-            for period, timestamp in [("hourly", hour), ("daily", day), ("weekly", week)]:
+            for period, timestamp in [
+                ("hourly", hour),
+                ("daily", day),
+                ("weekly", week),
+            ]:
                 if timestamp not in stats[period]["stats"]:
                     stats[period]["stats"][timestamp] = 0
                 stats[period]["stats"][timestamp] += 1
 
             await self.model.adjust_star_threshold()
 
-            if star_count >= self.model.star_threshold and message_id not in self.model.starboard_messages:
+            if (
+                star_count >= self.model.star_threshold
+                and message_id not in self.model.starboard_messages
+            ):
                 await self.add_to_starboard(message)
 
             await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
@@ -4370,7 +4388,7 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error processing reaction add: {e}", exc_info=True)
 
-    @interactions.listen(MessageReactionRemove) 
+    @interactions.listen(MessageReactionRemove)
     async def on_reaction_remove(self, event: MessageReactionRemove) -> None:
         if not (event.emoji.name in self.STAR_EMOJIS and event.message.id):
             return
@@ -4380,10 +4398,15 @@ class Threads(interactions.Extension):
             message = await channel.fetch_message(event.message.id)
             message_id = str(message.id)
 
-            star_count = sum(r.emoji.name in self.STAR_EMOJIS for r in message.reactions)
+            star_count = sum(
+                r.emoji.name in self.STAR_EMOJIS for r in message.reactions
+            )
             self.model.starred_messages[message_id] = star_count
 
-            if star_count < self.model.star_threshold and message_id in self.model.starboard_messages:
+            if (
+                star_count < self.model.star_threshold
+                and message_id in self.model.starboard_messages
+            ):
                 await self.remove_from_starboard(message_id)
 
             await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
