@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from logging.handlers import RotatingFileHandler
@@ -110,7 +110,31 @@ class ActionDetails:
 @dataclass
 class PostStats:
     message_count: int = 0
-    last_activity: datetime = datetime.now(timezone.utc)
+    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self):
+        if isinstance(self.message_count, str):
+            self.message_count = int(self.message_count)
+
+        if isinstance(self.last_activity, str):
+            self.last_activity = datetime.fromisoformat(self.last_activity)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "message_count": self.message_count,
+            "last_activity": self.last_activity.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PostStats":
+        return cls(
+            message_count=int(data.get("message_count", 0)),
+            last_activity=(
+                datetime.fromisoformat(data["last_activity"])
+                if isinstance(data.get("last_activity"), str)
+                else data.get("last_activity", datetime.now(timezone.utc))
+            ),
+        )
 
 
 @dataclass
@@ -589,14 +613,11 @@ class Model:
                     {} if not content.strip() else orjson.loads(content)
                 )
 
-            self.post_stats = {
-                post_id: PostStats(
-                    message_count=data.get("message_count", 0),
-                    last_activity=datetime.fromisoformat(data["last_activity"]),
-                )
-                for post_id, data in loaded_data.items()
-            }
-            logger.info(f"Successfully loaded post stats from {file_path}")
+                self.post_stats = {
+                    post_id: PostStats.from_dict(data)
+                    for post_id, data in loaded_data.items()
+                }
+                logger.info(f"Successfully loaded post stats from {file_path}")
         except FileNotFoundError:
             logger.warning(
                 f"Thread stats file not found: {file_path}. Creating a new one"
@@ -611,12 +632,8 @@ class Model:
 
     async def save_post_stats(self, file_path: str) -> None:
         try:
-            serializable_stats: Dict[str, Dict[str, Any]] = {
-                post_id: {
-                    "message_count": stats.message_count,
-                    "last_activity": stats.last_activity.isoformat(),
-                }
-                for post_id, stats in self.post_stats.items()
+            serializable_stats = {
+                post_id: stats.to_dict() for post_id, stats in self.post_stats.items()
             }
             json_data: bytes = orjson.dumps(
                 serializable_stats,
