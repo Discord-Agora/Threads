@@ -160,7 +160,7 @@ class Model:
         }
         self.star_config: Dict[str, Union[int, float]] = {
             "min_threshold": 5,
-            "max_threshold": 15,
+            "max_threshold": 10,
             "adjustment_interval": 3600,
             "decay_factor": 0.95,
             "growth_factor": 1.05,
@@ -172,9 +172,20 @@ class Model:
     async def adjust_star_threshold(self) -> None:
         current_time = datetime.now(timezone.utc)
 
+        logger.debug(
+            f"Last adjustment: {self.star_stats['last_adjustment']['timestamp']}"
+        )
+        logger.debug(f"Current time: {current_time}")
+        logger.debug(
+            f"Time difference: {(current_time - self.star_stats['last_adjustment']['timestamp']).total_seconds()}"
+        )
+
         if (
             current_time - self.star_stats["last_adjustment"]["timestamp"]
         ).total_seconds() < self.star_config["adjustment_interval"]:
+            logger.debug(
+                "Skipping star threshold adjustment - too soon since last adjustment"
+            )
             return
 
         try:
@@ -351,6 +362,9 @@ class Model:
                 data = orjson.loads(content) if content.strip() else {}
                 self.starred_messages = data.get("starred_messages", {})
                 self.starboard_messages = data.get("starboard_messages", {})
+                self.star_stats = data.get("star_stats", self.star_stats)
+                self.star_threshold = data.get("star_threshold", self.star_threshold)
+                self.star_config = data.get("star_config", self.star_config)
             logger.info("Successfully loaded starred messages data")
         except FileNotFoundError:
             logger.warning(f"Starred messages file not found: {file_path}")
@@ -360,11 +374,16 @@ class Model:
         except Exception as e:
             logger.error(f"Error loading starred messages: {e}", exc_info=True)
 
-    async def save_starred_messages(self, file_path: str) -> None:
+    async def save_starred_messages(
+        self, file_path: str
+    ) -> None:
         try:
             data = {
                 "starred_messages": self.starred_messages,
                 "starboard_messages": self.starboard_messages,
+                "star_stats": self.star_stats,
+                "star_threshold": self.star_threshold,
+                "star_config": self.star_config
             }
             json_data = orjson.dumps(
                 data,
@@ -372,9 +391,9 @@ class Model:
             )
             async with aiofiles.open(file_path, mode="wb") as file:
                 await file.write(json_data)
-            logger.info("Successfully saved starred messages data")
+            logger.info("Successfully saved starred messages and related data")
         except Exception as e:
-            logger.error(f"Error saving starred messages: {e}", exc_info=True)
+            logger.error(f"Error saving starred messages and related data: {e}", exc_info=True)
 
     async def load_timeout_history(self, file_path: str) -> None:
         try:
@@ -4323,45 +4342,27 @@ class Threads(interactions.Extension):
 
         try:
             message = event.message
-
             if message.author.id == event.author.id:
                 return
 
             message_id = str(message.id)
-            star_reactions = sum(
-                r.emoji.name in self.STAR_EMOJIS for r in message.reactions
-            )
-            self.model.starred_messages[message_id] = star_reactions
+            star_count = sum(r.emoji.name in self.STAR_EMOJIS for r in message.reactions)
+            self.model.starred_messages[message_id] = star_count
 
-            current_time = datetime.now(timezone.utc)
-            current_hour = current_time.replace(minute=0, second=0, microsecond=0)
-            current_day = current_time.replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            current_week = current_day - timedelta(days=current_day.weekday())
+            now = datetime.now(timezone.utc)
+            hour = now.replace(minute=0, second=0, microsecond=0).isoformat()
+            day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            week = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
             stats = self.model.star_stats
-            current_hour_iso = current_hour.isoformat()
-            current_day_iso = current_day.isoformat()
-            current_week_iso = current_week.isoformat()
-
-            if current_hour_iso not in stats["hourly"]["stats"]:
-                stats["hourly"]["stats"][current_hour_iso] = 0
-            if current_day_iso not in stats["daily"]["stats"]:
-                stats["daily"]["stats"][current_day_iso] = 0
-            if current_week_iso not in stats["weekly"]["stats"]:
-                stats["weekly"]["stats"][current_week_iso] = 0
-
-            stats["hourly"]["stats"][current_hour_iso] += 1
-            stats["daily"]["stats"][current_day_iso] += 1
-            stats["weekly"]["stats"][current_week_iso] += 1
+            for period, timestamp in [("hourly", hour), ("daily", day), ("weekly", week)]:
+                if timestamp not in stats[period]["stats"]:
+                    stats[period]["stats"][timestamp] = 0
+                stats[period]["stats"][timestamp] += 1
 
             await self.model.adjust_star_threshold()
 
-            if (
-                star_reactions >= self.model.star_threshold
-                and message_id not in self.model.starboard_messages
-            ):
+            if star_count >= self.model.star_threshold and message_id not in self.model.starboard_messages:
                 await self.add_to_starboard(message)
 
             await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
@@ -4369,7 +4370,7 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error processing reaction add: {e}", exc_info=True)
 
-    @interactions.listen(MessageReactionRemove)
+    @interactions.listen(MessageReactionRemove) 
     async def on_reaction_remove(self, event: MessageReactionRemove) -> None:
         if not (event.emoji.name in self.STAR_EMOJIS and event.message.id):
             return
@@ -4379,15 +4380,10 @@ class Threads(interactions.Extension):
             message = await channel.fetch_message(event.message.id)
             message_id = str(message.id)
 
-            star_reactions = sum(
-                r.emoji.name in self.STAR_EMOJIS for r in message.reactions
-            )
-            self.model.starred_messages[message_id] = star_reactions
+            star_count = sum(r.emoji.name in self.STAR_EMOJIS for r in message.reactions)
+            self.model.starred_messages[message_id] = star_count
 
-            if (
-                star_reactions < self.model.star_threshold
-                and message_id in self.model.starboard_messages
-            ):
+            if star_count < self.model.star_threshold and message_id in self.model.starboard_messages:
                 await self.remove_from_starboard(message_id)
 
             await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
