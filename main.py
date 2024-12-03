@@ -1701,42 +1701,114 @@ class Threads(interactions.Extension):
     # Base commands
 
     module_base: interactions.SlashCommand = interactions.SlashCommand(
-        name="threads", description="Threads commands"
+        name=interactions.LocalisedName(
+            default_locale="english_us",
+            english_us="threads",
+            chinese_china="子区",
+            chinese_taiwan="討論串",
+        ),
+        description=interactions.LocalisedDesc(
+            default_locale="english_us",
+            english_us="Threads commands",
+            chinese_china="子区命令",
+            chinese_taiwan="討論串命令",
+        ),
     )
 
     # Debug commands
 
     module_group_debug: interactions.SlashCommand = module_base.group(
-        name="debug", description="Debug commands"
+        name=interactions.LocalisedName(
+            default_locale="english_us",
+            english_us="debug",
+            chinese_china="调试",
+            chinese_taiwan="除錯",
+        ),
+        description=interactions.LocalisedDesc(
+            default_locale="english_us",
+            english_us="Debug commands",
+            chinese_china="调试命令",
+            chinese_taiwan="除錯命令",
+        ),
     )
 
     @module_group_debug.subcommand(
-        "config", sub_cmd_description="Manage configuration files"
-    )
-    @interactions.slash_option(
-        name="file",
-        description="Configuration file to manage",
-        required=True,
-        opt_type=interactions.OptionType.STRING,
-        autocomplete=True,
-    )
-    @interactions.slash_option(
-        name="major",
-        description="Major section to modify",
-        required=True,
-        opt_type=interactions.OptionType.STRING,
-        autocomplete=True,
-    )
-    @interactions.slash_option(
-        name="minor",
-        description="Minor section to modify (leave empty to delete major section)",
-        opt_type=interactions.OptionType.STRING,
-        autocomplete=True,
-    )
-    @interactions.slash_option(
-        name="value",
-        description="New value for minor section (ignored if minor is empty)",
-        opt_type=interactions.OptionType.STRING,
+        "config",
+        sub_cmd_description=interactions.LocalisedDesc(
+            default_locale="english_us",
+            english_us="Manage configuration files",
+            chinese_china="管理配置文件",
+            chinese_taiwan="管理配置檔案",
+        ),
+        options=[
+            interactions.SlashCommandOption(
+                name=interactions.LocalisedName(
+                    default_locale="english_us",
+                    english_us="file",
+                    chinese_china="文件",
+                    chinese_taiwan="檔案",
+                ),
+                description=interactions.LocalisedDesc(
+                    default_locale="english_us",
+                    english_us="Configuration file to manage",
+                    chinese_china="要管理的配置文件",
+                    chinese_taiwan="要管理的配置檔案",
+                ),
+                required=True,
+                type=interactions.OptionType.STRING,
+                autocomplete=True,
+            ),
+            interactions.SlashCommandOption(
+                name=interactions.LocalisedName(
+                    default_locale="english_us",
+                    english_us="major",
+                    chinese_china="主要部分",
+                    chinese_taiwan="主要部分",
+                ),
+                description=interactions.LocalisedDesc(
+                    default_locale="english_us",
+                    english_us="Major section to modify",
+                    chinese_china="要修改的主要部分",
+                    chinese_taiwan="要修改的主要部分",
+                ),
+                required=True,
+                type=interactions.OptionType.STRING,
+                autocomplete=True,
+            ),
+            interactions.SlashCommandOption(
+                name=interactions.LocalisedName(
+                    default_locale="english_us",
+                    english_us="minor",
+                    chinese_china="次要部分",
+                    chinese_taiwan="次要部分",
+                ),
+                description=interactions.LocalisedDesc(
+                    default_locale="english_us",
+                    english_us="Minor section to modify (leave empty to delete major section)",
+                    chinese_china="要修改的次要部分（留空以删除主要部分）",
+                    chinese_taiwan="要修改的次要部分（留空以刪除主要部分）",
+                ),
+                required=False,
+                type=interactions.OptionType.STRING,
+                autocomplete=True,
+            ),
+            interactions.SlashCommandOption(
+                name=interactions.LocalisedName(
+                    default_locale="english_us",
+                    english_us="value",
+                    chinese_china="值",
+                    chinese_taiwan="值",
+                ),
+                description=interactions.LocalisedDesc(
+                    default_locale="english_us",
+                    english_us="New value for minor section (ignored if minor is empty)",
+                    chinese_china="次要部分的新值（如果次要部分为空则忽略）",
+                    chinese_taiwan="次要部分的新值（如果次要部分為空則忽略）",
+                ),
+                required=False,
+                type=interactions.OptionType.STRING,
+            ),
+        ],
     )
     @interactions.slash_default_member_permission(
         interactions.Permissions.ADMINISTRATOR
@@ -1749,11 +1821,18 @@ class Threads(interactions.Extension):
         minor: Optional[str] = None,
         value: Optional[str] = None,
     ) -> None:
+        locale = ctx.locale or "default"
+
         if not next(
             (True for r in ctx.author.roles if r.id == self.THREADS_ROLE_ID), False
         ):
+            error_messages = {
+                "default": "You do not have permission to use this command.",
+                "chinese_china": "您没有使用此命令的权限。",
+                "chinese_taiwan": "您沒有使用此命令的權限。",
+            }
             await self.send_error(
-                ctx, "You do not have permission to use this command."
+                ctx, error_messages.get(locale, error_messages["default"])
             )
             return
 
@@ -1768,7 +1847,14 @@ class Threads(interactions.Extension):
             }
 
             if file not in file_paths:
-                await self.send_error(ctx, f"Invalid file selection: {file}")
+                error_messages = {
+                    "default": f"Invalid file selection: {file}",
+                    "chinese_china": f"无效的文件选择：{file}",
+                    "chinese_taiwan": f"無效的檔案選擇：{file}",
+                }
+                await self.send_error(
+                    ctx, error_messages.get(locale, error_messages["default"])
+                )
                 return
 
             file_path = file_paths[file]
@@ -1782,12 +1868,22 @@ class Threads(interactions.Extension):
             if minor is None:
                 if value is None:
                     if major_str not in data:
+                        error_messages = {
+                            "default": f"Major section `{major}` not found in {file}",
+                            "chinese_china": f"在{file}中未找到主要部分 `{major}`",
+                            "chinese_taiwan": f"在{file}中未找到主要部分 `{major}`",
+                        }
                         await self.send_error(
-                            ctx, f"Major section `{major}` not found in {file}"
+                            ctx, error_messages.get(locale, error_messages["default"])
                         )
                         return
                     del data[major_str]
-                    action = f"Deleted major section `{major}`"
+                    action_messages = {
+                        "default": f"Deleted major section `{major}`",
+                        "chinese_china": f"已删除主要部分 `{major}`",
+                        "chinese_taiwan": f"已刪除主要部分 `{major}`",
+                    }
+                    action = action_messages.get(locale, action_messages["default"])
                 else:
                     try:
                         parsed_value = orjson.loads(value)
@@ -1796,50 +1892,91 @@ class Threads(interactions.Extension):
                         )
                     except orjson.JSONDecodeError:
                         data[major_str] = value
-                    action = f"Created major section `{major}`"
+                    action_messages = {
+                        "default": f"Created major section `{major}`",
+                        "chinese_china": f"已创建主要部分 `{major}`",
+                        "chinese_taiwan": f"已創建主要部分 `{major}`",
+                    }
+                    action = action_messages.get(locale, action_messages["default"])
             else:
                 if major_str not in data:
                     if not is_nested:
+                        error_messages = {
+                            "default": f"Cannot add minor section to non-nested structure in {file}",
+                            "chinese_china": f"无法在{file}的非嵌套结构中添加次要部分",
+                            "chinese_taiwan": f"無法在{file}的非嵌套結構中添加次要部分",
+                        }
                         await self.send_error(
-                            ctx,
-                            f"Cannot add minor section to non-nested structure in {file}",
+                            ctx, error_messages.get(locale, error_messages["default"])
                         )
                         return
                     data[major_str] = {}
 
                 major_data = data[major_str]
                 if not isinstance(major_data, dict):
+                    error_messages = {
+                        "default": f"Major section `{major}` does not support minor sections",
+                        "chinese_china": f"主要部分 `{major}` 不支持次要部分",
+                        "chinese_taiwan": f"主要部分 `{major}` 不支持次要部分",
+                    }
                     await self.send_error(
-                        ctx, f"Major section `{major}` does not support minor sections"
+                        ctx, error_messages.get(locale, error_messages["default"])
                     )
                     return
 
                 if value is None:
                     if minor not in major_data:
+                        error_messages = {
+                            "default": f"Minor section `{minor}` not found in `{major}`",
+                            "chinese_china": f"在 `{major}` 中未找到次要部分 `{minor}`",
+                            "chinese_taiwan": f"在 `{major}` 中未找到次要部分 `{minor}`",
+                        }
                         await self.send_error(
-                            ctx, f"Minor section `{minor}` not found in `{major}`"
+                            ctx, error_messages.get(locale, error_messages["default"])
                         )
                         return
                     del major_data[minor]
-                    action = f"Deleted minor section `{minor}` from `{major}`"
+                    action_messages = {
+                        "default": f"Deleted minor section `{minor}` from `{major}`",
+                        "chinese_china": f"已从 `{major}` 删除次要部分 `{minor}`",
+                        "chinese_taiwan": f"已從 `{major}` 刪除次要部分 `{minor}`",
+                    }
+                    action = action_messages.get(locale, action_messages["default"])
                 else:
                     try:
                         parsed = orjson.loads(value)
                         major_data[minor] = parsed
                     except orjson.JSONDecodeError:
                         major_data[minor] = value
-                    action = (
-                        f"Updated minor section `{minor}` in `{major}` to `{value}`"
-                    )
+                    action_messages = {
+                        "default": f"Updated minor section `{minor}` in `{major}` to `{value}`",
+                        "chinese_china": f"已更新 `{major}` 中的次要部分 `{minor}` 为 `{value}`",
+                        "chinese_taiwan": f"已更新 `{major}` 中的次要部分 `{minor}` 為 `{value}`",
+                    }
+                    action = action_messages.get(locale, action_messages["default"])
 
             await getattr(self.model, f"save_{file}")(file_path, data)
+            success_messages = {
+                "default": f"{action} in {file_path.rpartition('/')[-1]}",
+                "chinese_china": f"在 {file_path.rpartition('/')[-1]} 中{action}",
+                "chinese_taiwan": f"在 {file_path.rpartition('/')[-1]} 中{action}",
+            }
             await self.send_success(
-                ctx, f"{action} in {file_path.rpartition('/')[-1]}", log_to_channel=True
+                ctx,
+                success_messages.get(locale, success_messages["default"]),
+                log_to_channel=True,
             )
 
         except Exception as e:
             logger.error(f"Error managing config file: {e}", exc_info=True)
-            await self.send_error(ctx, f"Error managing config file: {str(e)}")
+            error_messages = {
+                "default": f"Error managing config file: {str(e)}",
+                "chinese_china": f"管理配置文件时出错：{str(e)}",
+                "chinese_taiwan": f"管理配置檔案時出錯：{str(e)}",
+            }
+            await self.send_error(
+                ctx, error_messages.get(locale, error_messages["default"])
+            )
 
     @debug_config.autocomplete("file")
     async def autocomplete_debug_config_file(
@@ -2083,6 +2220,7 @@ class Threads(interactions.Extension):
         opt_type=interactions.OptionType.STRING,
         argument_name="message_id",
     )
+    @interactions.max_concurrency(interactions.Buckets.MEMBER, 1)
     async def check_message(
         self, ctx: interactions.SlashContext, message_id: str
     ) -> None:
