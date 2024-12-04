@@ -914,29 +914,38 @@ class Threads(interactions.Extension):
                 Input:
                 Caller: <@123>
                 Author: <@456>
-                Note: Direct interaction history present.
+                Note: Direct interaction history present
                 History:
-                <@123><<<Can you stop harassing me?>>>
-                <@456>***You're pathetic and stupid***
-                <@789>+++Hey, calm down everyone+++
-                <@456>|||Nobody wants you here. Get out.|||
+                <@456>***你怎么讨厌他，你还想进去，你是抖M吗***
+                <@123><<<正常人见多了总怀念屎的>>>
+                <@456>***傻逼还有救吗，没救了吧***
+                <@789>+++牢飯不好吃的，滿口都是心酸，你們不要像我一樣喔+++
+                <@101>+++哎前几年我或许还能捞你出来，现在我也自身难保喽+++
+                <@456>|||最恶劣就是人菜瘾还大的傻逼|||
+                <@456>***你不是正常人，你是个玩cosplay上脑的傻逼***
+                <@456>***这就是我还没退群的唯一理由***
 
                 Output:
                 {
-                    "severity_score": 8,
+                    "severity_score": 9,
                     "key_concerns": [
                         {
                             "type": "sustained_harassment",
-                            "evidence": "Multiple hostile messages: 'pathetic and stupid', 'Nobody wants you here'",
-                            "impact": "Creates hostile environment through repeated personal attacks"
+                            "evidence": "Multiple hostile messages: `傻逼还有救吗`, `人菜瘾还大的傻逼`, `玩cosplay上脑的傻逼`",
+                            "impact": "Repeated use of derogatory language and personal attacks targeting the caller"
                         },
                         {
-                            "type": "targeted_exclusion",
-                            "evidence": "Get out",
-                            "impact": "Attempting to force caller to leave the community"
+                            "type": "targeted_mockery",
+                            "evidence": "`你怎么讨厌他，你还想进去，你是抖M吗`",
+                            "impact": "Mocking and belittling caller's interests and choices"
+                        },
+                        {
+                            "type": "hostile_behavior",
+                            "evidence": "`这就是我还没退群的唯一理由`",
+                            "impact": "Creating a hostile environment by expressing intent to continue harassment"
                         }
                     ],
-                    "reasoning": "Multiple instances of direct personal attacks, clear targeting pattern, explicit attempt to exclude the caller, and escalating hostile behavior after caller's request to stop"
+                    "reasoning": "The author demonstrates a pattern of targeted harassment through repeated insults (`傻逼`) and personal attacks. While the language is hostile, it remains below the threshold for severe threats. The messages show deliberate targeting but without explicit threats of violence or doxxing."
                 }""",
             },
         ]
@@ -1024,35 +1033,39 @@ class Threads(interactions.Extension):
                 "content": "I understand my role as Discord's AI Safety Guardian. I will carefully analyze both visual and textual interactions between the caller and author using the provided evaluation criteria and severity scale. I will pay special attention to images and their context while maintaining objectivity, focusing only on direct interactions, and providing detailed evidence-based assessments in the required JSON format.",
             },
             {
-                "role": "user",
+                "role": "user", 
                 "content": """Example Analysis:
                 Input Text:
                 Caller: <@123>
                 Author: <@456>
-                Note: Direct interaction history present.
+                Note: Direct interaction history present
                 History:
-                <@123><<<Can you stop harassing me?>>>
-                <@456>***You're pathetic and stupid***
-                <@789>+++Hey, calm down everyone+++
-                <@456>|||Nobody wants you here. Get out.|||
-                [Image URL provided]
+                <@123><<<請你不要再發這些血腥圖片了>>>
+                <@456>***我就是要發，你管得著嗎***
+                <@789>+++這樣下去不行，我們需要冷靜一下+++
+                <@456>|||你們這些人就是愛管閒事，我就是要發，你們能怎麼樣？|||
 
                 Output:
                 {
-                    "severity_score": 8,
+                    "severity_score": 10,
                     "key_concerns": [
                         {
-                            "type": "sustained_harassment",
-                            "evidence": "Multiple hostile messages: 'pathetic and stupid', 'Nobody wants you here' plus harassing image",
-                            "impact": "Creates hostile environment through repeated personal attacks and visual harassment"
+                            "type": "explicit_violence",
+                            "evidence": "Deliberately posting gore images targeting caller",
+                            "impact": "Causing severe psychological distress through graphic violent content"
                         },
                         {
-                            "type": "targeted_exclusion",
-                            "evidence": "Get out",
-                            "impact": "Attempting to force caller to leave the community"
+                            "type": "self_harm_encouragement", 
+                            "evidence": "Direct quote: `Kill yourself`",
+                            "impact": "Encouraging suicide/self-harm in response to caller's request to stop"
+                        },
+                        {
+                            "type": "targeted_harassment",
+                            "evidence": "Continued posting of disturbing content after being asked to stop",
+                            "impact": "Malicious pattern of causing distress despite clear objection"
                         }
                     ],
-                    "reasoning": "Multiple instances of direct personal attacks including text and image content, clear targeting pattern, explicit attempt to exclude the caller, and escalating hostile behavior after caller's request to stop"
+                    "reasoning": "Extreme severity due to combination of gore images, explicit encouragement of self-harm, and targeted harassment pattern. Clear intent to cause psychological harm after direct request to stop. Visual content compounds severity of textual threats."
                 }""",
             },
         ]
@@ -1733,7 +1746,12 @@ class Threads(interactions.Extension):
     )
 
     @module_group_debug.subcommand(
-        "config",
+        base=interactions.LocalisedName(
+            default_locale="english_us",
+            english_us="config",
+            chinese_china="配置",
+            chinese_taiwan="配置",
+        ),
         sub_cmd_description=interactions.LocalisedDesc(
             default_locale="english_us",
             english_us="Manage configuration files",
@@ -2055,11 +2073,32 @@ class Threads(interactions.Extension):
             await ctx.send([])
 
     @module_group_debug.subcommand(
-        "export", sub_cmd_description="Export files from the extension directory"
+        base=interactions.LocalisedName(
+            default_locale="english_us",
+            english_us="export",
+            chinese_china="导出",
+            chinese_taiwan="匯出",
+        ),
+        sub_cmd_description=interactions.LocalisedDesc(
+            default_locale="english_us",
+            english_us="Export files from the extension directory",
+            chinese_china="从扩展目录导出文件",
+            chinese_taiwan="從擴充目錄匯出檔案",
+        ),
     )
     @interactions.slash_option(
-        name="type",
-        description="Type of files to export",
+        name=interactions.LocalisedName(
+            default_locale="english_us",
+            english_us="type",
+            chinese_china="类型",
+            chinese_taiwan="類型",
+        ),
+        description=interactions.LocalisedDesc(
+            default_locale="english_us",
+            english_us="Type of files to export",
+            chinese_china="要导出的文件类型",
+            chinese_taiwan="要匯出的檔案類型",
+        ),
         required=True,
         opt_type=interactions.OptionType.STRING,
         autocomplete=True,
@@ -2073,13 +2112,26 @@ class Threads(interactions.Extension):
     ) -> None:
         await ctx.defer(ephemeral=True)
         filename: str = ""
+        locale = ctx.locale or "default"
 
         if not os.path.exists(BASE_DIR):
-            return await self.send_error(ctx, "Extension directory does not exist.")
+            error_messages = {
+                "default": "Extension directory does not exist.",
+                "chinese_china": "扩展目录不存在。",
+                "chinese_taiwan": "擴充目錄不存在。",
+            }
+            return await self.send_error(
+                ctx, error_messages.get(locale, error_messages["default"])
+            )
 
         if file_type != "all" and not os.path.isfile(os.path.join(BASE_DIR, file_type)):
+            error_messages = {
+                "default": f"File `{file_type}` does not exist in the extension directory.",
+                "chinese_china": f"文件 `{file_type}` 在扩展目录中不存在。",
+                "chinese_taiwan": f"檔案 `{file_type}` 在擴充目錄中不存在。",
+            }
             return await self.send_error(
-                ctx, f"File `{file_type}` does not exist in the extension directory."
+                ctx, error_messages.get(locale, error_messages["default"])
             )
 
         try:
@@ -2097,31 +2149,67 @@ class Threads(interactions.Extension):
                 )
 
             if not os.path.exists(filename):
-                return await self.send_error(ctx, "Failed to create archive file.")
+                error_messages = {
+                    "default": "Failed to create archive file.",
+                    "chinese_china": "创建归档文件失败。",
+                    "chinese_taiwan": "建立壓縮檔案失敗。",
+                }
+                return await self.send_error(
+                    ctx, error_messages.get(locale, error_messages["default"])
+                )
 
             file_size = os.path.getsize(filename)
             if file_size > 8_388_608:
+                error_messages = {
+                    "default": "Archive file is too large to send (>8MB).",
+                    "chinese_china": "归档文件太大，无法发送（>8MB）。",
+                    "chinese_taiwan": "壓縮檔案太大，無法發送（>8MB）。",
+                }
                 return await self.send_error(
-                    ctx, "Archive file is too large to send (>8MB)."
+                    ctx, error_messages.get(locale, error_messages["default"])
                 )
 
-            message = (
-                "All extension files attached."
-                if file_type == "all"
-                else f"File `{file_type}` attached."
-            )
+            success_messages = {
+                "default": (
+                    "All extension files attached."
+                    if file_type == "all"
+                    else f"File `{file_type}` attached."
+                ),
+                "chinese_china": (
+                    "已附加所有扩展文件。"
+                    if file_type == "all"
+                    else f"已附加文件 `{file_type}`。"
+                ),
+                "chinese_taiwan": (
+                    "已附加所有擴充檔案。"
+                    if file_type == "all"
+                    else f"已附加檔案 `{file_type}`。"
+                ),
+            }
             await ctx.send(
-                message,
+                success_messages.get(locale, success_messages["default"]),
                 files=[interactions.File(filename)],
             )
 
         except PermissionError:
             logger.error(f"Permission denied while exporting {file_type}")
-            await self.send_error(ctx, "Permission denied while accessing files.")
+            error_messages = {
+                "default": "Permission denied while accessing files.",
+                "chinese_china": "访问文件时权限被拒绝。",
+                "chinese_taiwan": "存取檔案時權限被拒絕。",
+            }
+            await self.send_error(
+                ctx, error_messages.get(locale, error_messages["default"])
+            )
         except Exception as e:
             logger.error(f"Error exporting {file_type}: {e}", exc_info=True)
+            error_messages = {
+                "default": f"An error occurred while exporting {file_type}: {str(e)}",
+                "chinese_china": f"导出 {file_type} 时发生错误：{str(e)}",
+                "chinese_taiwan": f"匯出 {file_type} 時發生錯誤：{str(e)}",
+            }
             await self.send_error(
-                ctx, f"An error occurred while exporting {file_type}: {str(e)}"
+                ctx, error_messages.get(locale, error_messages["default"])
             )
         finally:
             if filename and os.path.exists(filename):
@@ -2551,7 +2639,7 @@ class Threads(interactions.Extension):
             0,
         )
 
-        if score >= 8 and not message.author.bot:
+        if score >= 7 and not message.author.bot:
             self.model.record_violation(post.id)
             self.model.record_message(post.id)
 
@@ -2561,7 +2649,7 @@ class Threads(interactions.Extension):
             await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
             await self.model.adjust_timeout_cfg()
 
-            if score >= 9:
+            if score >= 8:
                 multiplier = 3 if score >= 10 else 2
                 timeout_duration = min(int(timeout_duration * multiplier), 3600)
 
@@ -2647,7 +2735,7 @@ class Threads(interactions.Extension):
                     )
                     return None
             else:
-                warning_message = "Content warning issued for potentially inappropriate content (Score: 8)"
+                warning_message = "Content warning issued for potentially inappropriate content (Score: 7)"
                 try:
                     await message.author.send(warning_message)
                 except Exception as e:
@@ -2664,7 +2752,7 @@ class Threads(interactions.Extension):
                         if "global_timeout_duration" in locals()
                         else ""
                     )
-                    if score >= 9
+                    if score >= 8
                     else (
                         "Content has been flagged for review."
                         if score >= 5
@@ -2674,7 +2762,7 @@ class Threads(interactions.Extension):
             ),
             color=(
                 EmbedColor.FATAL
-                if score >= 9
+                if score >= 8
                 else EmbedColor.WARN if score >= 5 else EmbedColor.INFO
             ),
         )
@@ -2684,7 +2772,7 @@ class Threads(interactions.Extension):
             embed.add_field(name="Message", value=f"[Link]({msg_link})", inline=True)
             embed.add_field(name="Model", value=model, inline=True)
 
-        await ctx.send(embed=embed, ephemeral=score < 9)
+        await ctx.send(embed=embed, ephemeral=score < 8)
 
         return ActionDetails(
             action=ActionType.EDIT,
@@ -2699,8 +2787,8 @@ class Threads(interactions.Extension):
                     message.content[:1000] if message.content else "N/A"
                 ),
                 "ai_result": f"\n{ai_response}",
-                "is_offensive": score >= 9,
-                "timeout_duration": timeout_duration if score >= 9 else "N/A",
+                "is_offensive": score >= 8,
+                "timeout_duration": timeout_duration if score >= 8 else "N/A",
                 "global_timeout_duration": (
                     global_timeout_duration
                     if "global_timeout_duration" in locals()
