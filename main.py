@@ -2083,21 +2083,21 @@ class Threads(interactions.Extension):
             default_locale="english_us",
             english_us="Export files from the extension directory",
             chinese_china="从扩展目录导出文件",
-            chinese_taiwan="從擴充目錄匯出檔案"
-        )
+            chinese_taiwan="從擴充目錄匯出檔案",
+        ),
     )
-    @module_group_debug.slash_option(
+    @interactions.slash_option(
         name=interactions.LocalisedName(
             default_locale="english_us",
             english_us="type",
             chinese_china="类型",
-            chinese_taiwan="類型"
+            chinese_taiwan="類型",
         ),
         description=interactions.LocalisedDesc(
-            default_locale="english_us", 
+            default_locale="english_us",
             english_us="Type of files to export",
             chinese_china="要导出的文件类型",
-            chinese_taiwan="要匯出的檔案類型"
+            chinese_taiwan="要匯出的檔案類型",
         ),
         required=True,
         opt_type=interactions.OptionType.STRING,
