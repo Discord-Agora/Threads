@@ -2276,7 +2276,7 @@ class Threads(interactions.Extension):
                 async with asyncio.timeout(10):
                     await client.chat.completions.create(
                         messages=messages,
-                        model="llama-3.1-70b-versatile",
+                        model="llama-3.1-8b-instant",
                         max_tokens=1,
                     )
                 valid = True
@@ -2462,29 +2462,45 @@ class Threads(interactions.Extension):
 
         user_message = "\n".join(messages)
 
-        models = [
-            {
-                "name": "llama-3.2-90b-vision-preview",
-                "rpm": 15,
-                "rpd": 3500,
-                "tpm": 7000,
-                "tpd": 250000,
-            },
-            {
-                "name": "llama-3.2-11b-vision-preview",
-                "rpm": 30,
-                "rpd": 7000,
-                "tpm": 7000,
-                "tpd": 500000,
-            },
-            {
-                "name": "llama-3.1-70b-versatile",
-                "rpm": 30,
-                "rpd": 14400,
-                "tpm": 6000,
-                "tpd": 200000,
-            },
-        ]
+        models = []
+        if not image_attachments:
+            models.extend(
+                [
+                    {
+                        "name": "llama-3.3-70b-specdec",
+                        "rpm": 30,
+                        "rpd": 1000,
+                        "tpm": 6000,
+                        "tpd": 250000,
+                    },
+                    {
+                        "name": "llama-3.3-70b-versatile",
+                        "rpm": 30,
+                        "rpd": 14400,
+                        "tpm": 6000,
+                        "tpd": 500000,
+                    },
+                ]
+            )
+
+        models.extend(
+            [
+                {
+                    "name": "llama-3.2-90b-vision-preview",
+                    "rpm": 15,
+                    "rpd": 3500,
+                    "tpm": 7000,
+                    "tpd": 250000,
+                },
+                {
+                    "name": "llama-3.2-11b-vision-preview",
+                    "rpm": 30,
+                    "rpd": 7000,
+                    "tpm": 7000,
+                    "tpd": 500000,
+                },
+            ]
+        )
 
         completion = None
         for model_config in models:
@@ -4994,29 +5010,45 @@ class Threads(interactions.Extension):
 
             user_message = "\n".join(messages)
 
-            models = [
-                {
-                    "name": "llama-3.2-90b-vision-preview",
-                    "rpm": 15,
-                    "rpd": 3500,
-                    "tpm": 7000,
-                    "tpd": 250000,
-                },
-                {
-                    "name": "llama-3.2-11b-vision-preview",
-                    "rpm": 30,
-                    "rpd": 7000,
-                    "tpm": 7000,
-                    "tpd": 500000,
-                },
-                {
-                    "name": "llama-3.1-70b-versatile",
-                    "rpm": 30,
-                    "rpd": 14400,
-                    "tpm": 6000,
-                    "tpd": 200000,
-                },
-            ]
+            models = []
+            if not image_attachments:
+                models.extend(
+                    [
+                        {
+                            "name": "llama-3.3-70b-specdec",
+                            "rpm": 30,
+                            "rpd": 1000,
+                            "tpm": 6000,
+                            "tpd": 250000,
+                        },
+                        {
+                            "name": "llama-3.3-70b-versatile",
+                            "rpm": 30,
+                            "rpd": 14400,
+                            "tpm": 6000,
+                            "tpd": 500000,
+                        },
+                    ]
+                )
+
+            models.extend(
+                [
+                    {
+                        "name": "llama-3.2-90b-vision-preview",
+                        "rpm": 15,
+                        "rpd": 3500,
+                        "tpm": 7000,
+                        "tpd": 250000,
+                    },
+                    {
+                        "name": "llama-3.2-11b-vision-preview",
+                        "rpm": 30,
+                        "rpd": 7000,
+                        "tpm": 7000,
+                        "tpd": 500000,
+                    },
+                ]
+            )
 
             completion = None
             for model_config in models:
