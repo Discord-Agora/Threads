@@ -1,3 +1,12 @@
+## 2024-12-08
+
+### Added
+- New models`llama-3.3-70b-specdec` and `llama-3.3-70b-versatile` when there are no image attachments.
+
+### Changed
+- Changed the model from `llama-3.1-70b-versatile` to `llama-3.1-8b-instant`.
+- Refactored the model list initialization to include conditional logic based on `image_attachments`.
+
 ## 2024-11-27
 
 ### Added
