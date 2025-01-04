@@ -728,14 +728,20 @@ def log_action(func):
                 reason=f"Error: {error_message}",
                 post_name=(
                     ctx.channel.name
-                    if isinstance(ctx.channel, interactions.GuildForumPost)
+                    if isinstance(
+                        ctx.channel,
+                        (interactions.ThreadChannel, interactions.GuildChannel),
+                    )
                     else "Unknown"
                 ),
                 actor=ctx.author,
                 result="failed",
                 channel=(
                     ctx.channel
-                    if isinstance(ctx.channel, interactions.GuildForumPost)
+                    if isinstance(
+                        ctx.channel,
+                        (interactions.ThreadChannel, interactions.GuildChannel),
+                    )
                     else None
                 ),
             )
@@ -2289,13 +2295,20 @@ class Threads(interactions.Extension):
 
         try:
             message = await ctx.channel.fetch_message(message.id)
+            message_author = await ctx.guild.fetch_member(message.author.id)
         except NotFound:
             await self.send_error(
                 ctx, "The message has been deleted and cannot be checked."
             )
             return None
+        except Exception as e:
+            logger.error(f"Error fetching message or member: {e}", exc_info=True)
+            await self.send_error(
+                ctx, "An error occurred while fetching the message information."
+            )
+            return None
 
-        if message.author.bot:
+        if message_author.bot:
             await self.send_error(ctx, "Bot messages cannot be checked for abuse.")
             return None
 
@@ -2306,20 +2319,20 @@ class Threads(interactions.Extension):
         if isinstance(post, (interactions.ThreadChannel, interactions.GuildChannel)):
             try:
                 target_channel = getattr(post, "parent_channel", post)
-                if member_perms := target_channel.permissions_for(message.author):
+                if member_perms := target_channel.permissions_for(message_author):
                     if not (member_perms & interactions.Permissions.SEND_MESSAGES):
-                        logger.info(f"User {message.author.id} is already timed out")
+                        logger.info(f"User {message_author.id} is already timed out")
                         await self.send_error(
                             ctx,
-                            f"{message.author.mention} is currently timed out and cannot be checked for additional violations.",
+                            f"{message_author.mention} is currently timed out and cannot be checked for additional violations.",
                         )
                         return None
             except Exception as e:
                 logger.error(f"Error checking user timeout status: {e}")
 
         if isinstance(post, interactions.ThreadChannel):
-            if message.author.id == post.owner_id or await self.can_manage_post(
-                post, message.author
+            if message_author.id == post.owner_id or await self.can_manage_post(
+                post, message_author
             ):
                 await self.send_error(
                     ctx,
@@ -2343,7 +2356,7 @@ class Threads(interactions.Extension):
             "checker_id": ctx.author.id,
         }
 
-        messages = [f"Caller: <@{ctx.author.id}>", f"Author: <@{message.author.id}>"]
+        messages = [f"Caller: <@{ctx.author.id}>", f"Author: <@{message_author.id}>"]
         history_messages = []
         async for msg in ctx.channel.history(limit=15, before=message.id + 1):
             history_messages.append(msg)
@@ -2363,7 +2376,7 @@ class Threads(interactions.Extension):
         messages.append("History:")
         for msg in reversed(history_messages):
             messages.append(
-                f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == ctx.author, msg.id == message.id, msg.author == message.author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == ctx.author, msg.id == message.id, msg.author == message.author, True]) if cond)}"
+                f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == ctx.author, msg.id == message.id, msg.author == message_author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == ctx.author, msg.id == message.id, msg.author == message_author, True]) if cond)}"
             )
 
         image_attachments = [
@@ -2585,12 +2598,12 @@ class Threads(interactions.Extension):
             0,
         )
 
-        if score >= 7 and not message.author.bot:
+        if score >= 7 and not message_author.bot:
             self.model.record_violation(post.id)
             self.model.record_message(post.id)
 
             timeout_duration = self.model.calculate_timeout_duration(
-                str(message.author.id)
+                str(message_author.id)
             )
             await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
             await self.model.adjust_timeout_cfg()
@@ -2627,13 +2640,13 @@ class Threads(interactions.Extension):
                             "extreme violation" if score >= 10 else "critical violation"
                         )
                         await target_channel.add_permission(
-                            message.author,
+                            message_author,
                             deny=perms,
                             reason=f"AI detected {severity} - {timeout_duration}s timeout",
                         )
 
                         user_data = self.model.timeout_history.get(
-                            str(message.author.id), {}
+                            str(message_author.id), {}
                         )
                         violation_count = user_data.get("violation_count", 0)
 
@@ -2644,7 +2657,7 @@ class Threads(interactions.Extension):
                             )
 
                             try:
-                                await message.author.timeout(
+                                await message_author.timeout(
                                     communication_disabled_until=timeout_until,
                                     reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
                                 )
@@ -2652,12 +2665,12 @@ class Threads(interactions.Extension):
                                 logger.error(f"Failed to apply global timeout: {e}")
 
                         logger.info(
-                            f"Successfully applied permissions for user {message.author.id}"
+                            f"Successfully applied permissions for user {message_author.id}"
                         )
 
                     except Forbidden:
                         logger.error(
-                            f"Permission denied when trying to timeout user {message.author.id}"
+                            f"Permission denied when trying to timeout user {message_author.id}"
                         )
                         await self.send_error(
                             ctx,
@@ -2667,32 +2680,32 @@ class Threads(interactions.Extension):
 
                     asyncio.create_task(
                         self.restore_permissions(
-                            target_channel, message.author, timeout_duration // 60
+                            target_channel, message_author.user, timeout_duration // 60
                         )
                     )
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to apply timeout for user {message.author.id}: {e}",
+                        f"Failed to apply timeout for user {message_author.id}: {e}",
                         exc_info=True,
                     )
                     await self.send_error(
-                        ctx, f"Failed to apply timeout to {message.author.mention}"
+                        ctx, f"Failed to apply timeout to {message_author.mention}"
                     )
                     return None
             else:
                 warning_message = "Content warning issued for potentially inappropriate content (Score: 7)"
                 try:
-                    await message.author.send(warning_message)
+                    await message_author.send(warning_message)
                 except Exception as e:
-                    logger.error(f"Failed to send DM to user {message.author.id}: {e}")
+                    logger.error(f"Failed to send DM to user {message_author.id}: {e}")
 
         embed = await self.create_embed(
             title="AI Content Check Result",
             description=(
                 f"The AI detected potentially offensive content:\n{ai_response}\n"
                 + (
-                    f"User <@{message.author.id}> has been temporarily muted for {timeout_duration} seconds."
+                    f"User <@{message_author.id}> has been temporarily muted for {timeout_duration} seconds."
                     + (
                         f" and globally muted for {global_timeout_duration} seconds."
                         if "global_timeout_duration" in locals()
@@ -2726,7 +2739,7 @@ class Threads(interactions.Extension):
             post_name=post.name,
             actor=ctx.author,
             channel=post if isinstance(post, interactions.ThreadChannel) else None,
-            target=message.author,
+            target=message_author,
             additional_info={
                 "checked_message_id": str(message.id),
                 "checked_message_content": (
@@ -4895,6 +4908,15 @@ class Threads(interactions.Extension):
                     )
                     return None
 
+            try:
+                message_author = await message.guild.fetch_member(message.author.id)
+            except NotFound:
+                logger.error("NotFound member.")
+                return None
+            except Exception as e:
+                logger.error(f"Error fetching message or member: {e}", exc_info=True)
+                return None
+
             ai_cache_key = f"ai_check_{referenced_message.id}"
             try:
                 if cached := self.url_cache.get(ai_cache_key):
@@ -4902,7 +4924,7 @@ class Threads(interactions.Extension):
                         embeds=[
                             await self.create_embed(
                                 title="Error",
-                                description=f"This message has already been checked by {'you' if cached['checker_id'] == message.author.id else 'another user'}.",
+                                description=f"This message has already been checked by {'you' if cached['checker_id'] == message_author.id else 'another user'}.",
                                 color=EmbedColor.ERROR,
                             )
                         ],
@@ -4914,11 +4936,11 @@ class Threads(interactions.Extension):
 
             self.url_cache[ai_cache_key] = {
                 "timestamp": datetime.now(timezone.utc),
-                "checker_id": message.author.id,
+                "checker_id": message_author.id,
             }
 
             messages = [
-                f"Caller: <@{message.author.id}>",
+                f"Caller: <@{message_author.id}>",
                 f"Author: <@{referenced_message.author.id}>",
             ]
 
@@ -4932,7 +4954,7 @@ class Threads(interactions.Extension):
                 (
                     True
                     for msg in history_messages
-                    if msg.author.id == message.author.id
+                    if msg.author.id == message_author.id
                 ),
                 False,
             )
@@ -4948,7 +4970,7 @@ class Threads(interactions.Extension):
             messages.append("History:")
             for msg in reversed(history_messages):
                 messages.append(
-                    f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message.author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message.author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}"
+                    f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message_author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message_author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}"
                 )
 
             image_attachments = [
@@ -5016,7 +5038,7 @@ class Threads(interactions.Extension):
             for model_config in models:
                 model = model_config["name"]
 
-                user_bucket_key = f"rate_limit_{message.author.id}_{model}"
+                user_bucket_key = f"rate_limit_{message_author.id}_{model}"
                 if user_bucket_key not in self.url_cache:
                     self.url_cache[user_bucket_key] = {
                         "requests": 0,
@@ -5349,9 +5371,9 @@ class Threads(interactions.Extension):
 
             return ActionDetails(
                 action=ActionType.EDIT,
-                reason=f"AI content check performed by {message.author.mention}",
+                reason=f"AI content check performed by {message_author.mention}",
                 post_name=post.name,
-                actor=message.author,
+                actor=message_author,
                 channel=post if isinstance(post, interactions.ThreadChannel) else None,
                 target=referenced_message.author,
                 additional_info={
