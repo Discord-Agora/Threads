@@ -1217,6 +1217,10 @@ class Threads(interactions.Extension):
                     return
 
             if not new_post.pinned:
+                if new_post.archived:
+                    await new_post.edit(archived=False)
+                    await asyncio.sleep(0.25)
+
                 await new_post.pin(reason="New featured post.")
                 await asyncio.sleep(0.25)
 
@@ -1721,115 +1725,45 @@ class Threads(interactions.Extension):
     # Base commands
 
     module_base: interactions.SlashCommand = interactions.SlashCommand(
-        name=interactions.LocalisedName(
-            default_locale="english_us",
-            english_us="threads",
-            chinese_china="子区",
-            chinese_taiwan="討論串",
-        ),
-        description=interactions.LocalisedDesc(
-            default_locale="english_us",
-            english_us="Threads commands",
-            chinese_china="子区命令",
-            chinese_taiwan="討論串命令",
-        ),
+        name="threads",
+        description="Threads commands",
     )
 
     # Debug commands
 
     module_group_debug: interactions.SlashCommand = module_base.group(
-        name=interactions.LocalisedName(
-            default_locale="english_us",
-            english_us="debug",
-            chinese_china="调试",
-            chinese_taiwan="除錯",
-        ),
-        description=interactions.LocalisedDesc(
-            default_locale="english_us",
-            english_us="Debug commands",
-            chinese_china="调试命令",
-            chinese_taiwan="除錯命令",
-        ),
+        name="debug",
+        description="Debug commands",
     )
 
     @module_group_debug.subcommand(
-        sub_cmd_name=interactions.LocalisedName(
-            default_locale="english_us",
-            english_us="config",
-            chinese_china="配置",
-            chinese_taiwan="配置",
-        ),
-        sub_cmd_description=interactions.LocalisedDesc(
-            default_locale="english_us",
-            english_us="Manage configuration files",
-            chinese_china="管理配置文件",
-            chinese_taiwan="管理配置檔案",
-        ),
+        sub_cmd_name="config",
+        sub_cmd_description="Manage configuration files",
         options=[
             interactions.SlashCommandOption(
-                name=interactions.LocalisedName(
-                    default_locale="english_us",
-                    english_us="file",
-                    chinese_china="文件",
-                    chinese_taiwan="檔案",
-                ),
-                description=interactions.LocalisedDesc(
-                    default_locale="english_us",
-                    english_us="Configuration file to manage",
-                    chinese_china="要管理的配置文件",
-                    chinese_taiwan="要管理的配置檔案",
-                ),
+                name="file",
+                description="Configuration file to manage",
                 required=True,
                 type=interactions.OptionType.STRING,
                 autocomplete=True,
             ),
             interactions.SlashCommandOption(
-                name=interactions.LocalisedName(
-                    default_locale="english_us",
-                    english_us="major",
-                    chinese_china="主要部分",
-                    chinese_taiwan="主要部分",
-                ),
-                description=interactions.LocalisedDesc(
-                    default_locale="english_us",
-                    english_us="Major section to modify",
-                    chinese_china="要修改的主要部分",
-                    chinese_taiwan="要修改的主要部分",
-                ),
+                name="major",
+                description="Major section to modify",
                 required=True,
                 type=interactions.OptionType.STRING,
                 autocomplete=True,
             ),
             interactions.SlashCommandOption(
-                name=interactions.LocalisedName(
-                    default_locale="english_us",
-                    english_us="minor",
-                    chinese_china="次要部分",
-                    chinese_taiwan="次要部分",
-                ),
-                description=interactions.LocalisedDesc(
-                    default_locale="english_us",
-                    english_us="Minor section to modify (leave empty to delete major section)",
-                    chinese_china="要修改的次要部分（留空以删除主要部分）",
-                    chinese_taiwan="要修改的次要部分（留空以刪除主要部分）",
-                ),
+                name="minor",
+                description="Minor section to modify (leave empty to delete major section)",
                 required=False,
                 type=interactions.OptionType.STRING,
                 autocomplete=True,
             ),
             interactions.SlashCommandOption(
-                name=interactions.LocalisedName(
-                    default_locale="english_us",
-                    english_us="value",
-                    chinese_china="值",
-                    chinese_taiwan="值",
-                ),
-                description=interactions.LocalisedDesc(
-                    default_locale="english_us",
-                    english_us="New value for minor section (ignored if minor is empty)",
-                    chinese_china="次要部分的新值（如果次要部分为空则忽略）",
-                    chinese_taiwan="次要部分的新值（如果次要部分為空則忽略）",
-                ),
+                name="value",
+                description="New value for minor section (ignored if minor is empty)",
                 required=False,
                 type=interactions.OptionType.STRING,
             ),
@@ -1846,18 +1780,11 @@ class Threads(interactions.Extension):
         minor: Optional[str] = None,
         value: Optional[str] = None,
     ) -> None:
-        locale = ctx.locale or "default"
-
         if not next(
             (True for r in ctx.author.roles if r.id == self.THREADS_ROLE_ID), False
         ):
-            error_messages = {
-                "default": "You do not have permission to use this command.",
-                "chinese_china": "您没有使用此命令的权限。",
-                "chinese_taiwan": "您沒有使用此命令的權限。",
-            }
             await self.send_error(
-                ctx, error_messages.get(locale, error_messages["default"])
+                ctx, "You do not have permission to use this command."
             )
             return
 
@@ -1872,14 +1799,7 @@ class Threads(interactions.Extension):
             }
 
             if file not in file_paths:
-                error_messages = {
-                    "default": f"Invalid file selection: {file}",
-                    "chinese_china": f"无效的文件选择：{file}",
-                    "chinese_taiwan": f"無效的檔案選擇：{file}",
-                }
-                await self.send_error(
-                    ctx, error_messages.get(locale, error_messages["default"])
-                )
+                await self.send_error(ctx, f"Invalid file selection: {file}")
                 return
 
             file_path = file_paths[file]
@@ -1893,22 +1813,12 @@ class Threads(interactions.Extension):
             if minor is None:
                 if value is None:
                     if major_str not in data:
-                        error_messages = {
-                            "default": f"Major section `{major}` not found in {file}",
-                            "chinese_china": f"在{file}中未找到主要部分 `{major}`",
-                            "chinese_taiwan": f"在{file}中未找到主要部分 `{major}`",
-                        }
                         await self.send_error(
-                            ctx, error_messages.get(locale, error_messages["default"])
+                            ctx, f"Major section `{major}` not found in {file}"
                         )
                         return
                     del data[major_str]
-                    action_messages = {
-                        "default": f"Deleted major section `{major}`",
-                        "chinese_china": f"已删除主要部分 `{major}`",
-                        "chinese_taiwan": f"已刪除主要部分 `{major}`",
-                    }
-                    action = action_messages.get(locale, action_messages["default"])
+                    action = f"Deleted major section `{major}`"
                 else:
                     try:
                         parsed_value = orjson.loads(value)
@@ -1917,91 +1827,52 @@ class Threads(interactions.Extension):
                         )
                     except orjson.JSONDecodeError:
                         data[major_str] = value
-                    action_messages = {
-                        "default": f"Created major section `{major}`",
-                        "chinese_china": f"已创建主要部分 `{major}`",
-                        "chinese_taiwan": f"已創建主要部分 `{major}`",
-                    }
-                    action = action_messages.get(locale, action_messages["default"])
+                    action = f"Created major section `{major}`"
             else:
                 if major_str not in data:
                     if not is_nested:
-                        error_messages = {
-                            "default": f"Cannot add minor section to non-nested structure in {file}",
-                            "chinese_china": f"无法在{file}的非嵌套结构中添加次要部分",
-                            "chinese_taiwan": f"無法在{file}的非嵌套結構中添加次要部分",
-                        }
                         await self.send_error(
-                            ctx, error_messages.get(locale, error_messages["default"])
+                            ctx,
+                            f"Cannot add minor section to non-nested structure in {file}",
                         )
                         return
                     data[major_str] = {}
 
                 major_data = data[major_str]
                 if not isinstance(major_data, dict):
-                    error_messages = {
-                        "default": f"Major section `{major}` does not support minor sections",
-                        "chinese_china": f"主要部分 `{major}` 不支持次要部分",
-                        "chinese_taiwan": f"主要部分 `{major}` 不支持次要部分",
-                    }
                     await self.send_error(
-                        ctx, error_messages.get(locale, error_messages["default"])
+                        ctx, f"Major section `{major}` does not support minor sections"
                     )
                     return
 
                 if value is None:
                     if minor not in major_data:
-                        error_messages = {
-                            "default": f"Minor section `{minor}` not found in `{major}`",
-                            "chinese_china": f"在 `{major}` 中未找到次要部分 `{minor}`",
-                            "chinese_taiwan": f"在 `{major}` 中未找到次要部分 `{minor}`",
-                        }
                         await self.send_error(
-                            ctx, error_messages.get(locale, error_messages["default"])
+                            ctx, f"Minor section `{minor}` not found in `{major}`"
                         )
                         return
                     del major_data[minor]
-                    action_messages = {
-                        "default": f"Deleted minor section `{minor}` from `{major}`",
-                        "chinese_china": f"已从 `{major}` 删除次要部分 `{minor}`",
-                        "chinese_taiwan": f"已從 `{major}` 刪除次要部分 `{minor}`",
-                    }
-                    action = action_messages.get(locale, action_messages["default"])
+                    action = f"Deleted minor section `{minor}` from `{major}`"
                 else:
                     try:
                         parsed = orjson.loads(value)
                         major_data[minor] = parsed
                     except orjson.JSONDecodeError:
                         major_data[minor] = value
-                    action_messages = {
-                        "default": f"Updated minor section `{minor}` in `{major}` to `{value}`",
-                        "chinese_china": f"已更新 `{major}` 中的次要部分 `{minor}` 为 `{value}`",
-                        "chinese_taiwan": f"已更新 `{major}` 中的次要部分 `{minor}` 為 `{value}`",
-                    }
-                    action = action_messages.get(locale, action_messages["default"])
+                    action = (
+                        f"Updated minor section `{minor}` in `{major}` to `{value}`"
+                    )
 
             await getattr(self.model, f"save_{file}")(file_path, data)
-            success_messages = {
-                "default": f"{action} in {file_path.rpartition('/')[-1]}",
-                "chinese_china": f"在 {file_path.rpartition('/')[-1]} 中{action}",
-                "chinese_taiwan": f"在 {file_path.rpartition('/')[-1]} 中{action}",
-            }
             await self.send_success(
                 ctx,
-                success_messages.get(locale, success_messages["default"]),
+                f"{action} in {file_path.rpartition('/')[-1]}",
                 log_to_channel=True,
             )
 
         except Exception as e:
             logger.error(f"Error managing config file: {e}", exc_info=True)
-            error_messages = {
-                "default": f"Error managing config file: {str(e)}",
-                "chinese_china": f"管理配置文件时出错：{str(e)}",
-                "chinese_taiwan": f"管理配置檔案時出錯：{str(e)}",
-            }
-            await self.send_error(
-                ctx, error_messages.get(locale, error_messages["default"])
-            )
+            await self.send_error(ctx, f"Error managing config file: {str(e)}")
 
     @debug_config.autocomplete("file")
     async def autocomplete_debug_config_file(
@@ -2080,32 +1951,12 @@ class Threads(interactions.Extension):
             await ctx.send([])
 
     @module_group_debug.subcommand(
-        sub_cmd_name=interactions.LocalisedName(
-            default_locale="english_us",
-            english_us="export",
-            chinese_china="导出",
-            chinese_taiwan="匯出",
-        ),
-        sub_cmd_description=interactions.LocalisedDesc(
-            default_locale="english_us",
-            english_us="Export files from the extension directory",
-            chinese_china="从扩展目录导出文件",
-            chinese_taiwan="從擴充目錄匯出檔案",
-        ),
+        sub_cmd_name="export",
+        sub_cmd_description="Export files from the extension directory",
     )
     @interactions.slash_option(
-        name=interactions.LocalisedName(
-            default_locale="english_us",
-            english_us="type",
-            chinese_china="类型",
-            chinese_taiwan="類型",
-        ),
-        description=interactions.LocalisedDesc(
-            default_locale="english_us",
-            english_us="Type of files to export",
-            chinese_china="要导出的文件类型",
-            chinese_taiwan="要匯出的檔案類型",
-        ),
+        name="type",
+        description="Type of files to export",
         required=True,
         opt_type=interactions.OptionType.STRING,
         autocomplete=True,
@@ -2119,26 +1970,13 @@ class Threads(interactions.Extension):
     ) -> None:
         await ctx.defer(ephemeral=True)
         filename: str = ""
-        locale = ctx.locale or "default"
 
         if not os.path.exists(BASE_DIR):
-            error_messages = {
-                "default": "Extension directory does not exist.",
-                "chinese_china": "扩展目录不存在。",
-                "chinese_taiwan": "擴充目錄不存在。",
-            }
-            return await self.send_error(
-                ctx, error_messages.get(locale, error_messages["default"])
-            )
+            return await self.send_error(ctx, "Extension directory does not exist.")
 
         if file_type != "all" and not os.path.isfile(os.path.join(BASE_DIR, file_type)):
-            error_messages = {
-                "default": f"File `{file_type}` does not exist in the extension directory.",
-                "chinese_china": f"文件 `{file_type}` 在扩展目录中不存在。",
-                "chinese_taiwan": f"檔案 `{file_type}` 在擴充目錄中不存在。",
-            }
             return await self.send_error(
-                ctx, error_messages.get(locale, error_messages["default"])
+                ctx, f"File `{file_type}` does not exist in the extension directory."
             )
 
         try:
@@ -2156,67 +1994,30 @@ class Threads(interactions.Extension):
                 )
 
             if not os.path.exists(filename):
-                error_messages = {
-                    "default": "Failed to create archive file.",
-                    "chinese_china": "创建归档文件失败。",
-                    "chinese_taiwan": "建立壓縮檔案失敗。",
-                }
-                return await self.send_error(
-                    ctx, error_messages.get(locale, error_messages["default"])
-                )
+                return await self.send_error(ctx, "Failed to create archive file.")
 
             file_size = os.path.getsize(filename)
             if file_size > 8_388_608:
-                error_messages = {
-                    "default": "Archive file is too large to send (>8MB).",
-                    "chinese_china": "归档文件太大，无法发送（>8MB）。",
-                    "chinese_taiwan": "壓縮檔案太大，無法發送（>8MB）。",
-                }
                 return await self.send_error(
-                    ctx, error_messages.get(locale, error_messages["default"])
+                    ctx, "Archive file is too large to send (>8MB)."
                 )
 
-            success_messages = {
-                "default": (
+            await ctx.send(
+                (
                     "All extension files attached."
                     if file_type == "all"
                     else f"File `{file_type}` attached."
                 ),
-                "chinese_china": (
-                    "已附加所有扩展文件。"
-                    if file_type == "all"
-                    else f"已附加文件 `{file_type}`。"
-                ),
-                "chinese_taiwan": (
-                    "已附加所有擴充檔案。"
-                    if file_type == "all"
-                    else f"已附加檔案 `{file_type}`。"
-                ),
-            }
-            await ctx.send(
-                success_messages.get(locale, success_messages["default"]),
                 files=[interactions.File(filename)],
             )
 
         except PermissionError:
             logger.error(f"Permission denied while exporting {file_type}")
-            error_messages = {
-                "default": "Permission denied while accessing files.",
-                "chinese_china": "访问文件时权限被拒绝。",
-                "chinese_taiwan": "存取檔案時權限被拒絕。",
-            }
-            await self.send_error(
-                ctx, error_messages.get(locale, error_messages["default"])
-            )
+            await self.send_error(ctx, "Permission denied while accessing files.")
         except Exception as e:
             logger.error(f"Error exporting {file_type}: {e}", exc_info=True)
-            error_messages = {
-                "default": f"An error occurred while exporting {file_type}: {str(e)}",
-                "chinese_china": f"导出 {file_type} 时发生错误：{str(e)}",
-                "chinese_taiwan": f"匯出 {file_type} 時發生錯誤：{str(e)}",
-            }
             await self.send_error(
-                ctx, error_messages.get(locale, error_messages["default"])
+                ctx, f"An error occurred while exporting {file_type}: {str(e)}"
             )
         finally:
             if filename and os.path.exists(filename):
@@ -4591,7 +4392,20 @@ class Threads(interactions.Extension):
             await self.send_success(ctx, empty_message)
             return
 
-        paginator = Paginator.create_from_embeds(self.bot, *embeds, timeout=120)
+        paginator = Paginator(
+            client=self.bot,
+            pages=embeds,
+            timeout_interval=60,
+            show_callback_button=True,
+            show_select_menu=True,
+            show_back_button=True,
+            show_next_button=True,
+            show_first_button=True,
+            show_last_button=True,
+            wrong_user_message="This leaderboard can only be controlled by the user who requested it.",
+            hide_buttons_on_stop=True,
+        )
+
         await paginator.send(ctx)
 
     # Task methods
@@ -4740,8 +4554,15 @@ class Threads(interactions.Extension):
 
                     content = message.content if message.content else ""
                     if message.attachments:
-                        attachment_links = "\n".join(f"[Attachment {i+1}]({a.url})" for i, a in enumerate(message.attachments))
-                        content = f"{content}\n\n{attachment_links}" if content else attachment_links
+                        attachment_links = "\n".join(
+                            f"[Attachment {i+1}]({a.url})"
+                            for i, a in enumerate(message.attachments)
+                        )
+                        content = (
+                            f"{content}\n\n{attachment_links}"
+                            if content
+                            else attachment_links
+                        )
 
                     await webhook.send(
                         content=f"{content if content.startswith('# ') else f'# {content}'}",
