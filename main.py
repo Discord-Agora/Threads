@@ -4098,6 +4098,8 @@ class Threads(interactions.Extension):
             )
             return
 
+        await ctx.defer()
+
         channel_id, post_id = str(ctx.channel.parent_id), str(ctx.channel.id)
 
         match list_type:
@@ -4230,6 +4232,8 @@ class Threads(interactions.Extension):
                 ctx, "You do not have permission to use this command."
             )
             return
+
+        await ctx.defer()
 
         match view_type:
             case "banned":
