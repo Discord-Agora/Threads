@@ -1152,6 +1152,10 @@ class Threads(interactions.Extension):
             ):
                 return
 
+            if channel.archived:
+                await channel.edit(archived=False)
+                await asyncio.sleep(0.5)
+
             current_tags = frozenset(tag.id for tag in channel.applied_tags)
 
             if self.FEATURED_TAG_ID not in current_tags:
@@ -1168,22 +1172,13 @@ class Threads(interactions.Extension):
                 exc_info=True,
             )
 
-    async def pin_featured_post(self, new_post_id: str) -> None:
+    async def pin_featured_post(self) -> None:
         try:
-            if new_post_id == "1310198482564284446":
-                return
-
             all_featured_posts = []
             for forum_posts in self.model.featured_posts.values():
                 all_featured_posts.extend(forum_posts)
 
-            available_posts = list(
-                set(
-                    post_id
-                    for post_id in all_featured_posts
-                    if post_id != "1310198482564284446"
-                )
-            )
+            available_posts = list(set(all_featured_posts))
 
             if not available_posts:
                 return
@@ -1256,6 +1251,8 @@ class Threads(interactions.Extension):
             top_posts.append(result)
 
         featured_tagged_posts: list[tuple[int, str]] = []
+        excluded_posts = self.model.featured_posts.get("excluded_posts", [])
+
         for forum_id in forum_ids:
             try:
                 forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
@@ -1268,7 +1265,10 @@ class Threads(interactions.Extension):
                     await forum_channel.fetch_posts()
                 )
                 for post in posts:
-                    if self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}:
+                    if (
+                        self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
+                        and str(post.id) not in excluded_posts
+                    ):
                         featured_tagged_posts.append((forum_id, str(post.id)))
             except Exception as e:
                 logger.error(
@@ -1306,8 +1306,7 @@ class Threads(interactions.Extension):
             await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
             await self.update_featured_posts_tags()
 
-            for _, post_id in updates:
-                await self.pin_featured_post(post_id)
+            await self.pin_featured_post()
 
             logger.info("Completed featured posts rotation successfully")
 
@@ -1735,6 +1734,115 @@ class Threads(interactions.Extension):
         name="debug",
         description="Debug commands",
     )
+
+    @module_group_debug.subcommand(
+        sub_cmd_name="exclude",
+        sub_cmd_description="Exclude posts from featured rotation",
+        options=[
+            interactions.SlashCommandOption(
+                name="action",
+                description="Action to perform",
+                required=True,
+                type=interactions.OptionType.STRING,
+                choices=[
+                    interactions.SlashCommandChoice(name="Add", value="add"),
+                    interactions.SlashCommandChoice(name="Remove", value="remove"),
+                    interactions.SlashCommandChoice(name="List", value="list"),
+                ],
+            ),
+            interactions.SlashCommandOption(
+                name="post",
+                description="ID of the post to exclude/include",
+                required=False,
+                type=interactions.OptionType.STRING,
+                argument_name="post_id",
+            ),
+        ],
+    )
+    @interactions.slash_default_member_permission(
+        interactions.Permissions.ADMINISTRATOR
+    )
+    async def debug_exclude(
+        self,
+        ctx: interactions.SlashContext,
+        action: str,
+        post_id: Optional[str] = None,
+    ) -> None:
+        if not any(r.id == self.THREADS_ROLE_ID for r in ctx.author.roles):
+            await self.send_error(
+                ctx, "You do not have permission to use this command."
+            )
+            return
+
+        excluded = self.model.featured_posts.setdefault("excluded_posts", [])
+
+        if action == "list":
+            if not excluded:
+                await self.send_success(ctx, "No posts are currently excluded.")
+                return
+
+            excluded_list = [f"- <#{post_id}>" for post_id in excluded]
+
+            embeds = []
+            current_embed = await self.create_embed(title="Currently Excluded Posts")
+
+            for i, post_info in enumerate(excluded_list):
+                current_embed.add_field(
+                    name=f"Post {i+1}", value=post_info, inline=True
+                )
+                if len(current_embed.fields) >= 10:
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(
+                        title="Currently Excluded Posts"
+                    )
+
+            if current_embed.fields:
+                embeds.append(current_embed)
+
+            await self.send_paginated_response(
+                ctx, embeds, "No posts are currently excluded."
+            )
+            return
+
+        if not post_id:
+            await self.send_error(ctx, "Post ID is required for add/remove actions.")
+            return
+
+        try:
+            channel = await self.bot.fetch_channel(int(post_id))
+            if not isinstance(channel, interactions.GuildForumPost):
+                await self.send_error(ctx, "Invalid post ID provided.")
+                return
+
+            if action == "add":
+                if post_id not in excluded:
+                    excluded.append(post_id)
+                    await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
+                    await self.send_success(
+                        ctx,
+                        f"Post {channel.name} ({post_id}) has been excluded from featured rotation.",
+                        log_to_channel=True,
+                    )
+                else:
+                    await self.send_error(ctx, "This post is already excluded.")
+            else:
+                try:
+                    excluded.remove(post_id)
+                    await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
+                    await self.send_success(
+                        ctx,
+                        f"Post {channel.name} ({post_id}) has been removed from exclusion list.",
+                        log_to_channel=True,
+                    )
+                except ValueError:
+                    await self.send_error(
+                        ctx, f"Post {post_id} was not in the exclusion list."
+                    )
+
+        except ValueError:
+            await self.send_error(ctx, "Invalid post ID format.")
+        except Exception as e:
+            await self.send_error(ctx, f"Error processing request: {str(e)}")
 
     @module_group_debug.subcommand(
         sub_cmd_name="config",
@@ -4395,7 +4503,7 @@ class Threads(interactions.Extension):
         paginator = Paginator(
             client=self.bot,
             pages=embeds,
-            timeout_interval=60,
+            timeout_interval=120,
             show_callback_button=True,
             show_select_menu=True,
             show_back_button=True,
