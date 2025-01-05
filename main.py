@@ -2376,7 +2376,7 @@ class Threads(interactions.Extension):
         messages.append("History:")
         for msg in reversed(history_messages):
             messages.append(
-                f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == ctx.author, msg.id == message.id, msg.author == message_author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == ctx.author, msg.id == message.id, msg.author == message_author, True]) if cond)}"
+                f"<@{msg.author.id}>{next(('<<<', '***', '|||', '+++')[i] for i, cond in enumerate([msg.author.id == ctx.author.id, msg.author.id == message_author.id, msg.id == message.id, True]) if cond)}{msg.content}{next(('>>>', '***', '|||', '+++')[i] for i, cond in enumerate([msg.author.id == ctx.author.id, msg.author.id == message_author.id, msg.id == message.id, True]) if cond)}"
             )
 
         image_attachments = [
@@ -4973,7 +4973,7 @@ class Threads(interactions.Extension):
             messages.append("History:")
             for msg in reversed(history_messages):
                 messages.append(
-                    f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message_author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author == message_author, msg.id == referenced_message.id, msg.author == referenced_message.author, True]) if cond)}"
+                    f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author.id == message_author.id, msg.id == referenced_message.id, msg.author.id == referenced_message.author.id, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author.id == message_author.id, msg.id == referenced_message.id, msg.author.id == referenced_message.author.id, True]) if cond)}"
                 )
 
             image_attachments = [
