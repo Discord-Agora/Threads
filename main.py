@@ -2396,18 +2396,18 @@ class Threads(interactions.Extension):
             models.extend(
                 [
                     {
-                        "name": "llama-3.3-70b-specdec",
-                        "rpm": 30,
-                        "rpd": 1000,
-                        "tpm": 6000,
-                        "tpd": 250000,
-                    },
-                    {
                         "name": "llama-3.3-70b-versatile",
                         "rpm": 30,
                         "rpd": 14400,
                         "tpm": 6000,
                         "tpd": 500000,
+                    },
+                    {
+                        "name": "llama-3.3-70b-specdec",
+                        "rpm": 30,
+                        "rpd": 1000,
+                        "tpm": 6000,
+                        "tpd": 250000,
                     },
                 ]
             )
@@ -5002,18 +5002,18 @@ class Threads(interactions.Extension):
                 models.extend(
                     [
                         {
-                            "name": "llama-3.3-70b-specdec",
-                            "rpm": 30,
-                            "rpd": 1000,
-                            "tpm": 6000,
-                            "tpd": 250000,
-                        },
-                        {
                             "name": "llama-3.3-70b-versatile",
                             "rpm": 30,
                             "rpd": 14400,
                             "tpm": 6000,
                             "tpd": 500000,
+                        },
+                        {
+                            "name": "llama-3.3-70b-specdec",
+                            "rpm": 30,
+                            "rpd": 1000,
+                            "tpm": 6000,
+                            "tpd": 250000,
                         },
                     ]
                 )
