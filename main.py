@@ -1133,7 +1133,10 @@ class Threads(interactions.Extension):
                 self.model.featured_posts.setdefault(forum_id_str, [])
 
                 active_posts = await forum.fetch_posts()
-                archived_posts = [post async for post in forum.archived_posts()]
+                
+                archived_posts = []
+                async for post in forum.archived_posts():
+                    archived_posts.append(post)
 
                 archived_threads = await self.bot.http.list_public_archived_threads(
                     forum_id
