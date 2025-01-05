@@ -69,6 +69,11 @@ logger.addHandler(file_handler)
 # Model
 
 
+def format_discord_timestamp(dt: datetime) -> str:
+    unix_ts = int(dt.timestamp())
+    return f"<t:{unix_ts}:F> (<t:{unix_ts}:R>)"
+
+
 class ActionType(Enum):
     LOCK = auto()
     UNLOCK = auto()
@@ -1141,7 +1146,7 @@ class Threads(interactions.Extension):
                 archived_threads = await self.bot.http.list_public_archived_threads(
                     forum_id
                 )
-                
+
                 thread_list = []
                 for thread_data in archived_threads.get("threads", []):
                     thread = await self.bot.fetch_channel(int(thread_data["id"]))
@@ -4522,14 +4527,11 @@ class Threads(interactions.Extension):
 
         for post_id, post_stats in sorted_stats:
             try:
-                last_active = post_stats.last_activity.strftime("%Y-%m-%d %H:%M:%S UTC")
-
                 current_embed.add_field(
-                    name="Post Stats",
+                    name=f"<#{post_id}>",
                     value=(
-                        f"- Post: <#{post_id}>\n"
                         f"- Messages: {post_stats.message_count}\n"
-                        f"- Last Active: {last_active}"
+                        f"- Last Active: {format_discord_timestamp(post_stats.last_activity)}"
                     ),
                     inline=True,
                 )
@@ -4559,19 +4561,15 @@ class Threads(interactions.Extension):
             try:
                 for post_id in posts:
                     post_stats = stats.get(post_id, PostStats())
-                    timestamp = post_stats.last_activity.strftime(
-                        "%Y-%m-%d %H:%M:%S UTC"
-                    )
 
                     field_value = (
                         f"- Forum: <#{forum_id}>\n"
-                        f"- Post: <#{post_id}>\n"
                         f"- Messages: {post_stats.message_count}\n"
-                        f"- Last Active: {timestamp}"
+                        f"- Last Active: {format_discord_timestamp(post_stats.last_activity)}"
                     )
 
                     current_embed.add_field(
-                        name="Featured Post", value=field_value, inline=True
+                        name=f"<#{post_id}>", value=field_value, inline=True
                     )
 
                     if len(current_embed.fields) >= 5:
