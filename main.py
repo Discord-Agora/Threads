@@ -1133,7 +1133,7 @@ class Threads(interactions.Extension):
                 self.model.featured_posts.setdefault(forum_id_str, [])
 
                 active_posts = await forum.fetch_posts()
-                
+
                 archived_posts = []
                 async for post in forum.archived_posts():
                     archived_posts.append(post)
@@ -1141,14 +1141,13 @@ class Threads(interactions.Extension):
                 archived_threads = await self.bot.http.list_public_archived_threads(
                     forum_id
                 )
-                archived_posts.extend(
-                    thread
-                    for thread_data in archived_threads.get("threads", [])
-                    if isinstance(
-                        thread := await self.bot.fetch_channel(int(thread_data["id"])),
-                        interactions.GuildForumPost,
-                    )
-                )
+                
+                thread_list = []
+                for thread_data in archived_threads.get("threads", []):
+                    thread = await self.bot.fetch_channel(int(thread_data["id"]))
+                    if isinstance(thread, interactions.GuildForumPost):
+                        thread_list.append(thread)
+                archived_posts.extend(thread_list)
 
                 featured_ids = {
                     str(post.id)
