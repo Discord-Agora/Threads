@@ -2398,16 +2398,16 @@ class Threads(interactions.Extension):
                     {
                         "name": "llama-3.3-70b-versatile",
                         "rpm": 30,
-                        "rpd": 14400,
+                        "rpd": 1000,
                         "tpm": 6000,
                         "tpd": 500000,
                     },
                     {
-                        "name": "llama-3.3-70b-specdec",
+                        "name": "gemma2-9b-it",
                         "rpm": 30,
-                        "rpd": 1000,
-                        "tpm": 6000,
-                        "tpd": 250000,
+                        "rpd": 14400,
+                        "tpm": 15000,
+                        "tpd": 500000,
                     },
                 ]
             )
@@ -4998,22 +4998,23 @@ class Threads(interactions.Extension):
             user_message = "\n".join(messages)
 
             models = []
+
             if not image_attachments:
                 models.extend(
                     [
                         {
                             "name": "llama-3.3-70b-versatile",
                             "rpm": 30,
-                            "rpd": 14400,
+                            "rpd": 1000,
                             "tpm": 6000,
                             "tpd": 500000,
                         },
                         {
-                            "name": "llama-3.3-70b-specdec",
+                            "name": "gemma2-9b-it",
                             "rpm": 30,
-                            "rpd": 1000,
-                            "tpm": 6000,
-                            "tpd": 250000,
+                            "rpd": 14400,
+                            "tpm": 15000,
+                            "tpd": 500000,
                         },
                     ]
                 )
