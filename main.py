@@ -793,7 +793,7 @@ class Threads(interactions.Extension):
         self.LOG_FORUM_ID: int = 1159097493875871784
         self.STARBOARD_FORUM_ID: int = 1168209956802142360
         self.STARBOARD_POST_ID: int = 1312109214533025904
-        self.LOG_POST_ID: int = 1279118293936111707
+        self.LOG_POST_ID: int = 1325393614343376916
         self.POLL_FORUM_ID: Tuple[int, ...] = (1155914521907568740,)
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
         self.THREADS_ROLE_ID: int = 1223635198327914639
@@ -2598,7 +2598,7 @@ class Threads(interactions.Extension):
             0,
         )
 
-        if score >= 7 and not message_author.bot:
+        if score >= 8 and not message_author.bot:
             self.model.record_violation(post.id)
             self.model.record_message(post.id)
 
@@ -2608,7 +2608,7 @@ class Threads(interactions.Extension):
             await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
             await self.model.adjust_timeout_cfg()
 
-            if score >= 8:
+            if score >= 9:
                 multiplier = 3 if score >= 10 else 2
                 timeout_duration = min(int(timeout_duration * multiplier), 3600)
 
@@ -2645,24 +2645,27 @@ class Threads(interactions.Extension):
                             reason=f"AI detected {severity} - {timeout_duration}s timeout",
                         )
 
-                        user_data = self.model.timeout_history.get(
-                            str(message_author.id), {}
-                        )
-                        violation_count = user_data.get("violation_count", 0)
-
-                        if violation_count >= 3:
-                            global_timeout_duration = min(timeout_duration * 2, 3600)
-                            timeout_until = datetime.now(timezone.utc) + timedelta(
-                                seconds=global_timeout_duration
+                        if score >= 10:
+                            user_data = self.model.timeout_history.get(
+                                str(message_author.id), {}
                             )
+                            violation_count = user_data.get("violation_count", 0)
 
-                            try:
-                                await message_author.timeout(
-                                    communication_disabled_until=timeout_until,
-                                    reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
+                            if violation_count >= 3:
+                                global_timeout_duration = min(
+                                    timeout_duration * 2, 3600
                                 )
-                            except Exception as e:
-                                logger.error(f"Failed to apply global timeout: {e}")
+                                timeout_until = datetime.now(timezone.utc) + timedelta(
+                                    seconds=global_timeout_duration
+                                )
+
+                                try:
+                                    await message_author.timeout(
+                                        communication_disabled_until=timeout_until,
+                                        reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Failed to apply global timeout: {e}")
 
                         logger.info(
                             f"Successfully applied permissions for user {message_author.id}"
@@ -2694,7 +2697,7 @@ class Threads(interactions.Extension):
                     )
                     return None
             else:
-                warning_message = "Content warning issued for potentially inappropriate content (Score: 7)"
+                warning_message = "Content warning issued for potentially inappropriate content (Score: 8)"
                 try:
                     await message_author.send(warning_message)
                 except Exception as e:
@@ -2711,7 +2714,7 @@ class Threads(interactions.Extension):
                         if "global_timeout_duration" in locals()
                         else ""
                     )
-                    if score >= 8
+                    if score >= 9
                     else (
                         "Content has been flagged for review."
                         if score >= 5
@@ -2721,7 +2724,7 @@ class Threads(interactions.Extension):
             ),
             color=(
                 EmbedColor.FATAL
-                if score >= 8
+                if score >= 9
                 else EmbedColor.WARN if score >= 5 else EmbedColor.INFO
             ),
         )
@@ -2731,7 +2734,7 @@ class Threads(interactions.Extension):
             embed.add_field(name="Message", value=f"[Link]({msg_link})", inline=True)
             embed.add_field(name="Model", value=model, inline=True)
 
-        await ctx.send(embed=embed, ephemeral=score < 8)
+        await ctx.send(embed=embed, ephemeral=score < 9)
 
         return ActionDetails(
             action=ActionType.EDIT,
@@ -2746,8 +2749,8 @@ class Threads(interactions.Extension):
                     message.content[:1000] if message.content else "N/A"
                 ),
                 "ai_result": f"\n{ai_response}",
-                "is_offensive": score >= 8,
-                "timeout_duration": timeout_duration if score >= 8 else "N/A",
+                "is_offensive": score >= 9,
+                "timeout_duration": timeout_duration if score >= 9 else "N/A",
                 "global_timeout_duration": (
                     global_timeout_duration
                     if "global_timeout_duration" in locals()
@@ -5218,121 +5221,127 @@ class Threads(interactions.Extension):
                 await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
                 await self.model.adjust_timeout_cfg()
 
-                if score >= 9:
-                    multiplier = 3 if score >= 10 else 2
-                    timeout_duration = min(int(timeout_duration * multiplier), 3600)
-
-                    try:
-                        deny_perms = [
-                            interactions.Permissions.SEND_MESSAGES,
-                            interactions.Permissions.SEND_MESSAGES_IN_THREADS,
-                            interactions.Permissions.SEND_TTS_MESSAGES,
-                            interactions.Permissions.SEND_VOICE_MESSAGES,
-                            interactions.Permissions.ADD_REACTIONS,
-                            interactions.Permissions.ATTACH_FILES,
-                            interactions.Permissions.CREATE_INSTANT_INVITE,
-                            interactions.Permissions.MENTION_EVERYONE,
-                            interactions.Permissions.MANAGE_MESSAGES,
-                            interactions.Permissions.MANAGE_THREADS,
-                            interactions.Permissions.MANAGE_CHANNELS,
-                        ]
-                        forum_perms = [
-                            interactions.Permissions.CREATE_POSTS,
-                            *deny_perms,
-                        ]
-                        target_channel = getattr(post, "parent_channel", post)
+                if score >= 8:
+                    if score >= 9:
+                        multiplier = 3 if score >= 10 else 2
+                        timeout_duration = min(int(timeout_duration * multiplier), 3600)
 
                         try:
-                            if hasattr(target_channel, "parent_channel"):
-                                target_channel = target_channel.parent_channel
-                                perms = forum_perms
-                            else:
-                                perms = deny_perms
+                            deny_perms = [
+                                interactions.Permissions.SEND_MESSAGES,
+                                interactions.Permissions.SEND_MESSAGES_IN_THREADS,
+                                interactions.Permissions.SEND_TTS_MESSAGES,
+                                interactions.Permissions.SEND_VOICE_MESSAGES,
+                                interactions.Permissions.ADD_REACTIONS,
+                                interactions.Permissions.ATTACH_FILES,
+                                interactions.Permissions.CREATE_INSTANT_INVITE,
+                                interactions.Permissions.MENTION_EVERYONE,
+                                interactions.Permissions.MANAGE_MESSAGES,
+                                interactions.Permissions.MANAGE_THREADS,
+                                interactions.Permissions.MANAGE_CHANNELS,
+                            ]
+                            forum_perms = [
+                                interactions.Permissions.CREATE_POSTS,
+                                *deny_perms,
+                            ]
+                            target_channel = getattr(post, "parent_channel", post)
 
-                            severity = (
-                                "extreme violation"
-                                if score >= 10
-                                else "critical violation"
-                            )
-                            await target_channel.add_permission(
-                                referenced_message.author,
-                                deny=perms,
-                                reason=f"AI detected {severity} - {timeout_duration}s timeout",
-                            )
+                            try:
+                                if hasattr(target_channel, "parent_channel"):
+                                    target_channel = target_channel.parent_channel
+                                    perms = forum_perms
+                                else:
+                                    perms = deny_perms
 
-                            user_data = self.model.timeout_history.get(
-                                str(referenced_message.author.id), {}
-                            )
-                            violation_count = user_data.get("violation_count", 0)
-
-                            if violation_count >= 3:
-                                global_timeout_duration = min(
-                                    timeout_duration * 2, 3600
+                                severity = (
+                                    "extreme violation"
+                                    if score >= 10
+                                    else "critical violation"
                                 )
-                                timeout_until = datetime.now(timezone.utc) + timedelta(
-                                    seconds=global_timeout_duration
+                                await target_channel.add_permission(
+                                    referenced_message.author,
+                                    deny=perms,
+                                    reason=f"AI detected {severity} - {timeout_duration}s timeout",
                                 )
 
-                                try:
-                                    await referenced_message.author.timeout(
-                                        communication_disabled_until=timeout_until,
-                                        reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
+                                if score >= 10:
+                                    user_data = self.model.timeout_history.get(
+                                        str(referenced_message.author.id), {}
                                     )
-                                except Exception as e:
-                                    logger.error(f"Failed to apply global timeout: {e}")
+                                    violation_count = user_data.get(
+                                        "violation_count", 0
+                                    )
 
-                            logger.info(
-                                f"Successfully applied permissions for user {referenced_message.author.id}"
+                                    if violation_count >= 3:
+                                        global_timeout_duration = min(
+                                            timeout_duration * 2, 3600
+                                        )
+                                        timeout_until = datetime.now(
+                                            timezone.utc
+                                        ) + timedelta(seconds=global_timeout_duration)
+
+                                        try:
+                                            await referenced_message.author.timeout(
+                                                communication_disabled_until=timeout_until,
+                                                reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
+                                            )
+                                        except Exception as e:
+                                            logger.error(
+                                                f"Failed to apply global timeout: {e}"
+                                            )
+
+                                logger.info(
+                                    f"Successfully applied permissions for user {referenced_message.author.id}"
+                                )
+
+                            except Forbidden:
+                                logger.error(
+                                    f"Permission denied when trying to timeout user {referenced_message.author.id}"
+                                )
+                                await message.channel.send(
+                                    embeds=[
+                                        await self.create_embed(
+                                            title="Error",
+                                            description="The bot needs to have enough permissions.",
+                                            color=EmbedColor.ERROR,
+                                        )
+                                    ],
+                                    delete_after=5,
+                                )
+                                return None
+
+                            asyncio.create_task(
+                                self.restore_permissions(
+                                    target_channel,
+                                    referenced_message.author,
+                                    timeout_duration // 60,
+                                )
                             )
 
-                        except Forbidden:
+                        except Exception as e:
                             logger.error(
-                                f"Permission denied when trying to timeout user {referenced_message.author.id}"
+                                f"Failed to apply timeout for user {referenced_message.author.id}: {e}",
+                                exc_info=True,
                             )
                             await message.channel.send(
                                 embeds=[
                                     await self.create_embed(
                                         title="Error",
-                                        description="The bot needs to have enough permissions.",
+                                        description=f"Failed to apply timeout to {referenced_message.author.mention}",
                                         color=EmbedColor.ERROR,
                                     )
                                 ],
                                 delete_after=5,
                             )
                             return None
-
-                        asyncio.create_task(
-                            self.restore_permissions(
-                                target_channel,
-                                referenced_message.author,
-                                timeout_duration // 60,
+                    else:
+                        warning_message = "Content warning issued for potentially inappropriate content (Score: 8)"
+                        try:
+                            await referenced_message.author.send(warning_message)
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to send DM to user {referenced_message.author.id}: {e}"
                             )
-                        )
-
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to apply timeout for user {referenced_message.author.id}: {e}",
-                            exc_info=True,
-                        )
-                        await message.channel.send(
-                            embeds=[
-                                await self.create_embed(
-                                    title="Error",
-                                    description=f"Failed to apply timeout to {referenced_message.author.mention}",
-                                    color=EmbedColor.ERROR,
-                                )
-                            ],
-                            delete_after=5,
-                        )
-                        return None
-                else:
-                    warning_message = "Content warning issued for potentially inappropriate content (Score: 8)"
-                    try:
-                        await referenced_message.author.send(warning_message)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to send DM to user {referenced_message.author.id}: {e}"
-                        )
 
             embed = await self.create_embed(
                 title="AI Content Check Result",
