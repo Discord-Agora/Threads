@@ -395,7 +395,9 @@ class Model:
             logger.warning(f"Starred messages file not found: {file_path}")
             await self.save_starred_messages(file_path)
         except orjson.JSONDecodeError as e:
-            logger.error(f"Error decoding starred messages JSON data: {e}")
+            logger.error(
+                f"Error decoding starred messages JSON data: {e}", exc_info=True
+            )
         except Exception as e:
             logger.error(f"Error loading starred messages: {e}", exc_info=True)
 
@@ -437,7 +439,9 @@ class Model:
             )
             await self.save_timeout_history(file_path)
         except orjson.JSONDecodeError as e:
-            logger.error(f"Error decoding timeout history JSON data: {e}")
+            logger.error(
+                f"Error decoding timeout history JSON data: {e}", exc_info=True
+            )
         except Exception as e:
             logger.error(
                 f"Unexpected error loading timeout history: {e}", exc_info=True
@@ -465,7 +469,7 @@ class Model:
         except FileNotFoundError:
             logger.warning("GROQ API key file not found")
         except Exception as e:
-            logger.error(f"Error loading GROQ API key: {e}")
+            logger.error(f"Error loading GROQ API key: {e}", exc_info=True)
 
     async def save_groq_key(self, api_key: str, file_path: str) -> None:
         try:
@@ -474,7 +478,7 @@ class Model:
             self.groq_api_key = api_key
             logger.info("Successfully saved GROQ API key")
         except Exception as e:
-            logger.error(f"Error saving GROQ API key: {e}")
+            logger.error(f"Error saving GROQ API key: {e}", exc_info=True)
             raise
 
     async def load_phishing_db(self, file_path: str) -> None:
@@ -490,7 +494,9 @@ class Model:
             self.phishing_domains = {}
             await self.save_phishing_db(file_path)
         except orjson.JSONDecodeError as e:
-            logger.error(f"Error decoding phishing database JSON data: {e}")
+            logger.error(
+                f"Error decoding phishing database JSON data: {e}", exc_info=True
+            )
             self.phishing_domains = {}
         except Exception as e:
             logger.error(
@@ -539,7 +545,7 @@ class Model:
             )
             await self.save_banned_users(file_path)
         except orjson.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON data: {e}")
+            logger.error(f"Error decoding JSON data: {e}", exc_info=True)
         except Exception as e:
             logger.error(
                 f"Unexpected error loading banned users data: {e}", exc_info=True
@@ -622,7 +628,7 @@ class Model:
             )
             await self.save_post_stats(file_path)
         except orjson.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON data: {e}")
+            logger.error(f"Error decoding JSON data: {e}", exc_info=True)
         except Exception as e:
             logger.error(
                 f"Unexpected error loading post stats data: {e}", exc_info=True
@@ -1104,14 +1110,64 @@ class Threads(interactions.Extension):
             self.model.load_phishing_db(self.PHISHING_DB_FILE),
             self.model.load_starred_messages(self.STARRED_MESSAGES_FILE),
         )
+
+        await self.scan_existing_featured_posts()
+
         try:
             if self.model.groq_api_key:
                 self.client = groq.AsyncGroq(api_key=self.model.groq_api_key)
         except Exception as e:
-            logger.error(f"Failed to initialize Groq client: {e}")
+            logger.error(f"Failed to initialize Groq client: {e}", exc_info=True)
             self.client = None
 
     # Tag operations
+
+    async def scan_existing_featured_posts(self) -> None:
+        try:
+            for forum_id in self.FEATURED_CHANNELS:
+                forum = await self.bot.fetch_channel(forum_id)
+                if not isinstance(forum, interactions.GuildForum):
+                    continue
+
+                forum_id_str = str(forum_id)
+                self.model.featured_posts.setdefault(forum_id_str, [])
+
+                active_posts = await forum.fetch_posts()
+                archived_posts = [post async for post in forum.archived_posts()]
+
+                archived_threads = await self.bot.http.list_public_archived_threads(
+                    forum_id
+                )
+                archived_posts.extend(
+                    thread
+                    for thread_data in archived_threads.get("threads", [])
+                    if isinstance(
+                        thread := await self.bot.fetch_channel(int(thread_data["id"])),
+                        interactions.GuildForumPost,
+                    )
+                )
+
+                featured_ids = {
+                    str(post.id)
+                    for post in active_posts + archived_posts
+                    if self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
+                }
+                new_featured = featured_ids - set(
+                    self.model.featured_posts[forum_id_str]
+                )
+
+                if new_featured:
+                    self.model.featured_posts[forum_id_str].extend(new_featured)
+                    for post_id in new_featured:
+                        logger.info(
+                            f"Added previously tagged post {post_id} to featured posts for forum {forum_id}"
+                        )
+
+            await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
+            logger.info("Completed scanning for previously tagged featured posts")
+
+        except Exception as e:
+            logger.error(f"Error scanning existing featured posts: {e}", exc_info=True)
 
     async def increment_message_count(self, post_id: str) -> None:
         stats = self.model.post_stats.setdefault(post_id, PostStats())
@@ -1171,7 +1227,9 @@ class Threads(interactions.Extension):
                     logger.info(f"Added featured tag to post {post_id}")
 
         except (ValueError, NotFound) as e:
-            logger.error(f"Error adding featured tag to post {post_id}: {e}")
+            logger.error(
+                f"Error adding featured tag to post {post_id}: {e}", exc_info=True
+            )
         except Exception as e:
             logger.error(
                 f"Unexpected error adding featured tag to post {post_id}: {e}",
@@ -1214,7 +1272,7 @@ class Threads(interactions.Extension):
                     await post.unpin(reason="Rotating featured posts.")
                     await asyncio.sleep(0.25)
                 except Exception as e:
-                    logger.error(f"Failed to unpin post {post.id}: {e}")
+                    logger.error(f"Failed to unpin post {post.id}: {e}", exc_info=True)
                     return
 
             if not new_post.pinned:
@@ -1243,7 +1301,7 @@ class Threads(interactions.Extension):
                 logger.warning(f"Multiple posts pinned in channel {new_post.parent_id}")
 
         except (ValueError, NotFound) as e:
-            logger.error(f"Error pinning post {selected_post_id}: {e}")
+            logger.error(f"Error pinning post {selected_post_id}: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Unexpected error pinning new post: {e}", exc_info=True)
 
@@ -1311,11 +1369,8 @@ class Threads(interactions.Extension):
         try:
             await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
             await self.update_featured_posts_tags()
-
             await self.pin_featured_post()
-
             logger.info("Completed featured posts rotation successfully")
-
         except Exception as e:
             logger.error(
                 f"Failed to complete featured posts rotation: {e}", exc_info=True
@@ -1650,7 +1705,7 @@ class Threads(interactions.Extension):
                 if details.action in actions_set:
                     await self.send_dm(details.target, dm_embed, components)
         except Exception as e:
-            logger.error(f"Failed to send log messages: {e}")
+            logger.error(f"Failed to send log messages: {e}", exc_info=True)
 
     @staticmethod
     def get_action_color(action: ActionType) -> int:
@@ -2013,7 +2068,7 @@ class Threads(interactions.Extension):
             await ctx.send(choices)
 
         except Exception as e:
-            logger.error(f"Error in file autocomplete: {e}")
+            logger.error(f"Error in file autocomplete: {e}", exc_info=True)
             await ctx.send([])
 
     @debug_config.autocomplete("major")
@@ -2035,7 +2090,7 @@ class Threads(interactions.Extension):
             await ctx.send([{"name": k, "value": k} for k in data][:25])
 
         except Exception as e:
-            logger.error(f"Error in major section autocomplete: {e}")
+            logger.error(f"Error in major section autocomplete: {e}", exc_info=True)
             await ctx.send([])
 
     @debug_config.autocomplete("minor")
@@ -2061,7 +2116,7 @@ class Threads(interactions.Extension):
             )
 
         except Exception as e:
-            logger.error(f"Error in minor section autocomplete: {e}")
+            logger.error(f"Error in minor section autocomplete: {e}", exc_info=True)
             await ctx.send([])
 
     @module_group_debug.subcommand(
@@ -2138,7 +2193,7 @@ class Threads(interactions.Extension):
                 try:
                     os.unlink(filename)
                 except Exception as e:
-                    logger.error(f"Error cleaning up temp file: {e}")
+                    logger.error(f"Error cleaning up temp file: {e}", exc_info=True)
 
     @debug_export.autocomplete("type")
     async def autocomplete_debug_export_type(
@@ -2203,7 +2258,7 @@ class Threads(interactions.Extension):
                     )
                 valid = True
             except Exception as e:
-                logger.error(f"Invalid Groq API key: {e}")
+                logger.error(f"Invalid Groq API key: {e}", exc_info=True)
                 valid = False
 
             if not valid:
@@ -2328,7 +2383,7 @@ class Threads(interactions.Extension):
                         )
                         return None
             except Exception as e:
-                logger.error(f"Error checking user timeout status: {e}")
+                logger.error(f"Error checking user timeout status: {e}", exc_info=True)
 
         if isinstance(post, interactions.ThreadChannel):
             if message_author.id == post.owner_id or await self.can_manage_post(
@@ -2525,7 +2580,7 @@ class Threads(interactions.Extension):
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
-                logger.error(f"Error with model {model}: {e}")
+                logger.error(f"Error with model {model}: {e}", exc_info=True)
                 continue
         else:
             logger.error(f"AI analysis failed for message {message.id}")
@@ -2557,7 +2612,7 @@ class Threads(interactions.Extension):
             )
             reasoning = response_json.get("reasoning", "No reasoning provided")
         except Exception as e:
-            logger.error(f"Error parsing AI response JSON: {e}")
+            logger.error(f"Error parsing AI response JSON: {e}", exc_info=True)
             severity_score = "N/A"
             key_concerns = [
                 {
@@ -2665,7 +2720,10 @@ class Threads(interactions.Extension):
                                         reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
                                     )
                                 except Exception as e:
-                                    logger.error(f"Failed to apply global timeout: {e}")
+                                    logger.error(
+                                        f"Failed to apply global timeout: {e}",
+                                        exc_info=True,
+                                    )
 
                         logger.info(
                             f"Successfully applied permissions for user {message_author.id}"
@@ -2701,7 +2759,10 @@ class Threads(interactions.Extension):
                 try:
                     await message_author.send(warning_message)
                 except Exception as e:
-                    logger.error(f"Failed to send DM to user {message_author.id}: {e}")
+                    logger.error(
+                        f"Failed to send DM to user {message_author.id}: {e}",
+                        exc_info=True,
+                    )
 
         embed = await self.create_embed(
             title="AI Content Check Result",
@@ -2951,7 +3012,7 @@ class Threads(interactions.Extension):
                     )
 
                 except Exception as e:
-                    logger.error(f"Failed to apply timeout: {e}")
+                    logger.error(f"Failed to apply timeout: {e}", exc_info=True)
                     await self.send_error(
                         ctx, f"Failed to apply timeout to {target.mention}"
                     )
@@ -3167,7 +3228,7 @@ class Threads(interactions.Extension):
                                 await role.edit(name=new_name)
                                 await asyncio.sleep(1 + (1 if (i + 1) % 10 == 0 else 0))
                             except Exception as e:
-                                logger.error(f"Role update failed: {e}")
+                                logger.error(f"Role update failed: {e}", exc_info=True)
 
             if scope in ("all", "channels"):
                 channels = set()
@@ -3209,7 +3270,9 @@ class Threads(interactions.Extension):
                                         await asyncio.sleep(2)
 
                         except Exception as e:
-                            logger.error(f"Channel conversion failed: {e}")
+                            logger.error(
+                                f"Channel conversion failed: {e}", exc_info=True
+                            )
 
                         if isinstance(channel, interactions.GuildCategory):
                             for child in channel.channels:
@@ -3255,7 +3318,10 @@ class Threads(interactions.Extension):
                                                     await asyncio.sleep(2)
 
                                     except Exception as e:
-                                        logger.error(f"Channel conversion failed: {e}")
+                                        logger.error(
+                                            f"Channel conversion failed: {e}",
+                                            exc_info=True,
+                                        )
 
             logger.info(f"Conversion to {direction_name} completed successfully")
 
@@ -3288,7 +3354,7 @@ class Threads(interactions.Extension):
                 url = URL(message.jump_url)
                 return str(url.with_path(url.path.rsplit("/", 1)[0] + "/0"))
         except Exception as e:
-            logger.error(f"Error fetching oldest message: {e}")
+            logger.error(f"Error fetching oldest message: {e}", exc_info=True)
         return None
 
     # Lock commands
@@ -3654,7 +3720,10 @@ class Threads(interactions.Extension):
 
             return tuple(channel.available_tags or ())
         except Exception as e:
-            logger.error(f"Error fetching available tags for channel {parent_id}: {e}")
+            logger.error(
+                f"Error fetching available tags for channel {parent_id}: {e}",
+                exc_info=True,
+            )
             return tuple()
 
     manage_tags_regex_pattern = re.compile(r"manage_tags:(\d+)")
@@ -4149,7 +4218,9 @@ class Threads(interactions.Extension):
                                 title=f"Banned Users in <#{post_id}>"
                             )
                     except Exception as e:
-                        logger.error(f"Error fetching user {user_id}: {e}")
+                        logger.error(
+                            f"Error fetching user {user_id}: {e}", exc_info=True
+                        )
                         continue
 
                 if current_embed.fields:
@@ -4189,7 +4260,9 @@ class Threads(interactions.Extension):
                                 title=f"Users with Permissions in <#{post_id}>"
                             )
                     except Exception as e:
-                        logger.error(f"Error fetching user {user_id}: {e}")
+                        logger.error(
+                            f"Error fetching user {user_id}: {e}", exc_info=True
+                        )
                         continue
 
                 if current_embed.fields:
@@ -4414,11 +4487,13 @@ class Threads(interactions.Extension):
                                 title="Thread Permissions List"
                             )
                     except Exception as e:
-                        logger.error(f"Error fetching user {user_id}: {e}")
+                        logger.error(
+                            f"Error fetching user {user_id}: {e}", exc_info=True
+                        )
                         continue
 
             except Exception as e:
-                logger.error(f"Error fetching thread {post_id}: {e}")
+                logger.error(f"Error fetching thread {post_id}: {e}", exc_info=True)
                 current_embed.add_field(
                     name="Permission Entry",
                     value=(
@@ -4892,7 +4967,9 @@ class Threads(interactions.Extension):
                             )
                             return None
                 except Exception as e:
-                    logger.error(f"Error checking user timeout status: {e}")
+                    logger.error(
+                        f"Error checking user timeout status: {e}", exc_info=True
+                    )
 
             if isinstance(post, interactions.ThreadChannel):
                 if (
@@ -5132,7 +5209,7 @@ class Threads(interactions.Extension):
                 except asyncio.TimeoutError:
                     continue
                 except Exception as e:
-                    logger.error(f"Error with model {model}: {e}")
+                    logger.error(f"Error with model {model}: {e}", exc_info=True)
                     continue
             else:
                 logger.error(f"AI analysis failed for message {referenced_message.id}")
@@ -5171,7 +5248,7 @@ class Threads(interactions.Extension):
                 )
                 reasoning = response_json.get("reasoning", "No reasoning provided")
             except Exception as e:
-                logger.error(f"Error parsing AI response JSON: {e}")
+                logger.error(f"Error parsing AI response JSON: {e}", exc_info=True)
                 severity_score = "N/A"
                 key_concerns = [
                     {
@@ -5529,7 +5606,7 @@ class Threads(interactions.Extension):
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout checking URL {domain}")
             except Exception as e:
-                logger.error(f"Error checking URL {domain}: {e}")
+                logger.error(f"Error checking URL {domain}: {e}", exc_info=True)
 
         await self.model.save_phishing_db(self.PHISHING_DB_FILE)
         return False
@@ -5559,7 +5636,7 @@ class Threads(interactions.Extension):
             await message.delete()
             await message.channel.send(embeds=[embed])
         except Exception as e:
-            logger.error(f"Failed to handle malicious URL: {e}")
+            logger.error(f"Failed to handle malicious URL: {e}", exc_info=True)
 
     async def process_link(self, event: MessageCreate) -> None:
         if not self.should_process_link(event):
@@ -5584,7 +5661,9 @@ class Threads(interactions.Extension):
         try:
             await user.send(embeds=[embed])
         except Exception as e:
-            logger.warning(f"Failed to send warning DM to {user.mention}: {e}")
+            logger.warning(
+                f"Failed to send warning DM to {user.mention}: {e}", exc_info=True
+            )
 
     @staticmethod
     async def replace_message(
