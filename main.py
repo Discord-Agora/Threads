@@ -1912,7 +1912,7 @@ class Threads(interactions.Extension):
     )
     @interactions.slash_option(
         name="members",
-        description="Members of this side (mention them)",
+        description="Member to add to this side",
         required=True,
         opt_type=interactions.OptionType.USER,
     )
@@ -1921,7 +1921,7 @@ class Threads(interactions.Extension):
         ctx: interactions.SlashContext,
         debate_id: str,
         side_name: str,
-        members: str,
+        members: interactions.Member,
     ) -> None:
         if not {r.id for r in ctx.author.roles} & {self.DEBATE_ADMIN_ROLE_ID}:
             await self.send_error(
@@ -1938,19 +1938,19 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, "Can only set sides for proposed debates.")
             return
 
-        member_ids = re.findall(r"<@!?(\d+)>", members)
-
-        if not member_ids:
-            await self.send_error(ctx, "No valid member mentions found.")
+        member_id = str(members.id)
+        debate["sides"].setdefault(side_name, [])
+        
+        if member_id in debate["sides"][side_name]:
+            await self.send_error(ctx, f"{members.mention} is already on side '{side_name}'.")
             return
-
-        debate["sides"][side_name] = member_ids
+            
+        debate["sides"][side_name].append(member_id)
         await self.model.save_debates(self.DEBATES_FILE)
 
-        members_text = "".join(f"<@{mid}>, "[:-2] for mid in member_ids)
         await self.send_success(
             ctx,
-            "Added " + members_text + f" to side '{side_name}' for debate {debate_id}",
+            f"Added {members.mention} to side '{side_name}' for debate {debate_id}",
             log_to_channel=True,
         )
 
