@@ -695,7 +695,9 @@ class Model:
                 await file.write(json_data)
             logger.info(f"Successfully saved selected posts to {file_path}")
         except Exception as e:
-            logger.exception(f"Error saving selected posts to {file_path}: {e}")
+            logger.exception(
+                f"Error saving selected posts to {file_path}: {e}", exc_info=True
+            )
 
     async def load_featured_posts(self, file_path: str) -> None:
         try:
@@ -711,7 +713,9 @@ class Model:
         except orjson.JSONDecodeError as json_err:
             logger.error(f"JSON decoding error in selected posts: {json_err}")
         except Exception as e:
-            logger.exception(f"Unexpected error while loading selected posts: {e}")
+            logger.exception(
+                f"Unexpected error while loading selected posts: {e}", exc_info=True
+            )
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
         ban_cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
@@ -1183,39 +1187,51 @@ class Threads(interactions.Extension):
                 archived_threads = await self.bot.http.list_public_archived_threads(
                     forum_id
                 )
-
-                thread_list = []
                 for thread_data in archived_threads.get("threads", []):
                     thread = await self.bot.fetch_channel(int(thread_data["id"]))
                     if isinstance(thread, interactions.GuildForumPost):
-                        thread_list.append(thread)
-                archived_posts.extend(thread_list)
-                
-                featured_ids = {
-                    str(post.id)
-                    for post in [*active_posts, *archived_posts]
-                    if (
-                        self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
-                        or next(
+                        archived_posts.append(thread)
+
+                all_posts = [*active_posts, *archived_posts]
+
+                featured_ids = set()
+                for post in all_posts:
+                    has_featured_tag = self.FEATURED_TAG_ID in {
+                        tag.id for tag in post.applied_tags
+                    }
+
+                    initial_message = None
+                    if post.initial_post:
+                        initial_message = post.initial_post
+                    else:
+                        try:
+                            initial_message = await post.fetch_message(post.id)
+                        except Exception:
+                            try:
+                                initial_message = await post.get_message(post.id)
+                            except Exception as e:
+                                logger.debug(
+                                    f"Could not fetch initial message for post {post.id}: {e}",
+                                    exc_info=True,
+                                )
+                                continue
+
+                    if initial_message:
+                        thumbs_up_count = next(
                             (
                                 r.count
-                                for r in (
-                                    (
-                                        post.initial_post
-                                        or await post.get_message(post.id)
-                                        or await post.fetch_message(post.id)
-                                    ).reactions or []
-                                )
+                                for r in (initial_message.reactions or [])
                                 if r.emoji.name == "👍"
                             ),
                             0,
                         )
-                        >= 10
-                    )
-                }
 
-                for post in [*active_posts, *archived_posts]:
-                    if str(post.id) in featured_ids and self.FEATURED_TAG_ID not in {
+                        if has_featured_tag or thumbs_up_count >= 10:
+                            featured_ids.add(str(post.id))
+
+                for post in all_posts:
+                    post_id = str(post.id)
+                    if post_id in featured_ids and self.FEATURED_TAG_ID not in {
                         tag.id for tag in post.applied_tags
                     }:
                         try:
@@ -1223,11 +1239,12 @@ class Threads(interactions.Extension):
                                 applied_tags=[*post.applied_tags, self.FEATURED_TAG_ID]
                             )
                             logger.info(
-                                f"Added featured tag to post {post.id} due to thumbs up count"
+                                f"Added featured tag to post {post_id} due to thumbs up count"
                             )
                         except Exception as e:
                             logger.error(
-                                f"Failed to add featured tag to post {post.id}: {e}"
+                                f"Failed to add featured tag to post {post_id}: {e}",
+                                exc_info=True,
                             )
 
                 new_featured = featured_ids - set(
@@ -4209,7 +4226,9 @@ class Threads(interactions.Extension):
             await post.edit(applied_tags=list(new_tags))
             logger.info(f"Tags successfully updated for post {post_id}.")
         except Exception as e:
-            logger.exception(f"Failed to edit tags for post {post_id}: {e}")
+            logger.exception(
+                f"Failed to edit tags for post {post_id}: {e}", exc_info=True
+            )
             await self.send_error(ctx, "Error updating tags. Please try again later.")
             return None
 
