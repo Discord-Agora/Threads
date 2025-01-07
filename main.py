@@ -1914,7 +1914,7 @@ class Threads(interactions.Extension):
         name="members",
         description="Members of this side (mention them)",
         required=True,
-        opt_type=interactions.OptionType.STRING,
+        opt_type=interactions.OptionType.USER,
     )
     async def debate_set_sides(
         self,
