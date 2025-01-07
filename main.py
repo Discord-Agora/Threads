@@ -1193,22 +1193,51 @@ class Threads(interactions.Extension):
 
                 featured_ids = {
                     str(post.id)
-                    for post in active_posts + archived_posts
-                    if self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
+                    for post in [*active_posts, *archived_posts]
+                    if (
+                        self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
+                        or next(
+                            (
+                                r.count
+                                for r in (post.reactions or [])
+                                if r.emoji.name == "👍"
+                            ),
+                            0,
+                        )
+                        >= 10
+                    )
                 }
+
+                for post in [*active_posts, *archived_posts]:
+                    if str(post.id) in featured_ids and self.FEATURED_TAG_ID not in {
+                        tag.id for tag in post.applied_tags
+                    }:
+                        try:
+                            await post.edit(
+                                applied_tags=[*post.applied_tags, self.FEATURED_TAG_ID]
+                            )
+                            logger.info(
+                                f"Added featured tag to post {post.id} due to thumbs up count"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to add featured tag to post {post.id}: {e}"
+                            )
+
                 new_featured = featured_ids - set(
                     self.model.featured_posts[forum_id_str]
                 )
-
                 if new_featured:
                     self.model.featured_posts[forum_id_str].extend(new_featured)
                     for post_id in new_featured:
                         logger.info(
-                            f"Added previously tagged post {post_id} to featured posts for forum {forum_id}"
+                            f"Added post {post_id} to featured posts for forum {forum_id}"
                         )
 
             await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
-            logger.info("Completed scanning for previously tagged featured posts")
+            logger.info(
+                "Completed scanning for previously tagged and highly reacted featured posts"
+            )
 
         except Exception as e:
             logger.error(f"Error scanning existing featured posts: {e}", exc_info=True)
@@ -1940,11 +1969,13 @@ class Threads(interactions.Extension):
 
         member_id = str(members.id)
         debate["sides"].setdefault(side_name, [])
-        
+
         if member_id in debate["sides"][side_name]:
-            await self.send_error(ctx, f"{members.mention} is already on side '{side_name}'.")
+            await self.send_error(
+                ctx, f"{members.mention} is already on side '{side_name}'."
+            )
             return
-            
+
         debate["sides"][side_name].append(member_id)
         await self.model.save_debates(self.DEBATES_FILE)
 
@@ -2035,7 +2066,7 @@ class Threads(interactions.Extension):
                         "The debate has begun! Only debate participants and administrators can speak now.",
                     ]
                 ),
-                applied_tags=[1275098388718813217]
+                applied_tags=[1275098388718813217],
             )
 
             debate.update({"status": "active", "post_id": str(post.id)})
