@@ -1231,21 +1231,25 @@ class Threads(interactions.Extension):
 
                 for post in all_posts:
                     post_id = str(post.id)
-                    if post_id in featured_ids and self.FEATURED_TAG_ID not in {
-                        tag.id for tag in post.applied_tags
-                    }:
-                        try:
-                            await post.edit(
-                                applied_tags=[*post.applied_tags, self.FEATURED_TAG_ID]
-                            )
-                            logger.info(
-                                f"Added featured tag to post {post_id} due to thumbs up count"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to add featured tag to post {post_id}: {e}",
-                                exc_info=True,
-                            )
+                    if not (post_id in featured_ids and self.FEATURED_TAG_ID not in {tag.id for tag in post.applied_tags}):
+                        continue
+                        
+                    try:
+                        if post.archived:
+                            await post.edit(archived=False)
+                        if post.locked:
+                            await post.edit(locked=False)
+                        
+                        new_tags = [*post.applied_tags, self.FEATURED_TAG_ID]
+                        await post.edit(applied_tags=new_tags)
+                        await post.edit(archived=True)
+
+                        logger.info(f"Added featured tag to post {post_id} and restored state")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to add featured tag to post {post_id}: {e}",
+                            exc_info=True
+                        )
 
                 new_featured = featured_ids - set(
                     self.model.featured_posts[forum_id_str]
