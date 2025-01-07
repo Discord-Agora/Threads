@@ -1199,7 +1199,7 @@ class Threads(interactions.Extension):
                         or next(
                             (
                                 r.count
-                                for r in (post.reactions or [])
+                                for r in (post.initial_post.reactions or [])
                                 if r.emoji.name == "👍"
                             ),
                             0,
