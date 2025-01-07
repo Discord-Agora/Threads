@@ -180,6 +180,8 @@ class Model:
         self.starred_messages: Dict[str, int] = {}
         self.starboard_messages: Dict[str, str] = {}
         self.star_threshold: int = 3
+        self.debates: Dict[str, Dict[str, Any]] = {}
+        self.debate_votes: Dict[str, Dict[str, List[str]]] = {}
         self.star_stats: Dict[str, Dict[str, Any]] = {
             "hourly": {"stats": defaultdict(int)},
             "daily": {"stats": defaultdict(int)},
@@ -384,6 +386,36 @@ class Model:
             ),
             3600,
         )
+
+    async def load_debates(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path, mode="rb") as file:
+                content = await file.read()
+                data = orjson.loads(content) if content.strip() else {}
+                self.debates = data.get("debates", {})
+                self.debate_votes = data.get("debate_votes", {})
+            logger.info("Successfully loaded debates data")
+        except FileNotFoundError:
+            logger.warning(f"Debates file not found: {file_path}")
+            await self.save_debates(file_path)
+        except Exception as e:
+            logger.error(f"Error loading debates: {e}", exc_info=True)
+
+    async def save_debates(self, file_path: str) -> None:
+        try:
+            data = {
+                "debates": self.debates,
+                "debate_votes": self.debate_votes,
+            }
+            json_data = orjson.dumps(
+                data,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            )
+            async with aiofiles.open(file_path, mode="wb") as file:
+                await file.write(json_data)
+            logger.info("Successfully saved debates data")
+        except Exception as e:
+            logger.error(f"Error saving debates data: {e}", exc_info=True)
 
     async def load_starred_messages(self, file_path: str) -> None:
         try:
@@ -789,6 +821,7 @@ class Threads(interactions.Extension):
         ) - timedelta(days=8)
 
         self.GROQ_KEY_FILE: str = os.path.join(BASE_DIR, ".groq_key")
+        self.DEBATES_FILE: str = os.path.join(BASE_DIR, "debates.json")
         self.PHISHING_DB_FILE: str = os.path.join(BASE_DIR, "phishing_domains.json")
         self.BANNED_USERS_FILE: str = os.path.join(BASE_DIR, "banned_users.json")
         self.THREAD_PERMISSIONS_FILE: str = os.path.join(
@@ -809,6 +842,10 @@ class Threads(interactions.Extension):
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
         self.THREADS_ROLE_ID: int = 1223635198327914639
         self.GUILD_ID: int = 1150630510696075404
+        self.DEBATE_FORUM_ID: int = 1152311220557320202
+        self.DEBATE_CHANNEL_ID: int = 1151381088732708894
+        self.DEBATE_ROLE_ID: int = 1200100104682614884
+        self.DEBATE_ADMIN_ROLE_ID: int = 1200080900860424314
         self.CONGRESS_ID: int = 1196707789859459132
         self.CONGRESS_MEMBER_ROLE: int = 1200254783110525010
         self.FEATURED_TAG_ID: int = 1275098388718813215
@@ -1796,6 +1833,365 @@ class Threads(interactions.Extension):
         description="Threads commands",
     )
 
+    # Debate commands
+
+    module_group_debate: interactions.SlashCommand = module_base.group(
+        name="debate",
+        description="Debate management commands",
+    )
+
+    @module_group_debate.subcommand(
+        "propose",
+        sub_cmd_description="Propose a new debate",
+    )
+    @interactions.slash_option(
+        name="topic",
+        description="The debate topic",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="description",
+        description="Description of the debate",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+    )
+    async def debate_propose(
+        self,
+        ctx: interactions.SlashContext,
+        topic: str,
+        description: str,
+    ) -> None:
+        if not next(
+            (r for r in ctx.author.roles if r.id == self.DEBATE_ADMIN_ROLE_ID), None
+        ):
+            await self.send_error(
+                ctx, "Only debate administrators can propose debates."
+            )
+            return
+
+        debate_id = str(len(self.model.debates) + 1)
+        self.model.debates[debate_id] = dict(
+            topic=topic,
+            description=description,
+            status="proposed",
+            sides={},
+            post_id=None,
+            proposer=str(ctx.author.id),
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        await self.model.save_debates(self.DEBATES_FILE)
+        await self.send_success(
+            ctx,
+            f"Debate proposed successfully. Debate ID: {debate_id}",
+            log_to_channel=True,
+        )
+
+    @module_group_debate.subcommand(
+        "sides", sub_cmd_description="Set the sides for a debate"
+    )
+    @interactions.slash_option(
+        name="debate",
+        description="The ID of the debate",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+        argument_name="debate_id",
+    )
+    @interactions.slash_option(
+        name="side",
+        description="Name of the side",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(name="Affirmative", value="affirmative"),
+            interactions.SlashCommandChoice(name="Negative", value="negative"),
+        ],
+        argument_name="side_name",
+    )
+    @interactions.slash_option(
+        name="members",
+        description="Members of this side (mention them)",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+    )
+    async def debate_set_sides(
+        self,
+        ctx: interactions.SlashContext,
+        debate_id: str,
+        side_name: str,
+        members: str,
+    ) -> None:
+        if not {r.id for r in ctx.author.roles} & {self.DEBATE_ADMIN_ROLE_ID}:
+            await self.send_error(
+                ctx, "Only debate administrators can set debate sides."
+            )
+            return
+
+        debate = self.model.debates.get(debate_id)
+        if not debate:
+            await self.send_error(ctx, "Invalid debate ID.")
+            return
+
+        if debate["status"] != "proposed":
+            await self.send_error(ctx, "Can only set sides for proposed debates.")
+            return
+
+        member_ids = re.findall(r"<@!?(\d+)>", members)
+
+        if not member_ids:
+            await self.send_error(ctx, "No valid member mentions found.")
+            return
+
+        debate["sides"][side_name] = member_ids
+        await self.model.save_debates(self.DEBATES_FILE)
+
+        members_text = "".join(f"<@{mid}>, "[:-2] for mid in member_ids)
+        await self.send_success(
+            ctx,
+            "Added " + members_text + f" to side '{side_name}' for debate {debate_id}",
+            log_to_channel=True,
+        )
+
+    @debate_set_sides.autocomplete("debate")
+    async def autocomplete_debate_id(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        try:
+            proposed_debates = {
+                id: debate
+                for id, debate in self.model.debates.items()
+                if debate["status"] == "proposed"
+            }
+
+            choices = [
+                {"name": f"#{id}: {debate['topic'][:50]}", "value": id}
+                for id, debate in proposed_debates.items()
+            ][:25]
+
+            await ctx.send(choices)
+        except Exception as e:
+            logger.error(f"Error in debate autocomplete: {e}", exc_info=True)
+            await ctx.send([])
+
+    @module_group_debate.subcommand("start", sub_cmd_description="Start a debate")
+    @interactions.slash_option(
+        name="debate",
+        description="The ID of the debate to start",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+        argument_name="debate_id",
+    )
+    async def debate_start(
+        self,
+        ctx: interactions.SlashContext,
+        debate_id: str,
+    ) -> None:
+
+        if not any(r.id == self.DEBATE_ADMIN_ROLE_ID for r in ctx.author.roles):
+            await self.send_error(ctx, "Only debate administrators can start debates.")
+            return
+
+        debate = self.model.debates.get(debate_id)
+        if not debate or debate["status"] != "proposed" or len(debate["sides"]) < 2:
+            await self.send_error(
+                ctx,
+                next(
+                    msg
+                    for cond, msg in {
+                        not debate: "Invalid debate ID.",
+                        debate
+                        and debate["status"]
+                        != "proposed": "This debate cannot be started.",
+                        debate
+                        and len(debate["sides"])
+                        < 2: "At least two sides must be set before starting.",
+                    }.items()
+                    if cond
+                ),
+            )
+            return
+
+        try:
+            forum = await self.bot.fetch_channel(self.DEBATE_FORUM_ID)
+            if not isinstance(forum, interactions.GuildForum):
+                await self.send_error(ctx, "Debate forum channel not found.")
+                return
+
+            sides_text = "\n".join(
+                f"**{side}**: {', '.join(f'<@{mid}>' for mid in members)}"
+                for side, members in debate["sides"].items()
+            )
+
+            post = await forum.create_post(
+                name=f"Debate: {debate['topic']}",
+                content="\n".join(
+                    [
+                        f"- **Topic**: {debate['topic']}",
+                        f"- **Description**: {debate['description']}",
+                        f"- **Sides**:\n{sides_text}",
+                        "The debate has begun! Only debate participants and administrators can speak now.",
+                    ]
+                ),
+            )
+
+            debate.update({"status": "active", "post_id": str(post.id)})
+            await self.model.save_debates(self.DEBATES_FILE)
+
+            if channel := await self.bot.fetch_channel(self.DEBATE_CHANNEL_ID):
+                if isinstance(channel, interactions.GuildText):
+                    await channel.send(
+                        f"<@&{self.DEBATE_ROLE_ID}> A new debate has started!\n"
+                        f"**Topic**: {debate['topic']}\n"
+                        f"Head over to {post.mention} to watch the debate!"
+                    )
+
+            await self.send_success(
+                ctx,
+                f"Debate started successfully in {post.mention}",
+                log_to_channel=True,
+            )
+
+        except Exception as e:
+            logger.error(f"Error starting debate: {e}", exc_info=True)
+            await self.send_error(ctx, f"Error starting debate: {str(e)}")
+
+    @debate_start.autocomplete("debate")
+    async def autocomplete_start_debate_id(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        try:
+            ready_debates = {
+                id: debate
+                for id, debate in self.model.debates.items()
+                if debate["status"] == "proposed" and len(debate["sides"]) >= 2
+            }
+
+            choices = [
+                {"name": f"#{id}: {debate['topic'][:50]}", "value": id}
+                for id, debate in ready_debates.items()
+            ][:25]
+
+            await ctx.send(choices)
+        except Exception as e:
+            logger.error(f"Error in debate start autocomplete: {e}", exc_info=True)
+            await ctx.send([])
+
+    @module_group_debate.subcommand(
+        "end", sub_cmd_description="End a debate and start voting"
+    )
+    @interactions.slash_option(
+        name="debate",
+        description="The ID of the debate to end",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+        argument_name="debate_id",
+    )
+    async def debate_end(
+        self,
+        ctx: interactions.SlashContext,
+        debate_id: str,
+    ) -> None:
+        if not any(r.id == self.DEBATE_ADMIN_ROLE_ID for r in ctx.author.roles):
+            await self.send_error(ctx, "Only debate administrators can end debates.")
+            return
+
+        debate = self.model.debates.get(debate_id)
+        if not debate:
+            await self.send_error(ctx, "Invalid debate ID.")
+            return
+
+        if debate["status"] != "active":
+            await self.send_error(ctx, "This debate is not active.")
+            return
+
+        try:
+            post = await self.bot.fetch_channel(int(debate["post_id"]))
+            if not isinstance(post, interactions.GuildForumPost):
+                await self.send_error(ctx, "Debate post not found.")
+                return
+
+            poll = interactions.Poll.create(
+                question="Who won the debate?", duration=24, answers=debate["sides"]
+            )
+
+            await post.send(
+                "The debate has ended! Everyone can now discuss and vote for the winning side.",
+                poll=poll,
+            )
+
+            debate["status"] = "voting"
+            self.model.debate_votes[debate_id] = dict.fromkeys(debate["sides"], [])
+            await self.model.save_debates(self.DEBATES_FILE)
+
+            if channel := await self.bot.fetch_channel(self.DEBATE_CHANNEL_ID):
+                if isinstance(channel, interactions.GuildText):
+                    await channel.send(
+                        f"<@&{self.DEBATE_ROLE_ID}> The debate on '{debate['topic']}' has ended! "
+                        f"Head over to {post.mention} to discuss and vote for the winning side!"
+                    )
+
+            await self.send_success(
+                ctx,
+                f"Debate ended successfully. Voting has begun in {post.mention}",
+                log_to_channel=True,
+            )
+
+        except Exception as e:
+            logger.error(f"Error ending debate: {e}", exc_info=True)
+            await self.send_error(ctx, f"Error ending debate: {str(e)}")
+
+    @debate_end.autocomplete("debate")
+    async def autocomplete_end_debate_id(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        try:
+            active_debates = {
+                id: debate
+                for id, debate in self.model.debates.items()
+                if debate["status"] == "active"
+            }
+
+            choices = [
+                {"name": f"#{id}: {debate['topic'][:50]}", "value": id}
+                for id, debate in active_debates.items()
+            ][:25]
+
+            await ctx.send(choices)
+        except Exception as e:
+            logger.error(f"Error in debate end autocomplete: {e}", exc_info=True)
+            await ctx.send([])
+
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_debate(self, event: MessageCreate) -> None:
+        message = event.message
+        if not isinstance(message.channel, interactions.GuildForumPost):
+            return
+
+        debate = {d.get("post_id"): d for d in self.model.debates.values()}.get(
+            str(message.channel.id)
+        )
+        if not debate or debate["status"] != "active":
+            return
+
+        if self.DEBATE_ADMIN_ROLE_ID in {r.id for r in message.author.roles}:
+            return
+
+        allowed_users = {uid for members in debate["sides"].values() for uid in members}
+        if str(message.author.id) not in allowed_users:
+            try:
+                delete_task = message.delete()
+                notify_task = message.author.send(
+                    "Only debate participants can speak during an active debate."
+                )
+                await delete_task
+                await notify_task
+            except Exception as e:
+                logger.error(f"Error handling debate message: {e}", exc_info=True)
+
     # Debug commands
 
     module_group_debug: interactions.SlashCommand = module_base.group(
@@ -1804,28 +2200,24 @@ class Threads(interactions.Extension):
     )
 
     @module_group_debug.subcommand(
-        sub_cmd_name="exclude",
-        sub_cmd_description="Exclude posts from featured rotation",
-        options=[
-            interactions.SlashCommandOption(
-                name="action",
-                description="Action to perform",
-                required=True,
-                type=interactions.OptionType.STRING,
-                choices=[
-                    interactions.SlashCommandChoice(name="Add", value="add"),
-                    interactions.SlashCommandChoice(name="Remove", value="remove"),
-                    interactions.SlashCommandChoice(name="List", value="list"),
-                ],
-            ),
-            interactions.SlashCommandOption(
-                name="post",
-                description="ID of the post to exclude/include",
-                required=False,
-                type=interactions.OptionType.STRING,
-                argument_name="post_id",
-            ),
+        "exclude", sub_cmd_description="Exclude posts from featured rotation"
+    )
+    @interactions.slash_option(
+        name="action",
+        description="Action to perform",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        choices=[
+            interactions.SlashCommandChoice(name="Add", value="add"),
+            interactions.SlashCommandChoice(name="Remove", value="remove"),
+            interactions.SlashCommandChoice(name="List", value="list"),
         ],
+    )
+    @interactions.slash_option(
+        name="post",
+        description="ID of the post to exclude/include",
+        opt_type=interactions.OptionType.STRING,
+        argument_name="post_id",
     )
     @interactions.slash_default_member_permission(
         interactions.Permissions.ADMINISTRATOR
@@ -1913,37 +2305,33 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, f"Error processing request: {str(e)}")
 
     @module_group_debug.subcommand(
-        sub_cmd_name="config",
+        "config",
         sub_cmd_description="Manage configuration files",
-        options=[
-            interactions.SlashCommandOption(
-                name="file",
-                description="Configuration file to manage",
-                required=True,
-                type=interactions.OptionType.STRING,
-                autocomplete=True,
-            ),
-            interactions.SlashCommandOption(
-                name="major",
-                description="Major section to modify",
-                required=True,
-                type=interactions.OptionType.STRING,
-                autocomplete=True,
-            ),
-            interactions.SlashCommandOption(
-                name="minor",
-                description="Minor section to modify (leave empty to delete major section)",
-                required=False,
-                type=interactions.OptionType.STRING,
-                autocomplete=True,
-            ),
-            interactions.SlashCommandOption(
-                name="value",
-                description="New value for minor section (ignored if minor is empty)",
-                required=False,
-                type=interactions.OptionType.STRING,
-            ),
-        ],
+    )
+    @interactions.slash_option(
+        name="file",
+        description="Configuration file to manage",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="major",
+        description="Major section to modify",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="minor",
+        description="Minor section to modify (leave empty to delete major section)",
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="value",
+        description="New value for minor section (ignored if minor is empty)",
+        opt_type=interactions.OptionType.STRING,
     )
     @interactions.slash_default_member_permission(
         interactions.Permissions.ADMINISTRATOR
@@ -2127,7 +2515,7 @@ class Threads(interactions.Extension):
             await ctx.send([])
 
     @module_group_debug.subcommand(
-        sub_cmd_name="export",
+        "export",
         sub_cmd_description="Export files from the extension directory",
     )
     @interactions.slash_option(
