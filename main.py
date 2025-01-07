@@ -2035,6 +2035,7 @@ class Threads(interactions.Extension):
                         "The debate has begun! Only debate participants and administrators can speak now.",
                     ]
                 ),
+                applied_tags=[1275098388718813217]
             )
 
             debate.update({"status": "active", "post_id": str(post.id)})
