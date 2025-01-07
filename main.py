@@ -1190,7 +1190,7 @@ class Threads(interactions.Extension):
                     if isinstance(thread, interactions.GuildForumPost):
                         thread_list.append(thread)
                 archived_posts.extend(thread_list)
-
+                
                 featured_ids = {
                     str(post.id)
                     for post in [*active_posts, *archived_posts]
@@ -1199,7 +1199,13 @@ class Threads(interactions.Extension):
                         or next(
                             (
                                 r.count
-                                for r in (post.initial_post.reactions or [])
+                                for r in (
+                                    (
+                                        post.initial_post
+                                        or await post.get_message(post.id)
+                                        or await post.fetch_message(post.id)
+                                    ).reactions or []
+                                )
                                 if r.emoji.name == "👍"
                             ),
                             0,
