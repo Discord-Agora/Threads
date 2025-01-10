@@ -1157,7 +1157,7 @@ class Threads(interactions.Extension):
             self.model.load_starred_messages(self.STARRED_MESSAGES_FILE),
         )
 
-        await self.scan_existing_featured_posts()
+        # await self.scan_existing_featured_posts()
 
         try:
             if self.model.groq_api_key:
@@ -1168,106 +1168,127 @@ class Threads(interactions.Extension):
 
     # Tag operations
 
-    async def scan_existing_featured_posts(self) -> None:
-        try:
-            for forum_id in self.FEATURED_CHANNELS:
-                forum = await self.bot.fetch_channel(forum_id)
-                if not isinstance(forum, interactions.GuildForum):
-                    continue
+    # @interactions.Task.create(interactions.IntervalTrigger(hours=1))
+    # async def rotate_featured_posts_periodically(self) -> None:
+    #     try:
+    #         while True:
+    #             try:
+    #                 await self.adjust_posts_thresholds()
+    #                 await self.update_posts_rotation()
+    #             except Exception as e:
+    #                 logger.error(
+    #                     f"Error in rotating selected posts: {e}", exc_info=True
+    #                 )
+    #             await asyncio.sleep(self.rotation_interval.total_seconds())
+    #     except asyncio.CancelledError:
+    #         logger.info("Featured posts rotation task cancelled")
+    #         raise
+    #     except Exception as e:
+    #         logger.error(
+    #             f"Fatal error in featured posts rotation task: {e}", exc_info=True
+    #         )
+    #         raise
 
-                forum_id_str = str(forum_id)
-                self.model.featured_posts.setdefault(forum_id_str, [])
+    # async def scan_existing_featured_posts(self) -> None:
+    #     try:
+    #         for forum_id in self.FEATURED_CHANNELS:
+    #             forum = await self.bot.fetch_channel(forum_id)
+    #             if not isinstance(forum, interactions.GuildForum):
+    #                 continue
 
-                active_posts = await forum.fetch_posts()
+    #             forum_id_str = str(forum_id)
+    #             self.model.featured_posts.setdefault(forum_id_str, [])
 
-                archived_posts = []
-                async for post in forum.archived_posts():
-                    archived_posts.append(post)
+    #             active_posts = await forum.fetch_posts()
 
-                archived_threads = await self.bot.http.list_public_archived_threads(
-                    forum_id
-                )
-                for thread_data in archived_threads.get("threads", []):
-                    thread = await self.bot.fetch_channel(int(thread_data["id"]))
-                    if isinstance(thread, interactions.GuildForumPost):
-                        archived_posts.append(thread)
+    #             archived_posts = []
+    #             async for post in forum.archived_posts():
+    #                 archived_posts.append(post)
 
-                all_posts = [*active_posts, *archived_posts]
+    #             archived_threads = await self.bot.http.list_public_archived_threads(
+    #                 forum_id
+    #             )
+    #             for thread_data in archived_threads.get("threads", []):
+    #                 thread = await self.bot.fetch_channel(int(thread_data["id"]))
+    #                 if isinstance(thread, interactions.GuildForumPost):
+    #                     archived_posts.append(thread)
 
-                featured_ids = set()
-                for post in all_posts:
-                    has_featured_tag = self.FEATURED_TAG_ID in {
-                        tag.id for tag in post.applied_tags
-                    }
+    #             all_posts = [*active_posts, *archived_posts]
 
-                    initial_message = None
-                    if post.initial_post:
-                        initial_message = post.initial_post
-                    else:
-                        try:
-                            initial_message = await post.fetch_message(post.id)
-                        except Exception:
-                            try:
-                                initial_message = await post.get_message(post.id)
-                            except Exception as e:
-                                logger.debug(
-                                    f"Could not fetch initial message for post {post.id}: {e}",
-                                    exc_info=True,
-                                )
-                                continue
+    #             featured_ids = set()
+    #             for post in all_posts:
+    #                 has_featured_tag = self.FEATURED_TAG_ID in {
+    #                     tag.id for tag in post.applied_tags
+    #                 }
 
-                    if initial_message:
-                        thumbs_up_count = next(
-                            (
-                                r.count
-                                for r in (initial_message.reactions or [])
-                                if r.emoji.name == "👍"
-                            ),
-                            0,
-                        )
+    #                 initial_message = None
+    #                 if post.initial_post:
+    #                     initial_message = post.initial_post
+    #                 else:
+    #                     try:
+    #                         initial_message = await post.fetch_message(post.id)
+    #                     except Exception:
+    #                         try:
+    #                             initial_message = await post.get_message(post.id)
+    #                         except Exception as e:
+    #                             logger.debug(
+    #                                 f"Could not fetch initial message for post {post.id}: {e}",
+    #                                 exc_info=True,
+    #                             )
+    #                             continue
 
-                        if has_featured_tag or thumbs_up_count >= 10:
-                            featured_ids.add(str(post.id))
+    #                 if initial_message:
+    #                     thumbs_up_count = next(
+    #                         (
+    #                             r.count
+    #                             for r in (initial_message.reactions or [])
+    #                             if r.emoji.name == "👍"
+    #                         ),
+    #                         0,
+    #                     )
 
-                for post in all_posts:
-                    post_id = str(post.id)
-                    if not (post_id in featured_ids and self.FEATURED_TAG_ID not in {tag.id for tag in post.applied_tags}):
-                        continue
-                        
-                    try:
-                        if post.archived:
-                            await post.edit(archived=False)
-                        if post.locked:
-                            await post.edit(locked=False)
-                        
-                        new_tags = [*post.applied_tags, self.FEATURED_TAG_ID]
-                        await post.edit(applied_tags=new_tags)
-                        await post.edit(archived=True)
+    #                     if has_featured_tag or thumbs_up_count >= 10:
+    #                         featured_ids.add(str(post.id))
 
-                        logger.info(f"Added featured tag to post {post_id} and restored state")
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to add featured tag to post {post_id}: {e}",
-                            exc_info=True
-                        )
+    #             for post in all_posts:
+    #                 post_id = str(post.id)
+    #                 if not (post_id in featured_ids and self.FEATURED_TAG_ID not in {tag.id for tag in post.applied_tags}):
+    #                     continue
 
-                new_featured = featured_ids - set(
-                    self.model.featured_posts[forum_id_str]
-                )
-                if new_featured:
-                    self.model.featured_posts[forum_id_str].extend(new_featured)
-                    for post_id in new_featured:
-                        logger.info(
-                            f"Added post {post_id} to featured posts for forum {forum_id}"
-                        )
+    #                 try:
+    #                     if post.archived:
+    #                         await post.edit(archived=False)
+    #                     if post.locked:
+    #                         await post.edit(locked=False)
 
-            await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
-            logger.info(
-                "Completed scanning for previously tagged and highly reacted featured posts"
-            )
+    #                     new_tags = [*post.applied_tags, self.FEATURED_TAG_ID]
+    #                     await post.edit(applied_tags=new_tags)
+    #                     await post.edit(archived=True)
 
-        except Exception as e:
-            logger.error(f"Error scanning existing featured posts: {e}", exc_info=True)
+    #                     logger.info(f"Added featured tag to post {post_id} and restored state")
+    #                 except Exception as e:
+    #                     logger.error(
+    #                         f"Failed to add featured tag to post {post_id}: {e}",
+    #                         exc_info=True
+    #                     )
+
+    #             new_featured = featured_ids - set(
+    #                 self.model.featured_posts[forum_id_str]
+    #             )
+    #             if new_featured:
+    #                 self.model.featured_posts[forum_id_str].extend(new_featured)
+    #                 for post_id in new_featured:
+    #                     logger.info(
+    #                         f"Added post {post_id} to featured posts for forum {forum_id}"
+    #                     )
+
+    #         await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
+    #         logger.info(
+    #             "Completed scanning for previously tagged and highly reacted featured posts"
+    #         )
+
+    #     except Exception as e:
+    #         logger.error(f"Error scanning existing featured posts: {e}", exc_info=True)
 
     async def increment_message_count(self, post_id: str) -> None:
         stats = self.model.post_stats.setdefault(post_id, PostStats())
@@ -1275,286 +1296,286 @@ class Threads(interactions.Extension):
         stats.last_activity = datetime.now(timezone.utc)
         await self.model.save_post_stats(self.POST_STATS_FILE)
 
-    async def update_featured_posts_tags(self) -> None:
-        logger.info(
-            "Updating featured posts tags with threshold: %d",
-            self.message_count_threshold,
-        )
-        logger.debug("Current featured posts: %s", self.model.featured_posts)
+    # async def update_featured_posts_tags(self) -> None:
+    #     logger.info(
+    #         "Updating featured posts tags with threshold: %d",
+    #         self.message_count_threshold,
+    #     )
+    #     logger.debug("Current featured posts: %s", self.model.featured_posts)
 
-        eligible_posts = set()
-        for forum_id in self.FEATURED_CHANNELS:
-            forum_id_str = str(forum_id)
-            if forum_id_str in self.model.featured_posts:
-                for post_id in self.model.featured_posts[forum_id_str]:
-                    if (
-                        stats := self.model.post_stats.get(post_id)
-                    ) and stats.message_count >= self.message_count_threshold:
-                        eligible_posts.add(post_id)
+    #     eligible_posts = set()
+    #     for forum_id in self.FEATURED_CHANNELS:
+    #         forum_id_str = str(forum_id)
+    #         if forum_id_str in self.model.featured_posts:
+    #             for post_id in self.model.featured_posts[forum_id_str]:
+    #                 if (
+    #                     stats := self.model.post_stats.get(post_id)
+    #                 ) and stats.message_count >= self.message_count_threshold:
+    #                     eligible_posts.add(post_id)
 
-        for post_id in eligible_posts:
-            try:
-                await self.add_tag_to_post(post_id)
-            except Exception as e:
-                logger.error("Failed to add tag to post %s: %s", post_id, e)
-                continue
+    #     for post_id in eligible_posts:
+    #         try:
+    #             await self.add_tag_to_post(post_id)
+    #         except Exception as e:
+    #             logger.error("Failed to add tag to post %s: %s", post_id, e)
+    #             continue
 
-        logger.info("Featured posts tags update completed successfully")
+    #     logger.info("Featured posts tags update completed successfully")
 
-    async def add_tag_to_post(self, post_id: str) -> None:
-        try:
-            channel = await self.bot.fetch_channel(int(post_id))
-            forum = await self.bot.fetch_channel(channel.parent_id)
+    # async def add_tag_to_post(self, post_id: str) -> None:
+    #     try:
+    #         channel = await self.bot.fetch_channel(int(post_id))
+    #         forum = await self.bot.fetch_channel(channel.parent_id)
 
-            if not all(
-                (
-                    isinstance(channel, interactions.GuildForumPost),
-                    isinstance(forum, interactions.GuildForum),
-                )
-            ):
-                return
+    #         if not all(
+    #             (
+    #                 isinstance(channel, interactions.GuildForumPost),
+    #                 isinstance(forum, interactions.GuildForum),
+    #             )
+    #         ):
+    #             return
 
-            if channel.archived:
-                await channel.edit(archived=False)
-                await asyncio.sleep(0.5)
+    #         if channel.archived:
+    #             await channel.edit(archived=False)
+    #             await asyncio.sleep(0.5)
 
-            current_tags = frozenset(tag.id for tag in channel.applied_tags)
+    #         current_tags = frozenset(tag.id for tag in channel.applied_tags)
 
-            if self.FEATURED_TAG_ID not in current_tags:
-                new_tags = list(current_tags | {self.FEATURED_TAG_ID})
-                if len(new_tags) <= 5:
-                    await channel.edit(applied_tags=new_tags)
-                    logger.info(f"Added featured tag to post {post_id}")
+    #         if self.FEATURED_TAG_ID not in current_tags:
+    #             new_tags = list(current_tags | {self.FEATURED_TAG_ID})
+    #             if len(new_tags) <= 5:
+    #                 await channel.edit(applied_tags=new_tags)
+    #                 logger.info(f"Added featured tag to post {post_id}")
 
-        except (ValueError, NotFound) as e:
-            logger.error(
-                f"Error adding featured tag to post {post_id}: {e}", exc_info=True
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error adding featured tag to post {post_id}: {e}",
-                exc_info=True,
-            )
+    #     except (ValueError, NotFound) as e:
+    #         logger.error(
+    #             f"Error adding featured tag to post {post_id}: {e}", exc_info=True
+    #         )
+    #     except Exception as e:
+    #         logger.error(
+    #             f"Unexpected error adding featured tag to post {post_id}: {e}",
+    #             exc_info=True,
+    #         )
 
-    async def pin_featured_post(self) -> None:
-        try:
-            all_featured_posts = []
-            for forum_posts in self.model.featured_posts.values():
-                all_featured_posts.extend(forum_posts)
+    # async def pin_featured_post(self) -> None:
+    #     try:
+    #         all_featured_posts = []
+    #         for forum_posts in self.model.featured_posts.values():
+    #             all_featured_posts.extend(forum_posts)
 
-            available_posts = list(set(all_featured_posts))
+    #         available_posts = list(set(all_featured_posts))
 
-            if not available_posts:
-                return
+    #         if not available_posts:
+    #             return
 
-            current_hour = int(datetime.now(timezone.utc).timestamp() / 3600)
-            if self.model.current_pinned_post in available_posts:
-                available_posts.remove(self.model.current_pinned_post)
+    #         current_hour = int(datetime.now(timezone.utc).timestamp() / 3600)
+    #         if self.model.current_pinned_post in available_posts:
+    #             available_posts.remove(self.model.current_pinned_post)
 
-            if not available_posts:
-                return
+    #         if not available_posts:
+    #             return
 
-            selected_post_id = available_posts[current_hour % len(available_posts)]
+    #         selected_post_id = available_posts[current_hour % len(available_posts)]
 
-            new_post = await self.bot.fetch_channel(int(selected_post_id))
-            if not isinstance(new_post, interactions.GuildForumPost):
-                return
+    #         new_post = await self.bot.fetch_channel(int(selected_post_id))
+    #         if not isinstance(new_post, interactions.GuildForumPost):
+    #             return
 
-            forum = await self.bot.fetch_channel(new_post.parent_id)
-            if not isinstance(forum, interactions.GuildForum):
-                return
+    #         forum = await self.bot.fetch_channel(new_post.parent_id)
+    #         if not isinstance(forum, interactions.GuildForum):
+    #             return
 
-            posts = await forum.fetch_posts()
-            pinned_posts = [post for post in posts if post.pinned]
+    #         posts = await forum.fetch_posts()
+    #         pinned_posts = [post for post in posts if post.pinned]
 
-            for post in pinned_posts:
-                try:
-                    await post.unpin(reason="Rotating featured posts.")
-                    await asyncio.sleep(0.25)
-                except Exception as e:
-                    logger.error(f"Failed to unpin post {post.id}: {e}", exc_info=True)
-                    return
+    #         for post in pinned_posts:
+    #             try:
+    #                 await post.unpin(reason="Rotating featured posts.")
+    #                 await asyncio.sleep(0.25)
+    #             except Exception as e:
+    #                 logger.error(f"Failed to unpin post {post.id}: {e}", exc_info=True)
+    #                 return
 
-            if not new_post.pinned:
-                if new_post.archived:
-                    await new_post.edit(archived=False)
-                    await asyncio.sleep(0.25)
+    #         if not new_post.pinned:
+    #             if new_post.archived:
+    #                 await new_post.edit(archived=False)
+    #                 await asyncio.sleep(0.25)
 
-                await new_post.pin(reason="New featured post.")
-                await asyncio.sleep(0.25)
+    #             await new_post.pin(reason="New featured post.")
+    #             await asyncio.sleep(0.25)
 
-                updated_post = await self.bot.fetch_channel(int(selected_post_id))
-                if (
-                    isinstance(updated_post, interactions.GuildForumPost)
-                    and updated_post.pinned
-                ):
-                    self.model.current_pinned_post = selected_post_id
-                else:
-                    logger.error(f"Failed to pin new post {selected_post_id}")
-                    return
-            else:
-                self.model.current_pinned_post = selected_post_id
+    #             updated_post = await self.bot.fetch_channel(int(selected_post_id))
+    #             if (
+    #                 isinstance(updated_post, interactions.GuildForumPost)
+    #                 and updated_post.pinned
+    #             ):
+    #                 self.model.current_pinned_post = selected_post_id
+    #             else:
+    #                 logger.error(f"Failed to pin new post {selected_post_id}")
+    #                 return
+    #         else:
+    #             self.model.current_pinned_post = selected_post_id
 
-            posts = await forum.fetch_posts()
-            final_pinned = [post for post in posts if post.pinned]
-            if len(final_pinned) > 1:
-                logger.warning(f"Multiple posts pinned in channel {new_post.parent_id}")
+    #         posts = await forum.fetch_posts()
+    #         final_pinned = [post for post in posts if post.pinned]
+    #         if len(final_pinned) > 1:
+    #             logger.warning(f"Multiple posts pinned in channel {new_post.parent_id}")
 
-        except (ValueError, NotFound) as e:
-            logger.error(f"Error pinning post {selected_post_id}: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Unexpected error pinning new post: {e}", exc_info=True)
+    #     except (ValueError, NotFound) as e:
+    #         logger.error(f"Error pinning post {selected_post_id}: {e}", exc_info=True)
+    #     except Exception as e:
+    #         logger.error(f"Unexpected error pinning new post: {e}", exc_info=True)
 
-    async def update_posts_rotation(self) -> None:
-        forum_ids: Sequence[int] = tuple(self.FEATURED_CHANNELS)
+    # async def update_posts_rotation(self) -> None:
+    #     forum_ids: Sequence[int] = tuple(self.FEATURED_CHANNELS)
 
-        top_posts: list[Optional[str]] = []
-        tasks = [self.get_top_post_id(fid) for fid in forum_ids]
-        for task in asyncio.as_completed(tasks):
-            result = await task
-            top_posts.append(result)
+    #     top_posts: list[Optional[str]] = []
+    #     tasks = [self.get_top_post_id(fid) for fid in forum_ids]
+    #     for task in asyncio.as_completed(tasks):
+    #         result = await task
+    #         top_posts.append(result)
 
-        featured_tagged_posts: list[tuple[int, str]] = []
-        excluded_posts = self.model.featured_posts.get("excluded_posts", [])
+    #     featured_tagged_posts: list[tuple[int, str]] = []
+    #     excluded_posts = self.model.featured_posts.get("excluded_posts", [])
 
-        for forum_id in forum_ids:
-            try:
-                forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
-                    forum_id
-                )
-                if not isinstance(forum_channel, interactions.GuildForum):
-                    continue
+    #     for forum_id in forum_ids:
+    #         try:
+    #             forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
+    #                 forum_id
+    #             )
+    #             if not isinstance(forum_channel, interactions.GuildForum):
+    #                 continue
 
-                posts: List[interactions.GuildForumPost] = (
-                    await forum_channel.fetch_posts()
-                )
-                for post in posts:
-                    if (
-                        self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
-                        and str(post.id) not in excluded_posts
-                    ):
-                        featured_tagged_posts.append((forum_id, str(post.id)))
-            except Exception as e:
-                logger.error(
-                    f"Error fetching posts with featured tag from forum {forum_id}: {e}"
-                )
-                continue
+    #             posts: List[interactions.GuildForumPost] = (
+    #                 await forum_channel.fetch_posts()
+    #             )
+    #             for post in posts:
+    #                 if (
+    #                     self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
+    #                     and str(post.id) not in excluded_posts
+    #                 ):
+    #                     featured_tagged_posts.append((forum_id, str(post.id)))
+    #         except Exception as e:
+    #             logger.error(
+    #                 f"Error fetching posts with featured tag from forum {forum_id}: {e}"
+    #             )
+    #             continue
 
-        updates: list[tuple[int, str]] = []
+    #     updates: list[tuple[int, str]] = []
 
-        updates.extend(
-            (forum_id, new_post_id)
-            for forum_id, new_post_id in zip(forum_ids, top_posts)
-            if new_post_id
-        )
+    #     updates.extend(
+    #         (forum_id, new_post_id)
+    #         for forum_id, new_post_id in zip(forum_ids, top_posts)
+    #         if new_post_id
+    #     )
 
-        updates.extend(featured_tagged_posts)
+    #     updates.extend(featured_tagged_posts)
 
-        if not updates:
-            return
+    #     if not updates:
+    #         return
 
-        for forum_id, new_post_id in updates:
-            forum_id_str = str(forum_id)
-            if forum_id_str not in self.model.featured_posts or isinstance(
-                self.model.featured_posts[forum_id_str], str
-            ):
-                self.model.featured_posts[forum_id_str] = []
+    #     for forum_id, new_post_id in updates:
+    #         forum_id_str = str(forum_id)
+    #         if forum_id_str not in self.model.featured_posts or isinstance(
+    #             self.model.featured_posts[forum_id_str], str
+    #         ):
+    #             self.model.featured_posts[forum_id_str] = []
 
-            if new_post_id not in self.model.featured_posts[forum_id_str]:
-                self.model.featured_posts[forum_id_str].append(new_post_id)
-                logger.info(
-                    f"Added new featured post {new_post_id} to forum {forum_id}"
-                )
+    #         if new_post_id not in self.model.featured_posts[forum_id_str]:
+    #             self.model.featured_posts[forum_id_str].append(new_post_id)
+    #             logger.info(
+    #                 f"Added new featured post {new_post_id} to forum {forum_id}"
+    #             )
 
-        try:
-            await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
-            await self.update_featured_posts_tags()
-            await self.pin_featured_post()
-            logger.info("Completed featured posts rotation successfully")
-        except Exception as e:
-            logger.error(
-                f"Failed to complete featured posts rotation: {e}", exc_info=True
-            )
-            raise
+    #     try:
+    #         await self.model.save_featured_posts(self.FEATURED_POSTS_FILE)
+    #         await self.update_featured_posts_tags()
+    #         await self.pin_featured_post()
+    #         logger.info("Completed featured posts rotation successfully")
+    #     except Exception as e:
+    #         logger.error(
+    #             f"Failed to complete featured posts rotation: {e}", exc_info=True
+    #         )
+    #         raise
 
-    async def get_top_post_id(self, forum_id: int) -> Optional[str]:
-        try:
-            forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
-                forum_id
-            )
-            if not isinstance(forum_channel, interactions.GuildForum):
-                logger.warning(f"Channel ID {forum_id} is not a forum channel")
-                return None
+    # async def get_top_post_id(self, forum_id: int) -> Optional[str]:
+    #     try:
+    #         forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
+    #             forum_id
+    #         )
+    #         if not isinstance(forum_channel, interactions.GuildForum):
+    #             logger.warning(f"Channel ID {forum_id} is not a forum channel")
+    #             return None
 
-            posts: List[interactions.GuildForumPost] = await forum_channel.fetch_posts()
-            stats_dict: Dict[str, PostStats] = self.model.post_stats
+    #         posts: List[interactions.GuildForumPost] = await forum_channel.fetch_posts()
+    #         stats_dict: Dict[str, PostStats] = self.model.post_stats
 
-            valid_posts: List[interactions.GuildForumPost] = [
-                post for post in posts if str(post.id) in stats_dict
-            ]
+    #         valid_posts: List[interactions.GuildForumPost] = [
+    #             post for post in posts if str(post.id) in stats_dict
+    #         ]
 
-            if not valid_posts:
-                return None
+    #         if not valid_posts:
+    #             return None
 
-            top_post: interactions.GuildForumPost = max(
-                valid_posts, key=(lambda p: stats_dict[str(p.id)].message_count)
-            )
+    #         top_post: interactions.GuildForumPost = max(
+    #             valid_posts, key=(lambda p: stats_dict[str(p.id)].message_count)
+    #         )
 
-            return str(top_post.id)
+    #         return str(top_post.id)
 
-        except Exception as e:
-            logger.error(
-                f"Unexpected error fetching top post for forum {forum_id}: {e}",
-                exc_info=True,
-            )
-            return None
+    #     except Exception as e:
+    #         logger.error(
+    #             f"Unexpected error fetching top post for forum {forum_id}: {e}",
+    #             exc_info=True,
+    #         )
+    #         return None
 
-    async def adjust_posts_thresholds(self) -> None:
-        current_time: datetime = datetime.now(timezone.utc)
-        post_stats = tuple(self.model.post_stats.values())
+    # async def adjust_posts_thresholds(self) -> None:
+    #     current_time: datetime = datetime.now(timezone.utc)
+    #     post_stats = tuple(self.model.post_stats.values())
 
-        if not post_stats:
-            logger.info("No posts available to adjust thresholds.")
-            return
+    #     if not post_stats:
+    #         logger.info("No posts available to adjust thresholds.")
+    #         return
 
-        total_posts: int = len(post_stats)
-        total_messages: int = sum(stat.message_count for stat in post_stats)
-        average_messages: float = total_messages / total_posts
+    #     total_posts: int = len(post_stats)
+    #     total_messages: int = sum(stat.message_count for stat in post_stats)
+    #     average_messages: float = total_messages / total_posts
 
-        self.message_count_threshold = int(average_messages)
+    #     self.message_count_threshold = int(average_messages)
 
-        one_day_ago: datetime = current_time - timedelta(days=1)
-        recent_activity: int = sum(
-            1 for stat in post_stats if stat.last_activity >= one_day_ago
-        )
+    #     one_day_ago: datetime = current_time - timedelta(days=1)
+    #     recent_activity: int = sum(
+    #         1 for stat in post_stats if stat.last_activity >= one_day_ago
+    #     )
 
-        self.rotation_interval = (
-            timedelta(hours=12)
-            if recent_activity > 100
-            else timedelta(hours=48) if recent_activity < 10 else timedelta(hours=24)
-        )
+    #     self.rotation_interval = (
+    #         timedelta(hours=12)
+    #         if recent_activity > 100
+    #         else timedelta(hours=48) if recent_activity < 10 else timedelta(hours=24)
+    #     )
 
-        activity_threshold: int = 50
-        adjustment_period: timedelta = timedelta(days=7)
-        minimum_threshold: int = 10
+    #     activity_threshold: int = 50
+    #     adjustment_period: timedelta = timedelta(days=7)
+    #     minimum_threshold: int = 10
 
-        if (
-            average_messages < activity_threshold
-            and (current_time - self.last_threshold_adjustment) > adjustment_period
-        ):
-            self.rotation_interval = timedelta(hours=12)
-            self.message_count_threshold = max(
-                minimum_threshold, self.message_count_threshold >> 1
-            )
-            self.last_threshold_adjustment = current_time
+    #     if (
+    #         average_messages < activity_threshold
+    #         and (current_time - self.last_threshold_adjustment) > adjustment_period
+    #     ):
+    #         self.rotation_interval = timedelta(hours=12)
+    #         self.message_count_threshold = max(
+    #             minimum_threshold, self.message_count_threshold >> 1
+    #         )
+    #         self.last_threshold_adjustment = current_time
 
-            logger.info(
-                f"Standards not met for over a week. Adjusted thresholds: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
-            )
+    #         logger.info(
+    #             f"Standards not met for over a week. Adjusted thresholds: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
+    #         )
 
-        logger.info(
-            f"Threshold adjustment complete: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
-        )
+    #     logger.info(
+    #         f"Threshold adjustment complete: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
+    #     )
 
     # View methods
 
@@ -5059,29 +5080,6 @@ class Threads(interactions.Extension):
         )
 
         await paginator.send(ctx)
-
-    # Task methods
-
-    @interactions.Task.create(interactions.IntervalTrigger(hours=1))
-    async def rotate_featured_posts_periodically(self) -> None:
-        try:
-            while True:
-                try:
-                    await self.adjust_posts_thresholds()
-                    await self.update_posts_rotation()
-                except Exception as e:
-                    logger.error(
-                        f"Error in rotating selected posts: {e}", exc_info=True
-                    )
-                await asyncio.sleep(self.rotation_interval.total_seconds())
-        except asyncio.CancelledError:
-            logger.info("Featured posts rotation task cancelled")
-            raise
-        except Exception as e:
-            logger.error(
-                f"Fatal error in featured posts rotation task: {e}", exc_info=True
-            )
-            raise
 
     # Starboard
 
