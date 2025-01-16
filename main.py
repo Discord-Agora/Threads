@@ -1607,37 +1607,42 @@ class Threads(interactions.Extension):
                 logger.debug(f"User {user_id} is exempt from spam detection")
                 return None
 
-            for history in (
-                h
-                for h in self.model.spam_detection.values()
-                if isinstance(h, defaultdict)
-            ):
-                cutoff = current_time - timedelta(
-                    seconds=self.model.spam_detection["thresholds"]["history_window"]
-                )
+            for history in (h for h in self.model.spam_detection.values() if isinstance(h, defaultdict)):
+                cutoff = current_time - timedelta(seconds=self.model.spam_detection["thresholds"]["history_window"])
                 logger.debug(f"Cleaning up message history before {cutoff}")
+                
                 for uid in tuple(history):
-                    history[uid] = [
-                        (
-                            msg
-                            if isinstance(msg, datetime)
-                            else (
-                                datetime.fromisoformat(msg)
-                                if isinstance(msg, str)
-                                else (
-                                    msg[0]
-                                    if isinstance(msg[0], datetime)
-                                    else datetime.fromisoformat(msg[0])
-                                )
-                            )
-                        )
-                        for msg in history[uid]
-                        if msg
-                    ]
-                    history[uid] = [msg for msg in history[uid] if msg > cutoff]
-                    logger.debug(
-                        f"Cleaned history for user {uid}, remaining messages: {len(history[uid])}"
-                    )
+                    cleaned_history = []
+                    for msg in history[uid]:
+                        try:
+                            if isinstance(msg, datetime):
+                                timestamp = msg
+                            elif isinstance(msg, (list, tuple)):
+                                if isinstance(msg[0], datetime):
+                                    timestamp = msg[0]
+                                elif isinstance(msg[0], str):
+                                    try:
+                                        timestamp = datetime.fromisoformat(msg[0])
+                                    except ValueError:
+                                        continue
+                                else:
+                                    continue
+                            elif isinstance(msg, str):
+                                try:
+                                    timestamp = datetime.fromisoformat(msg)
+                                except ValueError:
+                                    continue
+                            else:
+                                continue
+
+                            if timestamp > cutoff:
+                                cleaned_history.append(timestamp)
+                        except Exception as e:
+                            logger.debug(f"Skipping invalid history entry: {e}")
+                            continue
+
+                    history[uid] = cleaned_history
+                    logger.debug(f"Cleaned history for user {uid}, remaining messages: {len(history[uid])}")
 
             recent_msgs = self.model.spam_detection["message_history"][user_id]
             recent_msgs.append(current_time)
@@ -1735,7 +1740,7 @@ class Threads(interactions.Extension):
         message = event.message
 
         if message.author.bot or not isinstance(
-            message.channel, (interactions.GuildText, interactions.GuildForumPost)
+            message.channel, (interactions.GuildChannel, interactions.ThreadChannel)
         ):
             return
 
