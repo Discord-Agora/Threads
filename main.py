@@ -6,11 +6,14 @@ import functools
 import logging
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
+from itertools import starmap
 from logging.handlers import RotatingFileHandler
+from math import sqrt
+from operator import mul
 from typing import (
     Any,
     Callable,
@@ -34,6 +37,7 @@ import aiohttp
 import aioshutil
 import groq
 import interactions
+import jieba
 import orjson
 import StarCC
 from cachetools import TTLCache
@@ -103,12 +107,14 @@ class ActionDetails:
     action: ActionType
     reason: str
     post_name: str
-    actor: interactions.Member
-    target: Optional[interactions.Member] = None
-    result: str = "successful"
-    channel: Optional[
-        Union[interactions.GuildForumPost, interactions.ThreadChannel]
+    actor: Union[interactions.Member, interactions.User, interactions.ClientUser]
+    target: Optional[
+        Union[interactions.Member, interactions.User, interactions.ClientUser]
     ] = None
+    result: str = "successful"
+    channel: Optional[Union[interactions.ThreadChannel, interactions.GuildChannel]] = (
+        None
+    )
     additional_info: Optional[Mapping[str, Any]] = None
 
 
@@ -198,6 +204,33 @@ class Model:
             "activity_weight": 0.3,
             "time_weight": 0.2,
             "quality_weight": 0.5,
+        }
+
+        self.spam_detection = {
+            "message_history": defaultdict(list),
+            "content_history": defaultdict(list),
+            "mention_history": defaultdict(list),
+            "emoji_history": defaultdict(list),
+            "cooldowns": defaultdict(float),
+            "thresholds": {
+                "rate_limit": 5,
+                "max_mentions": 5,
+                "max_emojis": 10,
+                "history_window": 30,
+                "warning_cooldown": 60,
+                "similarity_thresholds": {
+                    "jaccard": 0.95,
+                    "levenshtein": 0.95,
+                    "cosine": 0.98,
+                },
+                "exempt_roles": {
+                    1243261836187664545,
+                    1275980805273026571,
+                    1292065942544711781,
+                    1200052609487208488,
+                    1200042960969019473,
+                },
+            },
         }
 
     async def adjust_star_threshold(self) -> None:
@@ -695,9 +728,7 @@ class Model:
                 await file.write(json_data)
             logger.info(f"Successfully saved selected posts to {file_path}")
         except Exception as e:
-            logger.exception(
-                f"Error saving selected posts to {file_path}: {e}", exc_info=True
-            )
+            logger.exception(f"Error saving selected posts to {file_path}: {e}")
 
     async def load_featured_posts(self, file_path: str) -> None:
         try:
@@ -713,9 +744,7 @@ class Model:
         except orjson.JSONDecodeError as json_err:
             logger.error(f"JSON decoding error in selected posts: {json_err}")
         except Exception as e:
-            logger.exception(
-                f"Unexpected error while loading selected posts: {e}", exc_info=True
-            )
+            logger.exception(f"Unexpected error while loading selected posts: {e}")
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
         ban_cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
@@ -1166,6 +1195,577 @@ class Threads(interactions.Extension):
             logger.error(f"Failed to initialize Groq client: {e}", exc_info=True)
             self.client = None
 
+    # View methods
+
+    async def create_embed(
+        self,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        color: Union[EmbedColor, int] = EmbedColor.INFO,
+        fields: Optional[List[Dict[str, str]]] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> interactions.Embed:
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc)
+        color_value: int = color.value if isinstance(color, EmbedColor) else color
+
+        embed: interactions.Embed = interactions.Embed(
+            title=title, description=description, color=color_value, timestamp=timestamp
+        )
+
+        if fields:
+            for field in fields:
+                embed.add_field(
+                    name=field.get("name", ""),
+                    value=field.get("value", ""),
+                    inline=field.get("inline", True),
+                )
+
+        guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
+        if guild and guild.icon:
+            embed.set_footer(text=guild.name, icon_url=guild.icon.url)
+        else:
+            embed.set_footer(text="鍵政大舞台")
+
+        return embed
+
+    @functools.lru_cache(maxsize=1)
+    def get_log_channels(self) -> tuple[int, int, int]:
+        return (
+            self.LOG_CHANNEL_ID,
+            self.LOG_POST_ID,
+            self.LOG_FORUM_ID,
+        )
+
+    async def send_response(
+        self,
+        ctx: Optional[
+            Union[
+                interactions.SlashContext,
+                interactions.InteractionContext,
+                interactions.ComponentContext,
+            ]
+        ],
+        title: str,
+        message: str,
+        color: EmbedColor,
+        log_to_channel: bool = True,
+        ephemeral: bool = True,
+    ) -> None:
+        embed: interactions.Embed = await self.create_embed(title, message, color)
+
+        if ctx:
+            await ctx.send(embed=embed, ephemeral=ephemeral)
+
+        if log_to_channel:
+            log_channel_id, log_post_id, log_forum_id = self.get_log_channels()
+            await self.send_to_channel(log_channel_id, embed)
+            await self.send_to_forum_post(log_forum_id, log_post_id, embed)
+
+    async def send_to_channel(self, channel_id: int, embed: interactions.Embed) -> None:
+        try:
+            channel = await self.bot.fetch_channel(channel_id)
+
+            if not isinstance(
+                channel := (
+                    channel if isinstance(channel, interactions.GuildText) else None
+                ),
+                interactions.GuildText,
+            ):
+                logger.error(f"Channel ID {channel_id} is not a valid text channel.")
+                return
+
+            await channel.send(embed=embed)
+
+        except NotFound as nf:
+            logger.error(f"Channel with ID {channel_id} not found: {nf!r}")
+        except Exception as e:
+            logger.error(f"Error sending message to channel {channel_id}: {e!r}")
+
+    async def send_to_forum_post(
+        self, forum_id: int, post_id: int, embed: interactions.Embed
+    ) -> None:
+        try:
+            if not isinstance(
+                forum := await self.bot.fetch_channel(forum_id), interactions.GuildForum
+            ):
+                logger.error(f"Channel ID {forum_id} is not a valid forum channel.")
+                return
+
+            if not isinstance(
+                thread := await forum.fetch_post(post_id),
+                interactions.GuildPublicThread,
+            ):
+                logger.error(f"Post with ID {post_id} is not a valid thread.")
+                return
+
+            await thread.send(embed=embed)
+
+        except NotFound:
+            logger.error(f"{forum_id=}, {post_id=} - Forum or post not found")
+        except Exception as e:
+            logger.error(f"Forum post error [{forum_id=}, {post_id=}]: {e!r}")
+
+    async def send_error(
+        self,
+        ctx: Optional[
+            Union[
+                interactions.SlashContext,
+                interactions.InteractionContext,
+                interactions.ComponentContext,
+            ]
+        ],
+        message: str,
+        log_to_channel: bool = False,
+        ephemeral: bool = True,
+    ) -> None:
+        await self.send_response(
+            ctx, "Error", message, EmbedColor.ERROR, log_to_channel, ephemeral
+        )
+
+    async def send_success(
+        self,
+        ctx: Optional[
+            Union[
+                interactions.SlashContext,
+                interactions.InteractionContext,
+                interactions.ComponentContext,
+            ]
+        ],
+        message: str,
+        log_to_channel: bool = False,
+        ephemeral: bool = True,
+    ) -> None:
+        await self.send_response(
+            ctx, "Success", message, EmbedColor.INFO, log_to_channel, ephemeral
+        )
+
+    async def log_action_internal(self, details: ActionDetails) -> None:
+        logger.debug(f"log_action_internal called for action: {details.action}")
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        action_name = details.action.name.capitalize()
+
+        embeds = []
+        current_embed = await self.create_embed(
+            title=f"Action Log: {action_name}",
+            color=self.get_action_color(details.action),
+        )
+
+        fields = [
+            ("Actor", details.actor.mention if details.actor else "Unknown", True),
+            (
+                "Thread",
+                f"{details.channel.mention if details.channel else 'Unknown'}",
+                True,
+            ),
+            ("Time", f"<t:{timestamp}:F> (<t:{timestamp}:R>)", True),
+            *(
+                [
+                    (
+                        "Target",
+                        details.target.mention if details.target else "Unknown",
+                        True,
+                    )
+                ]
+                if details.target
+                else []
+            ),
+            ("Result", details.result.capitalize(), True),
+            ("Reason", details.reason, False),
+        ] + (
+            [
+                (
+                    "Additional Info",
+                    self.format_additional_info(details.additional_info),
+                    False,
+                )
+            ]
+            if details.additional_info
+            else []
+        )
+
+        for name, value, inline in fields:
+            if (
+                len(current_embed.fields) >= 25
+                or sum(len(f.value) for f in current_embed.fields) + len(value) > 6000
+            ):
+                embeds.append(current_embed)
+                current_embed = await self.create_embed(
+                    title=f"Action Log: {action_name} (Continued)",
+                    color=self.get_action_color(details.action),
+                )
+            current_embed.add_field(name=name, value=value, inline=inline)
+
+        embeds.append(current_embed)
+
+        log_channel = await self.bot.fetch_channel(self.LOG_CHANNEL_ID)
+        log_forum = await self.bot.fetch_channel(self.LOG_FORUM_ID)
+        log_post = await log_forum.fetch_post(self.LOG_POST_ID)
+
+        log_key = f"{details.action}_{details.post_name}_{timestamp}"
+        if self.last_log_key == log_key:
+            logger.warning(f"Duplicate log detected: {log_key}")
+            return
+        self.last_log_key = log_key
+
+        if log_post.archived:
+            await log_post.edit(archived=False)
+
+        try:
+            await log_post.send(embeds=embeds)
+            await log_channel.send(embeds=embeds)
+
+            if details.target and not details.target.bot:
+                dm_embed = await self.create_embed(
+                    title=f"{action_name} Notification",
+                    description=self.get_notification_message(details),
+                    color=self.get_action_color(details.action),
+                )
+                components = (
+                    [
+                        interactions.Button(
+                            style=interactions.ButtonStyle.URL,
+                            label="Appeal",
+                            url="https://discord.com/channels/1150630510696075404/1230132503273013358",
+                        )
+                    ]
+                    if details.action == ActionType.LOCK
+                    else []
+                )
+                actions_set = {
+                    ActionType.LOCK,
+                    ActionType.UNLOCK,
+                    ActionType.DELETE,
+                    ActionType.BAN,
+                    ActionType.UNBAN,
+                    ActionType.SHARE_PERMISSIONS,
+                    ActionType.REVOKE_PERMISSIONS,
+                }
+                if details.action in actions_set:
+                    await self.send_dm(details.target, dm_embed, components)
+        except Exception as e:
+            logger.error(f"Failed to send log messages: {e}", exc_info=True)
+
+    @staticmethod
+    def get_action_color(action: ActionType) -> int:
+        color_mapping: Dict[ActionType, EmbedColor] = {
+            ActionType.LOCK: EmbedColor.WARN,
+            ActionType.BAN: EmbedColor.ERROR,
+            ActionType.DELETE: EmbedColor.WARN,
+            ActionType.UNLOCK: EmbedColor.INFO,
+            ActionType.UNBAN: EmbedColor.INFO,
+            ActionType.EDIT: EmbedColor.INFO,
+            ActionType.SHARE_PERMISSIONS: EmbedColor.INFO,
+            ActionType.REVOKE_PERMISSIONS: EmbedColor.WARN,
+        }
+        return color_mapping.get(action, EmbedColor.DEBUG).value
+
+    @staticmethod
+    async def send_dm(
+        target: interactions.Member,
+        embed: interactions.Embed,
+        components: List[interactions.Button],
+    ) -> None:
+        try:
+            await target.send(embeds=[embed], components=components)
+        except Exception:
+            logger.warning(f"Failed to send DM to {target.mention}", exc_info=True)
+
+    @staticmethod
+    def get_notification_message(details: ActionDetails) -> str:
+        cm = details.channel.mention if details.channel else "the thread"
+        a = details.action
+
+        base_messages = {
+            ActionType.LOCK: f"{cm} has been locked.",
+            ActionType.UNLOCK: f"{cm} has been unlocked.",
+            ActionType.DELETE: f"Your message has been deleted from {cm}.",
+            ActionType.BAN: f"You have been banned from {cm}. If you continue to attempt to post, your comments will be deleted.",
+            ActionType.UNBAN: f"You have been unbanned from {cm}.",
+            ActionType.SHARE_PERMISSIONS: f"You have been granted permissions to {cm}.",
+            ActionType.REVOKE_PERMISSIONS: f"Your permissions for {cm} have been revoked.",
+        }
+
+        if a == ActionType.EDIT:
+            if details.additional_info and "tag_updates" in details.additional_info:
+                updates = details.additional_info["tag_updates"]
+                actions = [
+                    f"{update['Action']}ed tag `{update['Tag']}`" for update in updates
+                ]
+                return f"Tags have been modified in {cm}: {', '.join(actions)}."
+            return f"Changes have been made to {cm}."
+
+        m = base_messages.get(
+            a, f"An action ({a.name.lower()}) has been performed in {cm}."
+        )
+
+        if a not in {
+            ActionType.BAN,
+            ActionType.UNBAN,
+            ActionType.SHARE_PERMISSIONS,
+            ActionType.REVOKE_PERMISSIONS,
+        }:
+            m += f" Reason: {details.reason}"
+
+        return m
+
+    @staticmethod
+    def format_additional_info(info: Mapping[str, Any]) -> str:
+        return "\n".join(
+            (
+                f"**{k.replace('_', ' ').title()}**:\n"
+                + "\n".join(f"- {ik}: {iv}" for d in v for ik, iv in d.items())
+                if isinstance(v, list) and v and isinstance(v[0], dict)
+                else f"**{k.replace('_', ' ').title()}**: {v}"
+            )
+            for k, v in info.items()
+        )
+
+    # Auto moderation
+
+    @staticmethod
+    def calculate_jaccard_similarity(str1: str, str2: str) -> float:
+        words1, words2 = map(lambda x: frozenset(jieba.cut(x)), (str1, str2))
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        return intersection / union if union else 0.0
+
+    @staticmethod
+    def calculate_levenshtein_similarity(str1: str, str2: str) -> float:
+        if len(str1) < len(str2):
+            str1, str2 = str2, str1
+
+        if not str2:
+            return 1.0 if not str1 else 0.0
+
+        len_str2 = len(str2)
+        previous_row = memoryview(bytearray(range(len_str2 + 1)))
+        current_row = memoryview(bytearray(len_str2 + 1))
+
+        for i, c1 in enumerate(str1):
+            current_row[0] = i + 1
+            for j, c2 in enumerate(str2):
+                current_row[j + 1] = min(
+                    previous_row[j + 1] + 1,
+                    current_row[j] + 1,
+                    previous_row[j] + (c1 != c2),
+                )
+            previous_row[:], current_row[:] = current_row[:], previous_row[:]
+
+        return 1 - (previous_row[-1] / max(len(str1), len_str2))
+
+    @staticmethod
+    def calculate_cosine_similarity(str1: str, str2: str) -> float:
+
+        words1, words2 = map(Counter, map(jieba.cut, (str1, str2)))
+        common_words = set(words1) & set(words2)
+
+        if not common_words:
+            return 0.0
+
+        dot_product = sum(starmap(mul, ((words1[x], words2[x]) for x in common_words)))
+        norm1 = sqrt(sum(cnt * cnt for cnt in words1.values()))
+        norm2 = sqrt(sum(cnt * cnt for cnt in words2.values()))
+
+        return dot_product / (norm1 * norm2) if norm1 and norm2 else 0.0
+
+    def check_text_similarity(
+        self, new_text: str, old_text: str
+    ) -> Tuple[bool, Dict[str, float]]:
+        thresholds = self.model.spam_detection["thresholds"]["similarity_thresholds"]
+
+        similarities = dict(
+            zip(
+                ("jaccard", "levenshtein", "cosine"),
+                map(
+                    lambda f: f(new_text, old_text),
+                    (
+                        self.calculate_jaccard_similarity,
+                        self.calculate_levenshtein_similarity,
+                        self.calculate_cosine_similarity,
+                    ),
+                ),
+            )
+        )
+
+        return (
+            sum(map(lambda x: similarities[x[0]] >= x[1], thresholds.items())) >= 2,
+            similarities,
+        )
+
+    async def check_message_spam(
+        self, message: interactions.Message
+    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        try:
+            user_id = str(message.author.id)
+            current_time = datetime.now(timezone.utc)
+
+            if {role.id for role in message.author.roles} & self.model.spam_detection[
+                "thresholds"
+            ]["exempt_roles"]:
+                return None
+
+            for history in (
+                h
+                for h in self.model.spam_detection.values()
+                if isinstance(h, defaultdict)
+            ):
+                cutoff = current_time - timedelta(
+                    seconds=self.model.spam_detection["thresholds"]["history_window"]
+                )
+                for uid in tuple(history):
+                    history[uid] = [
+                        x
+                        for x in history[uid]
+                        if (x[0] if isinstance(x, tuple) else x) > cutoff
+                    ]
+
+            recent_msgs = self.model.spam_detection["message_history"][user_id]
+            recent_msgs.append(current_time)
+
+            if (
+                len(recent_msgs)
+                >= self.model.spam_detection["thresholds"]["rate_limit"]
+                and (recent_msgs[-1] - recent_msgs[-5]).total_seconds() < 5
+            ):
+                return (
+                    "Please slow down your messages to avoid spamming.",
+                    {"rate": (recent_msgs[-1] - recent_msgs[-5]).total_seconds()},
+                )
+
+            content = message.content.strip()
+            if len(content) > 10:
+                recent_contents = self.model.spam_detection["content_history"][user_id]
+                if any(
+                    self.check_text_similarity(content, old_content)[0]
+                    for old_content, _ in recent_contents
+                ):
+                    similar_content = next(
+                        old_content
+                        for old_content, _ in recent_contents
+                        if self.check_text_similarity(content, old_content)[0]
+                    )
+                    return (
+                        "Please do not send similar messages repeatedly.",
+                        {
+                            "similarity_scores": self.check_text_similarity(
+                                content, similar_content
+                            )[1],
+                            "compared_with": similar_content,
+                        },
+                    )
+                recent_contents.append((content, current_time))
+
+            mention_count = (
+                len(message._mention_ids)
+                + len(message._mention_roles)
+                + len(message.mention_channels)
+                + (1 if message.mention_everyone else 0)
+            )
+
+            if mention_count > self.model.spam_detection["thresholds"]["max_mentions"]:
+                return (
+                    f"Please do not mention too many users in a single message (maximum {self.model.spam_detection['thresholds']['max_mentions']}).",
+                    {"mention_count": mention_count},
+                )
+
+            if (
+                emoji_count := sum(
+                    1
+                    for _ in re.finditer(
+                        r"[\U0001F300-\U0001F9FF]|[\u2600-\u26FF\u2700-\u27BF]", content
+                    )
+                )
+            ) > self.model.spam_detection["thresholds"]["max_emojis"]:
+                return (
+                    f"Please do not use too many emojis in a single message (maximum {self.model.spam_detection['thresholds']['max_emojis']}).",
+                    {"emoji_count": emoji_count},
+                )
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error in spam detection: {e}", exc_info=True)
+            return None
+
+    @interactions.listen(MessageCreate)
+    async def on_message_create_for_moderation(self, event: MessageCreate) -> None:
+        message = event.message
+
+        if message.author.bot or not isinstance(
+            message.channel, (interactions.GuildText, interactions.GuildForumPost)
+        ):
+            return
+
+        user_id = str(message.author.id)
+        current_time = datetime.now(timezone.utc).timestamp()
+
+        if (
+            current_time - self.model.spam_detection["cooldowns"].get(user_id, 0)
+            < self.model.spam_detection["thresholds"]["warning_cooldown"]
+        ):
+            return
+
+        if not (spam_check_result := await self.check_message_spam(message)):
+            return
+
+        warning, additional_info = spam_check_result
+        try:
+            self.model.spam_detection["cooldowns"][user_id] = current_time
+
+            backup_embed = await self.create_embed(
+                title="Message Backup",
+                description="Your message was deleted for violating rules. Here is a backup of the message content:",
+            )
+
+            content = message.content if message.content else "[No text content]"
+            content_chunks = [
+                content[i : i + 1024] for i in range(0, len(content), 1024)
+            ]
+
+            for i, chunk in enumerate(content_chunks):
+                field_name = f"Message Content (Part {i+1}/{len(content_chunks)})"
+                backup_embed.add_field(
+                    name=field_name,
+                    value=chunk,
+                )
+
+            if attachments := message.attachments:
+                backup_embed.add_field(
+                    name="Attachment Links",
+                    value="\n".join(map(lambda a: a.url, attachments)),
+                )
+
+            warning_embed = await self.create_embed(
+                title="Message Moderation Notice",
+                description=warning,
+                color=EmbedColor.WARN,
+            )
+
+            await asyncio.gather(
+                message.author.send(embed=backup_embed),
+                message.delete(),
+                message.author.send(embed=warning_embed),
+                self.log_action_internal(
+                    ActionDetails(
+                        action=ActionType.DELETE,
+                        reason=warning,
+                        post_name=message.channel.name,
+                        actor=self.bot.user,
+                        target=message.author,
+                        channel=message.channel,
+                        additional_info={
+                            "original_content": message.content,
+                            "attachments": [a.url for a in message.attachments],
+                            **additional_info,
+                        },
+                    )
+                ),
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling spam message: {e}", exc_info=True)
+
     # Tag operations
 
     @interactions.Task.create(interactions.IntervalTrigger(hours=1))
@@ -1575,332 +2175,6 @@ class Threads(interactions.Extension):
 
         logger.info(
             f"Threshold adjustment complete: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
-        )
-
-    # View methods
-
-    async def create_embed(
-        self,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        color: Union[EmbedColor, int] = EmbedColor.INFO,
-        fields: Optional[List[Dict[str, str]]] = None,
-        timestamp: Optional[datetime] = None,
-    ) -> interactions.Embed:
-        if timestamp is None:
-            timestamp = datetime.now(timezone.utc)
-        color_value: int = color.value if isinstance(color, EmbedColor) else color
-
-        embed: interactions.Embed = interactions.Embed(
-            title=title, description=description, color=color_value, timestamp=timestamp
-        )
-
-        if fields:
-            for field in fields:
-                embed.add_field(
-                    name=field.get("name", ""),
-                    value=field.get("value", ""),
-                    inline=field.get("inline", True),
-                )
-
-        guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
-        if guild and guild.icon:
-            embed.set_footer(text=guild.name, icon_url=guild.icon.url)
-        else:
-            embed.set_footer(text="鍵政大舞台")
-
-        return embed
-
-    @functools.lru_cache(maxsize=1)
-    def get_log_channels(self) -> tuple[int, int, int]:
-        return (
-            self.LOG_CHANNEL_ID,
-            self.LOG_POST_ID,
-            self.LOG_FORUM_ID,
-        )
-
-    async def send_response(
-        self,
-        ctx: Optional[
-            Union[
-                interactions.SlashContext,
-                interactions.InteractionContext,
-                interactions.ComponentContext,
-            ]
-        ],
-        title: str,
-        message: str,
-        color: EmbedColor,
-        log_to_channel: bool = True,
-        ephemeral: bool = True,
-    ) -> None:
-        embed: interactions.Embed = await self.create_embed(title, message, color)
-
-        if ctx:
-            await ctx.send(embed=embed, ephemeral=ephemeral)
-
-        if log_to_channel:
-            log_channel_id, log_post_id, log_forum_id = self.get_log_channels()
-            await self.send_to_channel(log_channel_id, embed)
-            await self.send_to_forum_post(log_forum_id, log_post_id, embed)
-
-    async def send_to_channel(self, channel_id: int, embed: interactions.Embed) -> None:
-        try:
-            channel = await self.bot.fetch_channel(channel_id)
-
-            if not isinstance(
-                channel := (
-                    channel if isinstance(channel, interactions.GuildText) else None
-                ),
-                interactions.GuildText,
-            ):
-                logger.error(f"Channel ID {channel_id} is not a valid text channel.")
-                return
-
-            await channel.send(embed=embed)
-
-        except NotFound as nf:
-            logger.error(f"Channel with ID {channel_id} not found: {nf!r}")
-        except Exception as e:
-            logger.error(f"Error sending message to channel {channel_id}: {e!r}")
-
-    async def send_to_forum_post(
-        self, forum_id: int, post_id: int, embed: interactions.Embed
-    ) -> None:
-        try:
-            if not isinstance(
-                forum := await self.bot.fetch_channel(forum_id), interactions.GuildForum
-            ):
-                logger.error(f"Channel ID {forum_id} is not a valid forum channel.")
-                return
-
-            if not isinstance(
-                thread := await forum.fetch_post(post_id),
-                interactions.GuildPublicThread,
-            ):
-                logger.error(f"Post with ID {post_id} is not a valid thread.")
-                return
-
-            await thread.send(embed=embed)
-
-        except NotFound:
-            logger.error(f"{forum_id=}, {post_id=} - Forum or post not found")
-        except Exception as e:
-            logger.error(f"Forum post error [{forum_id=}, {post_id=}]: {e!r}")
-
-    async def send_error(
-        self,
-        ctx: Optional[
-            Union[
-                interactions.SlashContext,
-                interactions.InteractionContext,
-                interactions.ComponentContext,
-            ]
-        ],
-        message: str,
-        log_to_channel: bool = False,
-        ephemeral: bool = True,
-    ) -> None:
-        await self.send_response(
-            ctx, "Error", message, EmbedColor.ERROR, log_to_channel, ephemeral
-        )
-
-    async def send_success(
-        self,
-        ctx: Optional[
-            Union[
-                interactions.SlashContext,
-                interactions.InteractionContext,
-                interactions.ComponentContext,
-            ]
-        ],
-        message: str,
-        log_to_channel: bool = False,
-        ephemeral: bool = True,
-    ) -> None:
-        await self.send_response(
-            ctx, "Success", message, EmbedColor.INFO, log_to_channel, ephemeral
-        )
-
-    async def log_action_internal(self, details: ActionDetails) -> None:
-        logger.debug(f"log_action_internal called for action: {details.action}")
-        timestamp = int(datetime.now(timezone.utc).timestamp())
-        action_name = details.action.name.capitalize()
-
-        embeds = []
-        current_embed = await self.create_embed(
-            title=f"Action Log: {action_name}",
-            color=self.get_action_color(details.action),
-        )
-
-        fields = [
-            ("Actor", details.actor.mention if details.actor else "Unknown", True),
-            (
-                "Thread",
-                f"{details.channel.mention if details.channel else 'Unknown'}",
-                True,
-            ),
-            ("Time", f"<t:{timestamp}:F> (<t:{timestamp}:R>)", True),
-            *(
-                [
-                    (
-                        "Target",
-                        details.target.mention if details.target else "Unknown",
-                        True,
-                    )
-                ]
-                if details.target
-                else []
-            ),
-            ("Result", details.result.capitalize(), True),
-            ("Reason", details.reason, False),
-        ] + (
-            [
-                (
-                    "Additional Info",
-                    self.format_additional_info(details.additional_info),
-                    False,
-                )
-            ]
-            if details.additional_info
-            else []
-        )
-
-        for name, value, inline in fields:
-            if (
-                len(current_embed.fields) >= 25
-                or sum(len(f.value) for f in current_embed.fields) + len(value) > 6000
-            ):
-                embeds.append(current_embed)
-                current_embed = await self.create_embed(
-                    title=f"Action Log: {action_name} (Continued)",
-                    color=self.get_action_color(details.action),
-                )
-            current_embed.add_field(name=name, value=value, inline=inline)
-
-        embeds.append(current_embed)
-
-        log_channel = await self.bot.fetch_channel(self.LOG_CHANNEL_ID)
-        log_forum = await self.bot.fetch_channel(self.LOG_FORUM_ID)
-        log_post = await log_forum.fetch_post(self.LOG_POST_ID)
-
-        log_key = f"{details.action}_{details.post_name}_{timestamp}"
-        if self.last_log_key == log_key:
-            logger.warning(f"Duplicate log detected: {log_key}")
-            return
-        self.last_log_key = log_key
-
-        if log_post.archived:
-            await log_post.edit(archived=False)
-
-        try:
-            await log_post.send(embeds=embeds)
-            await log_channel.send(embeds=embeds)
-
-            if details.target and not details.target.bot:
-                dm_embed = await self.create_embed(
-                    title=f"{action_name} Notification",
-                    description=self.get_notification_message(details),
-                    color=self.get_action_color(details.action),
-                )
-                components = (
-                    [
-                        interactions.Button(
-                            style=interactions.ButtonStyle.URL,
-                            label="Appeal",
-                            url="https://discord.com/channels/1150630510696075404/1230132503273013358",
-                        )
-                    ]
-                    if details.action == ActionType.LOCK
-                    else []
-                )
-                actions_set = {
-                    ActionType.LOCK,
-                    ActionType.UNLOCK,
-                    ActionType.DELETE,
-                    ActionType.BAN,
-                    ActionType.UNBAN,
-                    ActionType.SHARE_PERMISSIONS,
-                    ActionType.REVOKE_PERMISSIONS,
-                }
-                if details.action in actions_set:
-                    await self.send_dm(details.target, dm_embed, components)
-        except Exception as e:
-            logger.error(f"Failed to send log messages: {e}", exc_info=True)
-
-    @staticmethod
-    def get_action_color(action: ActionType) -> int:
-        color_mapping: Dict[ActionType, EmbedColor] = {
-            ActionType.LOCK: EmbedColor.WARN,
-            ActionType.BAN: EmbedColor.ERROR,
-            ActionType.DELETE: EmbedColor.WARN,
-            ActionType.UNLOCK: EmbedColor.INFO,
-            ActionType.UNBAN: EmbedColor.INFO,
-            ActionType.EDIT: EmbedColor.INFO,
-            ActionType.SHARE_PERMISSIONS: EmbedColor.INFO,
-            ActionType.REVOKE_PERMISSIONS: EmbedColor.WARN,
-        }
-        return color_mapping.get(action, EmbedColor.DEBUG).value
-
-    @staticmethod
-    async def send_dm(
-        target: interactions.Member,
-        embed: interactions.Embed,
-        components: List[interactions.Button],
-    ) -> None:
-        try:
-            await target.send(embeds=[embed], components=components)
-        except Exception:
-            logger.warning(f"Failed to send DM to {target.mention}", exc_info=True)
-
-    @staticmethod
-    def get_notification_message(details: ActionDetails) -> str:
-        cm = details.channel.mention if details.channel else "the thread"
-        a = details.action
-
-        base_messages = {
-            ActionType.LOCK: f"{cm} has been locked.",
-            ActionType.UNLOCK: f"{cm} has been unlocked.",
-            ActionType.DELETE: f"Your message has been deleted from {cm}.",
-            ActionType.BAN: f"You have been banned from {cm}. If you continue to attempt to post, your comments will be deleted.",
-            ActionType.UNBAN: f"You have been unbanned from {cm}.",
-            ActionType.SHARE_PERMISSIONS: f"You have been granted permissions to {cm}.",
-            ActionType.REVOKE_PERMISSIONS: f"Your permissions for {cm} have been revoked.",
-        }
-
-        if a == ActionType.EDIT:
-            if details.additional_info and "tag_updates" in details.additional_info:
-                updates = details.additional_info["tag_updates"]
-                actions = [
-                    f"{update['Action']}ed tag `{update['Tag']}`" for update in updates
-                ]
-                return f"Tags have been modified in {cm}: {', '.join(actions)}."
-            return f"Changes have been made to {cm}."
-
-        m = base_messages.get(
-            a, f"An action ({a.name.lower()}) has been performed in {cm}."
-        )
-
-        if a not in {
-            ActionType.BAN,
-            ActionType.UNBAN,
-            ActionType.SHARE_PERMISSIONS,
-            ActionType.REVOKE_PERMISSIONS,
-        }:
-            m += f" Reason: {details.reason}"
-
-        return m
-
-    @staticmethod
-    def format_additional_info(info: Mapping[str, Any]) -> str:
-        return "\n".join(
-            (
-                f"**{k.replace('_', ' ').title()}**:\n"
-                + "\n".join(f"- {ik}: {iv}" for d in v for ik, iv in d.items())
-                if isinstance(v, list) and v and isinstance(v[0], dict)
-                else f"**{k.replace('_', ' ').title()}**: {v}"
-            )
-            for k, v in info.items()
         )
 
     # Base commands
@@ -4251,9 +4525,7 @@ class Threads(interactions.Extension):
             await post.edit(applied_tags=list(new_tags))
             logger.info(f"Tags successfully updated for post {post_id}.")
         except Exception as e:
-            logger.exception(
-                f"Failed to edit tags for post {post_id}: {e}", exc_info=True
-            )
+            logger.exception(f"Failed to edit tags for post {post_id}: {e}")
             await self.send_error(ctx, "Error updating tags. Please try again later.")
             return None
 
