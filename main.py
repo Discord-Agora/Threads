@@ -1599,10 +1599,12 @@ class Threads(interactions.Extension):
         try:
             user_id = str(message.author.id)
             current_time = datetime.now(timezone.utc)
+            logger.debug(f"Checking spam for user {user_id} at {current_time}")
 
             if {role.id for role in message.author.roles} & self.model.spam_detection[
                 "thresholds"
             ]["exempt_roles"]:
+                logger.debug(f"User {user_id} is exempt from spam detection")
                 return None
 
             for history in (
@@ -1613,35 +1615,52 @@ class Threads(interactions.Extension):
                 cutoff = current_time - timedelta(
                     seconds=self.model.spam_detection["thresholds"]["history_window"]
                 )
+                logger.debug(f"Cleaning up message history before {cutoff}")
                 for uid in tuple(history):
                     history[uid] = [
                         (
-                            msg if isinstance(msg, datetime)
-                            else datetime.fromisoformat(msg) if isinstance(msg, str)
-                            else msg[0] if isinstance(msg[0], datetime)
-                            else datetime.fromisoformat(msg[0])
+                            msg
+                            if isinstance(msg, datetime)
+                            else (
+                                datetime.fromisoformat(msg)
+                                if isinstance(msg, str)
+                                else (
+                                    msg[0]
+                                    if isinstance(msg[0], datetime)
+                                    else datetime.fromisoformat(msg[0])
+                                )
+                            )
                         )
                         for msg in history[uid]
                         if msg
                     ]
                     history[uid] = [msg for msg in history[uid] if msg > cutoff]
+                    logger.debug(
+                        f"Cleaned history for user {uid}, remaining messages: {len(history[uid])}"
+                    )
 
             recent_msgs = self.model.spam_detection["message_history"][user_id]
             recent_msgs.append(current_time)
+            logger.debug(f"User {user_id} recent messages count: {len(recent_msgs)}")
 
             if (
                 len(recent_msgs)
                 >= self.model.spam_detection["thresholds"]["rate_limit"]
                 and (recent_msgs[-1] - recent_msgs[-5]).total_seconds() < 5
             ):
+                rate = (recent_msgs[-1] - recent_msgs[-5]).total_seconds()
+                logger.warning(
+                    f"Rate limit exceeded for user {user_id}: {rate} seconds between messages"
+                )
                 return (
                     "Please slow down your messages to avoid spamming.",
-                    {"rate": (recent_msgs[-1] - recent_msgs[-5]).total_seconds()},
+                    {"rate": rate},
                 )
 
             content = message.content.strip()
             if len(content) > 10:
                 recent_contents = self.model.spam_detection["content_history"][user_id]
+                logger.debug(f"Checking content similarity for user {user_id}")
                 if any(
                     self.check_text_similarity(content, old_content)[0]
                     for old_content, _ in recent_contents
@@ -1651,16 +1670,21 @@ class Threads(interactions.Extension):
                         for old_content, _ in recent_contents
                         if self.check_text_similarity(content, old_content)[0]
                     )
+                    similarity_scores = self.check_text_similarity(
+                        content, similar_content
+                    )[1]
+                    logger.warning(
+                        f"Similar content detected for user {user_id}. Scores: {similarity_scores}"
+                    )
                     return (
                         "Please do not send similar messages repeatedly.",
                         {
-                            "similarity_scores": self.check_text_similarity(
-                                content, similar_content
-                            )[1],
+                            "similarity_scores": similarity_scores,
                             "compared_with": similar_content,
                         },
                     )
                 recent_contents.append((content, current_time))
+                logger.debug(f"Added new content to history for user {user_id}")
 
             mention_count = (
                 len(message._mention_ids)
@@ -1668,8 +1692,14 @@ class Threads(interactions.Extension):
                 + len(message.mention_channels)
                 + (1 if message.mention_everyone else 0)
             )
+            logger.debug(
+                f"Message from user {user_id} contains {mention_count} mentions"
+            )
 
             if mention_count > self.model.spam_detection["thresholds"]["max_mentions"]:
+                logger.warning(
+                    f"Excessive mentions ({mention_count}) detected from user {user_id}"
+                )
                 return (
                     f"Please do not mention too many users in a single message (maximum {self.model.spam_detection['thresholds']['max_mentions']}).",
                     {"mention_count": mention_count},
@@ -1683,15 +1713,21 @@ class Threads(interactions.Extension):
                     )
                 )
             ) > self.model.spam_detection["thresholds"]["max_emojis"]:
+                logger.warning(
+                    f"Excessive emojis ({emoji_count}) detected from user {user_id}"
+                )
                 return (
                     f"Please do not use too many emojis in a single message (maximum {self.model.spam_detection['thresholds']['max_emojis']}).",
                     {"emoji_count": emoji_count},
                 )
 
+            logger.debug(f"No spam detected for user {user_id}")
             return None
 
         except Exception as e:
-            logger.error(f"Error in spam detection: {e}", exc_info=True)
+            logger.error(
+                f"Error in spam detection for user {user_id}: {e}", exc_info=True
+            )
             return None
 
     @interactions.listen(MessageCreate)
@@ -1705,11 +1741,15 @@ class Threads(interactions.Extension):
 
         user_id = str(message.author.id)
         current_time = datetime.now(timezone.utc).timestamp()
+        logger.debug(
+            f"Processing message from user {user_id} in channel {message.channel.name}"
+        )
 
         if (
             current_time - self.model.spam_detection["cooldowns"].get(user_id, 0)
             < self.model.spam_detection["thresholds"]["warning_cooldown"]
         ):
+            logger.debug(f"User {user_id} is in cooldown period")
             return
 
         if not (spam_check_result := await self.check_message_spam(message)):
@@ -1718,6 +1758,7 @@ class Threads(interactions.Extension):
         warning, additional_info = spam_check_result
         try:
             self.model.spam_detection["cooldowns"][user_id] = current_time
+            logger.info(f"Taking action against spam from user {user_id}: {warning}")
 
             backup_embed = await self.create_embed(
                 title="Message Backup",
@@ -1728,6 +1769,7 @@ class Threads(interactions.Extension):
             content_chunks = [
                 content[i : i + 1024] for i in range(0, len(content), 1024)
             ]
+            logger.debug(f"Created {len(content_chunks)} content chunks for backup")
 
             for i, chunk in enumerate(content_chunks):
                 field_name = f"Message Content (Part {i+1}/{len(content_chunks)})"
@@ -1741,6 +1783,7 @@ class Threads(interactions.Extension):
                     name="Attachment Links",
                     value="\n".join(map(lambda a: a.url, attachments)),
                 )
+                logger.debug(f"Added {len(attachments)} attachments to backup")
 
             warning_embed = await self.create_embed(
                 title="Message Moderation Notice",
@@ -1748,6 +1791,9 @@ class Threads(interactions.Extension):
                 color=EmbedColor.WARN,
             )
 
+            logger.info(
+                f"Sending moderation notice and deleting message for user {user_id}"
+            )
             await asyncio.gather(
                 message.author.send(embed=backup_embed),
                 message.delete(),
@@ -1768,9 +1814,12 @@ class Threads(interactions.Extension):
                     )
                 ),
             )
+            logger.info(f"Successfully completed moderation actions for user {user_id}")
 
         except Exception as e:
-            logger.error(f"Error handling spam message: {e}", exc_info=True)
+            logger.error(
+                f"Error handling spam message from user {user_id}: {e}", exc_info=True
+            )
 
     # Tag operations
 
