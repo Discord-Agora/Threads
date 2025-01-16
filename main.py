@@ -164,6 +164,53 @@ class TimeoutConfig:
     max_duration_step: int = 300
 
 
+@dataclass
+class MessageRecord:
+    timestamp: datetime
+    content: Optional[str] = None
+
+
+@dataclass
+class SpamThresholds:
+    rate_limit: int = 5
+    max_mentions: int = 5
+    max_emojis: int = 10
+    history_window: int = 30
+    warning_cooldown: int = 60
+    similarity_thresholds: Dict[str, float] = field(
+        default_factory=lambda: {"jaccard": 0.95, "levenshtein": 0.95, "cosine": 0.98}
+    )
+    exempt_roles: Set[int] = field(
+        default_factory=lambda: {
+            1243261836187664545,
+            1275980805273026571,
+            1292065942544711781,
+            1200052609487208488,
+            1200042960969019473,
+        }
+    )
+
+
+@dataclass
+class SpamDetection:
+    message_history: DefaultDict[str, List[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    content_history: DefaultDict[str, List[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    mention_history: DefaultDict[str, List[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    emoji_history: DefaultDict[str, List[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    cooldowns: DefaultDict[str, float] = field(
+        default_factory=lambda: defaultdict(float)
+    )
+    thresholds: SpamThresholds = field(default_factory=SpamThresholds)
+
+
 class Model:
     def __init__(self) -> None:
         self.timeout_config = TimeoutConfig()
@@ -204,33 +251,6 @@ class Model:
             "activity_weight": 0.3,
             "time_weight": 0.2,
             "quality_weight": 0.5,
-        }
-
-        self.spam_detection = {
-            "message_history": defaultdict(list),
-            "content_history": defaultdict(list),
-            "mention_history": defaultdict(list),
-            "emoji_history": defaultdict(list),
-            "cooldowns": defaultdict(float),
-            "thresholds": {
-                "rate_limit": 5,
-                "max_mentions": 5,
-                "max_emojis": 10,
-                "history_window": 30,
-                "warning_cooldown": 60,
-                "similarity_thresholds": {
-                    "jaccard": 0.95,
-                    "levenshtein": 0.95,
-                    "cosine": 0.98,
-                },
-                "exempt_roles": {
-                    1243261836187664545,
-                    1275980805273026571,
-                    1292065942544711781,
-                    1200052609487208488,
-                    1200042960969019473,
-                },
-            },
         }
 
     async def adjust_star_threshold(self) -> None:
@@ -837,6 +857,12 @@ class Threads(interactions.Extension):
     def __init__(self, bot: interactions.Client) -> None:
         self.bot: interactions.Client = bot
         self.model: Model = Model()
+        self.spam_detection: SpamDetection = SpamDetection()
+        self.spam_thresholds: SpamThresholds = SpamThresholds()
+        self.message_record: MessageRecord = MessageRecord(
+            timestamp=datetime.now(timezone.utc)
+        )
+
         self.ban_lock: asyncio.Lock = asyncio.Lock()
         self.client: Optional[groq.AsyncGroq] = None
 
@@ -1557,7 +1583,8 @@ class Threads(interactions.Extension):
     @staticmethod
     def calculate_cosine_similarity(str1: str, str2: str) -> float:
 
-        words1, words2 = map(Counter, map(jieba.cut, (str1, str2)))
+        words1: Counter[str] = Counter(jieba.cut(str1))
+        words2: Counter[str] = Counter(jieba.cut(str2))
         common_words = set(words1) & set(words2)
 
         if not common_words:
@@ -1570,9 +1597,12 @@ class Threads(interactions.Extension):
         return dot_product / (norm1 * norm2) if norm1 and norm2 else 0.0
 
     def check_text_similarity(
-        self, new_text: str, old_text: str
+        self, new_text: str, old_text: str | None
     ) -> Tuple[bool, Dict[str, float]]:
-        thresholds = self.model.spam_detection["thresholds"]["similarity_thresholds"]
+        thresholds = self.spam_thresholds.similarity_thresholds
+
+        if old_text is None:
+            return False, {}
 
         similarities = dict(
             zip(
@@ -1601,94 +1631,93 @@ class Threads(interactions.Extension):
             current_time = datetime.now(timezone.utc)
             logger.debug(f"Checking spam for user {user_id} at {current_time}")
 
-            if {role.id for role in message.author.roles} & self.model.spam_detection[
-                "thresholds"
-            ]["exempt_roles"]:
+            if {
+                role.id for role in message.author.roles
+            } & self.spam_thresholds.exempt_roles:
                 logger.debug(f"User {user_id} is exempt from spam detection")
                 return None
 
-            for history in (h for h in self.model.spam_detection.values() if isinstance(h, defaultdict)):
-                cutoff = current_time - timedelta(seconds=self.model.spam_detection["thresholds"]["history_window"])
+            for history in (
+                h
+                for h in [
+                    self.spam_detection.message_history,
+                    self.spam_detection.content_history,
+                    self.spam_detection.mention_history,
+                    self.spam_detection.emoji_history,
+                ]
+                if isinstance(h, defaultdict)
+            ):
+                cutoff = current_time - timedelta(
+                    seconds=self.spam_thresholds.history_window
+                )
                 logger.debug(f"Cleaning up message history before {cutoff}")
-                
+
                 for uid in tuple(history):
                     cleaned_history = []
                     for msg in history[uid]:
                         try:
-                            if isinstance(msg, datetime):
+                            if isinstance(msg, MessageRecord):
+                                timestamp = msg.timestamp
+                            elif isinstance(msg, datetime):
                                 timestamp = msg
-                            elif isinstance(msg, (list, tuple)):
-                                if isinstance(msg[0], datetime):
-                                    timestamp = msg[0]
-                                elif isinstance(msg[0], str):
-                                    try:
-                                        timestamp = datetime.fromisoformat(msg[0])
-                                    except ValueError:
-                                        continue
-                                else:
-                                    continue
-                            elif isinstance(msg, str):
-                                try:
-                                    timestamp = datetime.fromisoformat(msg)
-                                except ValueError:
-                                    continue
                             else:
                                 continue
 
                             if timestamp > cutoff:
-                                cleaned_history.append(timestamp)
+                                cleaned_history.append(msg)
                         except Exception as e:
                             logger.debug(f"Skipping invalid history entry: {e}")
                             continue
 
                     history[uid] = cleaned_history
-                    logger.debug(f"Cleaned history for user {uid}, remaining messages: {len(history[uid])}")
+                    logger.debug(
+                        f"Cleaned history for user {uid}, remaining messages: {len(history[uid])}"
+                    )
 
-            recent_msgs = self.model.spam_detection["message_history"][user_id]
-            recent_msgs.append(current_time)
+            recent_msgs = self.spam_detection.message_history[user_id]
+            recent_msgs.append(MessageRecord(timestamp=current_time))
             logger.debug(f"User {user_id} recent messages count: {len(recent_msgs)}")
 
             if (
-                len(recent_msgs)
-                >= self.model.spam_detection["thresholds"]["rate_limit"]
-                and (recent_msgs[-1] - recent_msgs[-5]).total_seconds() < 5
+                len(recent_msgs) >= self.spam_thresholds.rate_limit
+                and len(recent_msgs) >= 5
             ):
-                rate = (recent_msgs[-1] - recent_msgs[-5]).total_seconds()
-                logger.warning(
-                    f"Rate limit exceeded for user {user_id}: {rate} seconds between messages"
-                )
-                return (
-                    "Please slow down your messages to avoid spamming.",
-                    {"rate": rate},
-                )
+                time_diff = (
+                    recent_msgs[-1].timestamp - recent_msgs[-5].timestamp
+                ).total_seconds()
+                if time_diff < 5:
+                    logger.warning(
+                        f"Rate limit exceeded for user {user_id}: {time_diff} seconds between messages"
+                    )
+                    return (
+                        "Please slow down your messages to avoid spamming.",
+                        {"rate": time_diff},
+                    )
 
             content = message.content.strip()
             if len(content) > 10:
-                recent_contents = self.model.spam_detection["content_history"][user_id]
+                recent_contents = self.spam_detection.content_history[user_id]
                 logger.debug(f"Checking content similarity for user {user_id}")
-                if any(
-                    self.check_text_similarity(content, old_content)[0]
-                    for old_content, _ in recent_contents
-                ):
-                    similar_content = next(
-                        old_content
-                        for old_content, _ in recent_contents
-                        if self.check_text_similarity(content, old_content)[0]
-                    )
-                    similarity_scores = self.check_text_similarity(
-                        content, similar_content
-                    )[1]
-                    logger.warning(
-                        f"Similar content detected for user {user_id}. Scores: {similarity_scores}"
-                    )
-                    return (
-                        "Please do not send similar messages repeatedly.",
-                        {
-                            "similarity_scores": similarity_scores,
-                            "compared_with": similar_content,
-                        },
-                    )
-                recent_contents.append((content, current_time))
+
+                for msg in recent_contents:
+                    if self.check_text_similarity(content, msg.content)[0]:
+                        similarity_scores = self.check_text_similarity(
+                            content, msg.content
+                        )[1]
+                        logger.warning(
+                            f"Similar content detected for user {user_id}. Scores: {similarity_scores}"
+                        )
+                        return (
+                            "Please do not send similar messages repeatedly.",
+                            {
+                                "similarity_scores": similarity_scores,
+                                "compared_with": msg.content,
+                            },
+                        )
+
+                recent_contents.append(
+                    MessageRecord(timestamp=current_time, content=content)
+                )
                 logger.debug(f"Added new content to history for user {user_id}")
 
             mention_count = (
@@ -1701,12 +1730,12 @@ class Threads(interactions.Extension):
                 f"Message from user {user_id} contains {mention_count} mentions"
             )
 
-            if mention_count > self.model.spam_detection["thresholds"]["max_mentions"]:
+            if mention_count > self.spam_thresholds.max_mentions:
                 logger.warning(
                     f"Excessive mentions ({mention_count}) detected from user {user_id}"
                 )
                 return (
-                    f"Please do not mention too many users in a single message (maximum {self.model.spam_detection['thresholds']['max_mentions']}).",
+                    f"Please do not mention too many users in a single message (maximum {self.spam_thresholds.max_mentions}).",
                     {"mention_count": mention_count},
                 )
 
@@ -1717,12 +1746,12 @@ class Threads(interactions.Extension):
                         r"[\U0001F300-\U0001F9FF]|[\u2600-\u26FF\u2700-\u27BF]", content
                     )
                 )
-            ) > self.model.spam_detection["thresholds"]["max_emojis"]:
+            ) > self.spam_thresholds.max_emojis:
                 logger.warning(
                     f"Excessive emojis ({emoji_count}) detected from user {user_id}"
                 )
                 return (
-                    f"Please do not use too many emojis in a single message (maximum {self.model.spam_detection['thresholds']['max_emojis']}).",
+                    f"Please do not use too many emojis in a single message (maximum {self.spam_thresholds.max_emojis}).",
                     {"emoji_count": emoji_count},
                 )
 
@@ -1751,8 +1780,8 @@ class Threads(interactions.Extension):
         )
 
         if (
-            current_time - self.model.spam_detection["cooldowns"].get(user_id, 0)
-            < self.model.spam_detection["thresholds"]["warning_cooldown"]
+            current_time - self.spam_detection.cooldowns.get(user_id, 0)
+            < self.spam_thresholds.warning_cooldown
         ):
             logger.debug(f"User {user_id} is in cooldown period")
             return
@@ -1762,7 +1791,7 @@ class Threads(interactions.Extension):
 
         warning, additional_info = spam_check_result
         try:
-            self.model.spam_detection["cooldowns"][user_id] = current_time
+            self.spam_detection.cooldowns[user_id] = current_time
             logger.info(f"Taking action against spam from user {user_id}: {warning}")
 
             backup_embed = await self.create_embed(
