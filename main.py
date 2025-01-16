@@ -1617,7 +1617,7 @@ class Threads(interactions.Extension):
                     history[uid] = [
                         x
                         for x in history[uid]
-                        if (x[0] if isinstance(x, tuple) else x) > cutoff
+                        if (datetime.fromtimestamp(float(x[0] if isinstance(x, tuple) else x), tz=timezone.utc)) > cutoff
                     ]
 
             recent_msgs = self.model.spam_detection["message_history"][user_id]
