@@ -169,11 +169,13 @@ class TimeoutConfig:
 class MessageRecord:
     timestamp: datetime
     content: Optional[str] = None
+    channel_id: Optional[str] = None
 
 
 @dataclass
 class SpamThresholds:
     rate_limit: int = 5
+    global_rate_limit: int = 10
     max_mentions: int = 5
     max_emojis: int = 10
     history_window: int = 30
@@ -204,6 +206,12 @@ class SpamDetection:
         default_factory=lambda: defaultdict(list)
     )
     emoji_history: DefaultDict[str, List[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    cross_channel_history: DefaultDict[str, List[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    guild_wide_history: DefaultDict[str, List[MessageRecord]] = field(
         default_factory=lambda: defaultdict(list)
     )
     cooldowns: DefaultDict[str, float] = field(
@@ -1601,12 +1609,12 @@ class Threads(interactions.Extension):
         return dot_product / (norm1 * norm2) if norm1 and norm2 else 0.0
 
     def check_text_similarity(
-        self, new_text: str, old_text: str | None
+        self, new_text: str, old_text: str | None, channel_id: str | None = None
     ) -> Tuple[bool, Dict[str, float]]:
-        thresholds = self.spam_thresholds.similarity_thresholds
-
         if old_text is None:
             return False, {}
+
+        thresholds = self.spam_thresholds.similarity_thresholds
 
         similarities = dict(
             zip(
@@ -1631,129 +1639,150 @@ class Threads(interactions.Extension):
         self, message: interactions.Message
     ) -> Optional[Tuple[str, Dict[str, Any]]]:
         try:
-            user_id = str(message.author.id)
+            user_id, channel_id = map(str, (message.author.id, message.channel.id))
+            guild_id = str(message.guild.id) if message.guild.id else None
             current_time = datetime.now(timezone.utc)
-            logger.debug(f"Checking spam for user {user_id} at {current_time}")
 
-            for history in (
+            logger.debug(
+                f"Checking spam for user {user_id} in channel {channel_id} at {current_time}"
+            )
+
+            cutoff = current_time - timedelta(
+                seconds=self.spam_thresholds.history_window
+            )
+            logger.debug(f"Cleaning up message history before {cutoff}")
+
+            histories = (
                 h
-                for h in [
+                for h in (
                     self.spam_detection.message_history,
                     self.spam_detection.content_history,
                     self.spam_detection.mention_history,
                     self.spam_detection.emoji_history,
-                ]
-                if isinstance(h, defaultdict)
-            ):
-                cutoff = current_time - timedelta(
-                    seconds=self.spam_thresholds.history_window
+                    self.spam_detection.cross_channel_history,
+                    self.spam_detection.guild_wide_history,
                 )
-                logger.debug(f"Cleaning up message history before {cutoff}")
+                if isinstance(h, defaultdict)
+            )
 
-                for uid in tuple(history):
-                    cleaned_history = []
-                    for msg in history[uid]:
-                        try:
-                            if isinstance(msg, MessageRecord):
-                                timestamp = msg.timestamp
-                            elif isinstance(msg, datetime):
-                                timestamp = msg
-                            else:
-                                continue
+            for history in histories:
+                for key in tuple(history):
+                    cleaned = [
+                        msg
+                        for msg in history[key]
+                        if (
+                            isinstance(msg, (MessageRecord, datetime))
+                            and (
+                                msg.timestamp if isinstance(msg, MessageRecord) else msg
+                            )
+                            > cutoff
+                        )
+                    ]
+                    if cleaned:
+                        history[key] = cleaned
+                    else:
+                        del history[key]
 
-                            if timestamp > cutoff:
-                                cleaned_history.append(msg)
-                        except Exception as e:
-                            logger.debug(f"Skipping invalid history entry: {e}")
-                            continue
+            recent_key = f"{user_id}:{channel_id}"
+            recent_msgs = self.spam_detection.message_history[recent_key]
+            global_msgs = self.spam_detection.message_history[user_id]
+            msg_record = MessageRecord(timestamp=current_time)
+            recent_msgs.append(msg_record)
+            global_msgs.append(msg_record)
 
-                    history[uid] = cleaned_history
-                    logger.debug(
-                        f"Cleaned history for user {uid}, remaining messages: {len(history[uid])}"
-                    )
-
-            recent_msgs = self.spam_detection.message_history[user_id]
-            recent_msgs.append(MessageRecord(timestamp=current_time))
-            logger.debug(f"User {user_id} recent messages count: {len(recent_msgs)}")
-
-            if (
-                len(recent_msgs) >= self.spam_thresholds.rate_limit
-                and len(recent_msgs) >= 5
-            ):
+            if len(recent_msgs) >= max(self.spam_thresholds.rate_limit, 5):
                 time_diff = (
                     recent_msgs[-1].timestamp - recent_msgs[-5].timestamp
                 ).total_seconds()
                 if time_diff < 5:
-                    logger.warning(
-                        f"Rate limit exceeded for user {user_id}: {time_diff} seconds between messages"
-                    )
                     return (
-                        "Please slow down your messages to avoid spamming.",
-                        {"rate": time_diff},
+                        f"The message was sent too quickly. Please wait at least {5-time_diff:.1f} more seconds before sending another message in this channel.",
+                        {"rate": time_diff, "channel_specific": True},
+                    )
+
+            if len(global_msgs) >= max(self.spam_thresholds.global_rate_limit, 10):
+                time_diff = (
+                    global_msgs[-1].timestamp - global_msgs[-10].timestamp
+                ).total_seconds()
+                if time_diff < 10:
+                    return (
+                        f"The message was sent too quickly. Please wait at least {10-time_diff:.1f} more seconds before sending another message in this channel.",
+                        {"rate": time_diff, "global": True},
                     )
 
             content = message.content.strip()
-            if len(content) > 10:
-                recent_contents = self.spam_detection.content_history[user_id]
-                logger.debug(f"Checking content similarity for user {user_id}")
+            if len(content) > 10 and content.count(content[:10]) > 2:
+                return (
+                    "It looks like you've repeated the same content multiple times in your message. To keep chat readable, please try to avoid repeating yourself.",
+                    {"internal_repetition": True},
+                )
 
-                for msg in recent_contents:
-                    if self.check_text_similarity(content, msg.content)[0]:
-                        similarity_scores = self.check_text_similarity(
-                            content, msg.content
-                        )[1]
-                        logger.warning(
-                            f"Similar content detected for user {user_id}. Scores: {similarity_scores}"
-                        )
+            channel_history = self.spam_detection.content_history[recent_key]
+            for msg in channel_history:
+                if (
+                    is_similar := self.check_text_similarity(
+                        content, msg.content, channel_id
+                    )
+                )[0]:
+                    similarity_percentage = int(max(is_similar[1].values()) * 100)
+                    return (
+                        f"The message is {similarity_percentage}% similar to a recent message in this channel. Please avoid repeating similar content.",
+                        {
+                            "similarity_scores": is_similar[1],
+                            "compared_with": msg.content,
+                            "same_channel": True,
+                        },
+                    )
+
+            if guild_id:
+                guild_history = self.spam_detection.guild_wide_history[
+                    f"{user_id}:{guild_id}"
+                ]
+                for msg in (m for m in guild_history if m.channel_id != channel_id):
+                    if (is_similar := self.check_text_similarity(content, msg.content))[
+                        0
+                    ]:
+                        similarity_percentage = int(max(is_similar[1].values()) * 100)
                         return (
-                            "Please do not send similar messages repeatedly.",
+                            f"The message is {similarity_percentage}% similar to a recent message in this guild. Please avoid repeating similar content.",
                             {
-                                "similarity_scores": similarity_scores,
+                                "similarity_scores": is_similar[1],
                                 "compared_with": msg.content,
+                                "cross_channel": True,
+                                "original_channel": msg.channel_id,
                             },
                         )
 
-                recent_contents.append(
-                    MessageRecord(timestamp=current_time, content=content)
-                )
-                logger.debug(f"Added new content to history for user {user_id}")
-
-            mention_count = (
-                len(message._mention_ids)
-                + len(message._mention_roles)
-                + len(message.mention_channels)
-                + (1 if message.mention_everyone else 0)
+            msg_record = MessageRecord(
+                timestamp=current_time, content=content, channel_id=channel_id
             )
-            logger.debug(
-                f"Message from user {user_id} contains {mention_count} mentions"
+            channel_history.append(msg_record)
+            if guild_id:
+                guild_history.append(msg_record)
+
+            mention_count = sum(
+                (
+                    len(message._mention_ids),
+                    len(message._mention_roles),
+                    len(message.mention_channels),
+                    message.mention_everyone,
+                )
             )
 
             if mention_count > self.spam_thresholds.max_mentions:
-                if not (
-                    {role.id for role in message.author.roles}
-                    & self.spam_thresholds.exempt_roles
-                ):
-                    logger.warning(
-                        f"Excessive mentions ({mention_count}) detected from user {user_id}"
-                    )
+                user_roles = {role.id for role in message.author.roles}
+                if not (user_roles & self.spam_thresholds.exempt_roles):
                     return (
-                        f"Please do not mention too many users in a single message (maximum {self.spam_thresholds.max_mentions}).",
+                        f"The message has mentioned {mention_count} users/roles, which exceeds our limit of {self.spam_thresholds.max_mentions}. This helps keep discussions focused and prevents spam. Please reduce the number of mentions and try again.",
                         {"mention_count": mention_count},
                     )
 
+            emoji_pattern = r"[\U0001F300-\U0001F9FF]|[\u2600-\u26FF\u2700-\u27BF]|<a?:[a-zA-Z0-9_]+:[0-9]+>"
             if (
-                emoji_count := sum(
-                    1
-                    for _ in re.finditer(
-                        r"[\U0001F300-\U0001F9FF]|[\u2600-\u26FF\u2700-\u27BF]", content
-                    )
-                )
+                emoji_count := sum(1 for _ in re.finditer(emoji_pattern, content))
             ) > self.spam_thresholds.max_emojis:
-                logger.warning(
-                    f"Excessive emojis ({emoji_count}) detected from user {user_id}"
-                )
                 return (
-                    f"Please do not use too many emojis in a single message (maximum {self.spam_thresholds.max_emojis}).",
+                    f"Your message contains {emoji_count} emojis, which exceeds our limit of {self.spam_thresholds.max_emojis}. While emojis can be fun, too many can make messages hard to read. Please reduce the number of emojis and try again.",
                     {"emoji_count": emoji_count},
                 )
 
@@ -1781,11 +1810,14 @@ class Threads(interactions.Extension):
             f"Processing message from user {user_id} in channel {message.channel.name}"
         )
 
+        cooldown_key = f"{user_id}:{message.channel.id}"
         if (
-            current_time - self.spam_detection.cooldowns.get(user_id, 0)
+            current_time - self.spam_detection.cooldowns.get(cooldown_key, 0)
             < self.spam_thresholds.warning_cooldown
         ):
-            logger.debug(f"User {user_id} is in cooldown period")
+            logger.debug(
+                f"User {user_id} is in cooldown period in channel {message.channel.id}"
+            )
             return
 
         if not (spam_check_result := await self.check_message_spam(message)):
@@ -1793,7 +1825,7 @@ class Threads(interactions.Extension):
 
         warning, additional_info = spam_check_result
         try:
-            self.spam_detection.cooldowns[user_id] = current_time
+            self.spam_detection.cooldowns[cooldown_key] = current_time
             logger.info(f"Taking action against spam from user {user_id}: {warning}")
 
             backup_embed = await self.create_embed(
@@ -1801,31 +1833,23 @@ class Threads(interactions.Extension):
                 description="Your message was deleted for violating rules. Here is a backup of the message content:",
             )
 
-            content = message.content if message.content else "[No text content]"
+            content = message.content or "[No text content]"
             content_chunks = [
                 content[i : i + 1024] for i in range(0, len(content), 1024)
             ]
             logger.debug(f"Created {len(content_chunks)} content chunks for backup")
 
-            for i, chunk in enumerate(content_chunks):
-                field_name = f"Message Content (Part {i+1}/{len(content_chunks)})"
+            for i, chunk in enumerate(content_chunks, 1):
                 backup_embed.add_field(
-                    name=field_name,
+                    name=f"Message Content (Part {i}/{len(content_chunks)})",
                     value=chunk,
                 )
 
             if attachments := message.attachments:
                 backup_embed.add_field(
-                    name="Attachment Links",
-                    value="\n".join(map(lambda a: a.url, attachments)),
+                    name="Attachment Links", value="\n".join(a.url for a in attachments)
                 )
                 logger.debug(f"Added {len(attachments)} attachments to backup")
-
-            warning_embed = await self.create_embed(
-                title="Message Moderation Notice",
-                description=warning,
-                color=EmbedColor.WARN,
-            )
 
             logger.info(
                 f"Sending moderation notice and deleting message for user {user_id}"
@@ -1833,7 +1857,6 @@ class Threads(interactions.Extension):
             await asyncio.gather(
                 message.author.send(embed=backup_embed),
                 message.delete(),
-                message.author.send(embed=warning_embed),
                 self.log_action_internal(
                     ActionDetails(
                         action=ActionType.DELETE,
@@ -1844,7 +1867,9 @@ class Threads(interactions.Extension):
                         channel=message.channel,
                         additional_info={
                             "original_content": message.content,
-                            "attachments": [a.url for a in message.attachments],
+                            "attachments": (
+                                [a.url for a in attachments] if attachments else []
+                            ),
                             **additional_info,
                         },
                     )
