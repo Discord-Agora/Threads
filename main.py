@@ -1747,29 +1747,49 @@ class Threads(interactions.Extension):
                     )
 
             content = message.content.strip()
+            logger.debug(f"Processing message content: {content}")
+
             CHINESE_PATTERN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]+")
             chinese_words = [
                 word
                 for part in CHINESE_PATTERN.findall(content)
                 for word in jieba.lcut_for_search(part)
             ]
+            logger.debug(f"Extracted Chinese words: {chinese_words}")
+
             latin_words = [
                 word
                 for part in filter(None, map(str.strip, CHINESE_PATTERN.split(content)))
                 for word in part.split()
             ]
+            logger.debug(f"Extracted Latin words: {latin_words}")
+
             words = []
             chinese_iter = iter(chinese_words)
             latin_iter = iter(latin_words)
             for char in content:
-                words.append(
-                    next(chinese_iter)
-                    if "\u4e00" <= char <= "\u9fff" or "\u3400" <= char <= "\u4dbf"
-                    else next(latin_iter, "")
-                )
+                if "\u4e00" <= char <= "\u9fff" or "\u3400" <= char <= "\u4dbf":
+                    try:
+                        words.append(next(chinese_iter))
+                    except StopIteration:
+                        words.append("")
+                else:
+                    try:
+                        words.append(next(latin_iter))
+                    except StopIteration:
+                        words.append("")
+            logger.debug(f"Combined word sequence: {words}")
+
             if len(words) > 5:
                 word_seq = " ".join(words[:5])
-                if self.check_repetition(content, word_seq) > 2:
+                logger.debug(f"Checking repetition for sequence: {word_seq}")
+                repetition_count = self.check_repetition(content, word_seq)
+                logger.debug(f"Repetition count: {repetition_count}")
+
+                if repetition_count > 2:
+                    logger.warning(
+                        f"Detected excessive repetition in message: {content}"
+                    )
                     return (
                         "The message was sent with repeated content. To keep chat readable, please try to avoid repeating yourself.",
                         {"internal_repetition": True},
