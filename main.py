@@ -79,6 +79,7 @@ def format_discord_timestamp(dt: datetime) -> str:
 
 
 class ActionType(Enum):
+    CHECK = auto()
     LOCK = auto()
     UNLOCK = auto()
     BAN = auto()
@@ -1459,6 +1460,7 @@ class Threads(interactions.Extension):
                     else []
                 )
                 actions_set = {
+                    ActionType.CHECK,
                     ActionType.LOCK,
                     ActionType.UNLOCK,
                     ActionType.DELETE,
@@ -1475,6 +1477,7 @@ class Threads(interactions.Extension):
     @staticmethod
     def get_action_color(action: ActionType) -> int:
         color_mapping: Dict[ActionType, EmbedColor] = {
+            ActionType.CHECK: EmbedColor.INFO,
             ActionType.LOCK: EmbedColor.WARN,
             ActionType.BAN: EmbedColor.ERROR,
             ActionType.DELETE: EmbedColor.WARN,
@@ -1503,6 +1506,7 @@ class Threads(interactions.Extension):
         a = details.action
 
         base_messages = {
+            ActionType.CHECK: f"{cm} has been checked.",
             ActionType.LOCK: f"{cm} has been locked.",
             ActionType.UNLOCK: f"{cm} has been unlocked.",
             ActionType.DELETE: f"Your message has been deleted from {cm}.",
@@ -1631,12 +1635,6 @@ class Threads(interactions.Extension):
             current_time = datetime.now(timezone.utc)
             logger.debug(f"Checking spam for user {user_id} at {current_time}")
 
-            if {
-                role.id for role in message.author.roles
-            } & self.spam_thresholds.exempt_roles:
-                logger.debug(f"User {user_id} is exempt from spam detection")
-                return None
-
             for history in (
                 h
                 for h in [
@@ -1731,13 +1729,17 @@ class Threads(interactions.Extension):
             )
 
             if mention_count > self.spam_thresholds.max_mentions:
-                logger.warning(
-                    f"Excessive mentions ({mention_count}) detected from user {user_id}"
-                )
-                return (
-                    f"Please do not mention too many users in a single message (maximum {self.spam_thresholds.max_mentions}).",
-                    {"mention_count": mention_count},
-                )
+                if not (
+                    {role.id for role in message.author.roles}
+                    & self.spam_thresholds.exempt_roles
+                ):
+                    logger.warning(
+                        f"Excessive mentions ({mention_count}) detected from user {user_id}"
+                    )
+                    return (
+                        f"Please do not mention too many users in a single message (maximum {self.spam_thresholds.max_mentions}).",
+                        {"mention_count": mention_count},
+                    )
 
             if (
                 emoji_count := sum(
@@ -2641,6 +2643,76 @@ class Threads(interactions.Extension):
         name="debug",
         description="Debug commands",
     )
+
+    @module_group_debug.subcommand(
+        "delete", sub_cmd_description="Delete files from the extension directory"
+    )
+    @interactions.slash_option(
+        name="type",
+        description="Type of files to delete",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+        autocomplete=True,
+        argument_name="file_type",
+    )
+    @interactions.check(interactions.has_id(1268909926458064991))
+    async def command_delete(
+        self, ctx: interactions.SlashContext, file_type: str
+    ) -> None:
+        await ctx.defer(ephemeral=True)
+
+        if not os.path.exists(BASE_DIR):
+            return await self.send_error(ctx, "Extension directory does not exist.")
+
+        if file_type == "all":
+            return await self.send_error(
+                ctx, "Cannot delete all files at once for safety reasons."
+            )
+
+        file_path = os.path.join(BASE_DIR, file_type)
+        if not os.path.isfile(file_path):
+            return await self.send_error(
+                ctx, f"File `{file_type}` does not exist in the extension directory."
+            )
+
+        try:
+            os.remove(file_path)
+            await ctx.send(f"Successfully deleted file `{file_type}`.")
+            logger.info(f"Deleted file {file_type} from extension directory")
+
+        except PermissionError:
+            logger.error(f"Permission denied while deleting {file_type}")
+            await self.send_error(ctx, "Permission denied while deleting file.")
+        except Exception as e:
+            logger.error(f"Error deleting {file_type}: {e}", exc_info=True)
+            await self.send_error(
+                ctx, f"An error occurred while deleting {file_type}: {str(e)}"
+            )
+
+    @command_delete.autocomplete("type")
+    async def delete_type_autocomplete(
+        self, ctx: interactions.AutocompleteContext
+    ) -> None:
+        choices: list[dict[str, str]] = []
+
+        try:
+            if os.path.exists(BASE_DIR):
+                files = [
+                    f
+                    for f in os.listdir(BASE_DIR)
+                    if os.path.isfile(os.path.join(BASE_DIR, f))
+                    and not f.startswith(".")
+                ]
+
+                choices.extend({"name": file, "value": file} for file in sorted(files))
+        except PermissionError:
+            logger.error("Permission denied while listing files")
+            choices = [{"name": "Error: Permission denied", "value": "error"}]
+        except Exception as e:
+            logger.error(f"Error listing files: {e}", exc_info=True)
+            choices = [{"name": f"Error: {str(e)}", "value": "error"}]
+
+        await ctx.send(choices[:25])
 
     @module_group_debug.subcommand(
         "exclude", sub_cmd_description="Exclude posts from featured rotation"
@@ -3636,7 +3708,7 @@ class Threads(interactions.Extension):
         await ctx.send(embed=embed, ephemeral=score < 9)
 
         return ActionDetails(
-            action=ActionType.EDIT,
+            action=ActionType.CHECK,
             reason=f"AI content check performed by {ctx.author.mention}",
             post_name=post.name,
             actor=ctx.author,
@@ -6265,7 +6337,7 @@ class Threads(interactions.Extension):
             await message.channel.send(embed=embed, ephemeral=score < 9)
 
             return ActionDetails(
-                action=ActionType.EDIT,
+                action=ActionType.CHECK,
                 reason=f"AI content check performed by {message_author.mention}",
                 post_name=post.name,
                 actor=message_author,
