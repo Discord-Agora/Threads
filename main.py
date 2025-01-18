@@ -6,7 +6,6 @@ import functools
 import logging
 import os
 import re
-from array import array
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -1636,41 +1635,6 @@ class Threads(interactions.Extension):
             similarities,
         )
 
-    @staticmethod
-    def check_repetition(text: str, pattern: str) -> int:
-        if not pattern:
-            return 0
-
-        pattern_len = len(pattern)
-        text_len = len(text)
-        table = array("I", (0 for _ in range(pattern_len)))
-
-        table_j = 0
-        for i in range(1, pattern_len):
-            table_j = next(
-                (
-                    table[table_j - 1]
-                    for _ in iter(int, 1)
-                    if table_j > 0 and pattern[i] != pattern[table_j]
-                ),
-                table_j,
-            )
-            table_j += pattern[i] == pattern[table_j]
-            table[i] = table_j
-
-        j = count = 0
-        for i in range(text_len):
-            j = next(
-                (table[j - 1] for _ in iter(int, 1) if j > 0 and text[i] != pattern[j]),
-                j,
-            )
-            j += text[i] == pattern[j]
-            if j == pattern_len:
-                count += 1
-                j = table[j - 1]
-
-        return count
-
     async def check_message_spam(
         self, message: interactions.Message
     ) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -1742,58 +1706,16 @@ class Threads(interactions.Extension):
                 ).total_seconds()
                 if time_diff < 10:
                     return (
-                        f"The message was sent too quickly. Please wait at least {10-time_diff:.1f} more seconds before sending another message in this guild.",
+                        f"The message was sent too quickly. Please wait at least {10-time_diff:.1f} more seconds before sending another message in this channel.",
                         {"rate": time_diff, "global": True},
                     )
 
             content = message.content.strip()
-            logger.debug(f"Processing message content: {content}")
-
-            CHINESE_PATTERN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]+")
-            chinese_words = [
-                word
-                for part in CHINESE_PATTERN.findall(content)
-                for word in jieba.lcut_for_search(part)
-            ]
-            logger.debug(f"Extracted Chinese words: {chinese_words}")
-
-            latin_words = [
-                word
-                for part in filter(None, map(str.strip, CHINESE_PATTERN.split(content)))
-                for word in part.split()
-            ]
-            logger.debug(f"Extracted Latin words: {latin_words}")
-
-            words = []
-            chinese_iter = iter(chinese_words)
-            latin_iter = iter(latin_words)
-            for char in content:
-                if "\u4e00" <= char <= "\u9fff" or "\u3400" <= char <= "\u4dbf":
-                    try:
-                        words.append(next(chinese_iter))
-                    except StopIteration:
-                        words.append("")
-                else:
-                    try:
-                        words.append(next(latin_iter))
-                    except StopIteration:
-                        words.append("")
-            logger.debug(f"Combined word sequence: {words}")
-
-            if len(words) > 5:
-                word_seq = " ".join(words[:5])
-                logger.debug(f"Checking repetition for sequence: {word_seq}")
-                repetition_count = self.check_repetition(content, word_seq)
-                logger.debug(f"Repetition count: {repetition_count}")
-
-                if repetition_count > 2:
-                    logger.warning(
-                        f"Detected excessive repetition in message: {content}"
-                    )
-                    return (
-                        "The message was sent with repeated content. To keep chat readable, please try to avoid repeating yourself.",
-                        {"internal_repetition": True},
-                    )
+            if len(content) > 10 and content.count(content[:10]) > 2:
+                return (
+                    "It looks like you've repeated the same content multiple times in your message. To keep chat readable, please try to avoid repeating yourself.",
+                    {"internal_repetition": True},
+                )
 
             channel_history = self.spam_detection.content_history[recent_key]
             for msg in channel_history:
