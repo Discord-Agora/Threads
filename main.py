@@ -1279,6 +1279,7 @@ class Threads(interactions.Extension):
                 interactions.SlashContext,
                 interactions.InteractionContext,
                 interactions.ComponentContext,
+                interactions.Message,
             ]
         ],
         title: str,
@@ -1420,16 +1421,33 @@ class Threads(interactions.Extension):
         )
 
         for name, value, inline in fields:
-            if (
-                len(current_embed.fields) >= 25
-                or sum(len(f.value) for f in current_embed.fields) + len(value) > 6000
-            ):
-                embeds.append(current_embed)
-                current_embed = await self.create_embed(
-                    title=f"Action Log: {action_name} (Continued)",
-                    color=self.get_action_color(details.action),
-                )
-            current_embed.add_field(name=name, value=value, inline=inline)
+            if len(value) > 1024:
+                chunks = [value[i : i + 1024] for i in range(0, len(value), 1024)]
+                for i, chunk in enumerate(chunks):
+                    field_name = f"{name} (Part {i+1}/{len(chunks)})"
+                    if (
+                        len(current_embed.fields) >= 25
+                        or sum(len(f.value) for f in current_embed.fields) + len(chunk)
+                        > 6000
+                    ):
+                        embeds.append(current_embed)
+                        current_embed = await self.create_embed(
+                            title=f"Action Log: {action_name} (Continued)",
+                            color=self.get_action_color(details.action),
+                        )
+                    current_embed.add_field(name=field_name, value=chunk, inline=inline)
+            else:
+                if (
+                    len(current_embed.fields) >= 25
+                    or sum(len(f.value) for f in current_embed.fields) + len(value)
+                    > 6000
+                ):
+                    embeds.append(current_embed)
+                    current_embed = await self.create_embed(
+                        title=f"Action Log: {action_name} (Continued)",
+                        color=self.get_action_color(details.action),
+                    )
+                current_embed.add_field(name=name, value=value, inline=inline)
 
         embeds.append(current_embed)
 
@@ -1577,8 +1595,8 @@ class Threads(interactions.Extension):
             return 1.0 if not str1 else 0.0
 
         len_str2 = len(str2)
-        previous_row = memoryview(bytearray(range(len_str2 + 1)))
-        current_row = memoryview(bytearray(len_str2 + 1))
+        previous_row = list(range(len_str2 + 1))
+        current_row = [0] * (len_str2 + 1)
 
         for i, c1 in enumerate(str1):
             current_row[0] = i + 1
@@ -1588,7 +1606,7 @@ class Threads(interactions.Extension):
                     current_row[j] + 1,
                     previous_row[j] + (c1 != c2),
                 )
-            previous_row[:], current_row[:] = current_row[:], previous_row[:]
+            previous_row, current_row = current_row, previous_row
 
         return 1 - (previous_row[-1] / max(len(str1), len_str2))
 
