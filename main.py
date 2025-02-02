@@ -873,7 +873,7 @@ class Threads(interactions.Extension):
         )
 
         self.ban_lock: asyncio.Lock = asyncio.Lock()
-        self.client: Optional[groq.AsyncGroq] = None
+        self.groq_client: Optional[groq.AsyncGroq] = None
 
         self.conversion_task: Optional[asyncio.Task] = None
         self.active_timeout_polls: Dict[int, asyncio.Task] = {}
@@ -1225,10 +1225,10 @@ class Threads(interactions.Extension):
 
         try:
             if self.model.groq_api_key:
-                self.client = groq.AsyncGroq(api_key=self.model.groq_api_key)
+                self.groq_client = groq.AsyncGroq(api_key=self.model.groq_api_key)
         except Exception as e:
             logger.error(f"Failed to initialize Groq client: {e}", exc_info=True)
-            self.client = None
+            self.groq_client = None
 
     # View methods
 
@@ -1241,7 +1241,7 @@ class Threads(interactions.Extension):
         timestamp: Optional[datetime] = None,
     ) -> interactions.Embed:
         if timestamp is None:
-            timestamp = datetime.now(timezone.utc)
+            timestamp = interactions.Timestamp.now(timezone.utc)
         color_value: int = color.value if isinstance(color, EmbedColor) else color
 
         embed: interactions.Embed = interactions.Embed(
@@ -1256,13 +1256,17 @@ class Threads(interactions.Extension):
                     inline=field.get("inline", True),
                 )
 
-        guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
-        if guild and guild.icon:
-            embed.set_footer(text=guild.name, icon_url=guild.icon.url)
-        else:
+        try:
+            guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
+            if guild and guild.icon:
+                embed.set_footer(text=guild.name, icon_url=guild.icon.url)
+            else:
+                embed.set_footer(text="鍵政大舞台")
+        except Exception:
             embed.set_footer(text="鍵政大舞台")
 
         return embed
+
 
     @functools.lru_cache(maxsize=1)
     def get_log_channels(self) -> tuple[int, int, int]:
@@ -3215,12 +3219,12 @@ class Threads(interactions.Extension):
                 valid = False
 
             if not valid:
-                self.client = None
+                self.groq_client = None
                 await self.model.save_groq_key("", self.GROQ_KEY_FILE)
                 return await self.send_error(ctx, "Invalid GROQ API key provided.")
 
             await self.model.save_groq_key(groq_key.strip(), self.GROQ_KEY_FILE)
-            self.client = client
+            self.groq_client = client
 
             return await self.send_success(
                 ctx, "GROQ API key has been successfully set and validated."
@@ -3297,7 +3301,7 @@ class Threads(interactions.Extension):
             )
             return None
 
-        if not (self.model.groq_api_key and self.client):
+        if not (self.model.groq_api_key and self.groq_client):
             await self.send_error(ctx, "The AI service is not configured.")
             return None
 
@@ -3478,7 +3482,7 @@ class Threads(interactions.Extension):
                     self.model_params["model"] = model
 
                     if image_attachments:
-                        completion = await self.client.chat.completions.create(
+                        completion = await self.groq_client.chat.completions.create(
                             messages=self.AI_VISION_MODERATION_PROMPT
                             + [
                                 {
@@ -3505,7 +3509,7 @@ class Threads(interactions.Extension):
                         )
 
                     else:
-                        completion = await self.client.chat.completions.create(
+                        completion = await self.groq_client.chat.completions.create(
                             messages=self.AI_TEXT_MODERATION_PROMPT
                             + [
                                 {
@@ -5828,7 +5832,7 @@ class Threads(interactions.Extension):
             if channel_id == 1151301324143603712:
                 return None
 
-            if not (self.model.groq_api_key and self.client):
+            if not (self.model.groq_api_key and self.groq_client):
                 await message.channel.send(
                     embeds=[
                         await self.create_embed(
@@ -6078,7 +6082,7 @@ class Threads(interactions.Extension):
                         self.model_params["model"] = model
 
                         if image_attachments:
-                            completion = await self.client.chat.completions.create(
+                            completion = await self.groq_client.chat.completions.create(
                                 messages=self.AI_VISION_MODERATION_PROMPT
                                 + [
                                     {
@@ -6104,7 +6108,7 @@ class Threads(interactions.Extension):
                                 **self.model_params,
                             )
                         else:
-                            completion = await self.client.chat.completions.create(
+                            completion = await self.groq_client.chat.completions.create(
                                 messages=self.AI_TEXT_MODERATION_PROMPT
                                 + [
                                     {
