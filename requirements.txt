@@ -8,3 +8,4 @@ groq
 aioshutil
 aiohttp
 jieba
+Unalix-Rev
