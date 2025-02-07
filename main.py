@@ -16,7 +16,6 @@ from math import sqrt
 from operator import mul
 from typing import (
     Any,
-    Callable,
     DefaultDict,
     Dict,
     Generator,
@@ -29,6 +28,7 @@ from typing import (
     Tuple,
     Union,
 )
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 import aiofiles
 import aiofiles.os
@@ -40,6 +40,7 @@ import interactions
 import jieba
 import orjson
 import StarCC
+import unalix
 from cachetools import TTLCache
 from interactions.api.events import (
     ExtensionLoad,
@@ -878,6 +879,7 @@ class Threads(interactions.Extension):
         self.conversion_task: Optional[asyncio.Task] = None
         self.active_timeout_polls: Dict[int, asyncio.Task] = {}
         self.phishing_domains: Dict[str, Dict[str, Any]] = {}
+        self.rules: Dict[str, Any] = {}
         self.phishing_cache_duration = timedelta(hours=24)
         self.message_count_threshold: int = 200
         self.star_threshold: int = 3
@@ -956,6 +958,10 @@ class Threads(interactions.Extension):
         self.TIMEOUT_REQUIRED_DIFFERENCE: int = 5
         self.TIMEOUT_DURATION: int = 30
         self.STAR_EMOJIS: tuple[str, ...] = ("✨", "⭐", "🌟", "💫")
+        self.URL_PATTERN = re.compile(r"(https?://\S+)")
+        self.DEFAULT_URL: str = (
+            "https://kevinroebert.gitlab.io/ClearUrls/data/data.minify.json"
+        )
 
         self.AI_TEXT_MODERATION_PROMPT = [
             {
@@ -1257,7 +1263,9 @@ class Threads(interactions.Extension):
                 )
 
         try:
-            guild: Optional[interactions.Guild] = await self.bot.fetch_guild(self.GUILD_ID)
+            guild: Optional[interactions.Guild] = await self.bot.fetch_guild(
+                self.GUILD_ID
+            )
             if guild and guild.icon:
                 embed.set_footer(text=guild.name, icon_url=guild.icon.url)
             else:
@@ -1266,7 +1274,6 @@ class Threads(interactions.Extension):
             embed.set_footer(text="鍵政大舞台")
 
         return embed
-
 
     @functools.lru_cache(maxsize=1)
     def get_log_channels(self) -> tuple[int, int, int]:
@@ -6427,230 +6434,217 @@ class Threads(interactions.Extension):
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_link(self, event: MessageCreate) -> None:
-        if not event.message.guild:
+        if not self.should_process_any_link(event):
             return
 
-        if await self.malicious_url(event.message):
-            return
+        content = event.message.content
+        modified = False
 
-        link_task = (
-            asyncio.create_task(self.process_link(event))
-            if self.should_process_link(event)
-            else None
-        )
+        if self.should_process_bilibili_link(event):
+            if new_content := await self.bilibili_link(content):
+                if new_content != content:
+                    content, modified = new_content, True
 
-        if self.should_process_message(event):
-            channel_id, post_id, author_id = map(
-                str,
-                (
-                    event.message.channel.parent_id,
-                    event.message.channel.id,
-                    event.message.author.id,
-                ),
-            )
-
-            if await self.is_user_banned(channel_id, post_id, author_id):
-                await event.message.delete()
-
-        if link_task:
-            await link_task
-
-    async def malicious_url(self, message: interactions.Message) -> bool:
-        url_pattern = re.compile(
-            r"(?:[A-z0-9](?:[A-z0-9-]{0,61}[A-z0-9])?\.)+[A-z0-9][A-z0-9-]{0,61}[A-z0-9]"
-        )
-
-        found_domains = url_pattern.findall(message.content)
-
-        if not found_domains:
-            return False
-
-        now = datetime.now(timezone.utc)
-
-        for domain in found_domains:
-            domain = domain.lower()
-
-            if domain in self.phishing_domains:
-                cache = self.phishing_domains[domain]
-                if (
-                    datetime.fromisoformat(cache["timestamp"])
-                    + self.phishing_cache_duration
-                    > now
-                ):
-                    if cache["is_malicious"]:
-                        await self.handle_malicious_url(
-                            message, domain, cache["reason"]
-                        )
-                        return True
-                    continue
-
+        for url in self.URL_PATTERN.findall(content):
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        "https://anti-fish.bitflow.dev/check",
-                        json={"message": message.content},
-                        headers={
-                            "Application-Name": "键政大舞台",
-                            "Application-Link": "https://github.com/kazuki388/Threads",
-                        },
-                        timeout=aiohttp.ClientTimeout(total=10),
-                    ) as resp:
-                        if resp.status == 404:
-                            self.phishing_domains[domain] = {
-                                "is_malicious": False,
-                                "timestamp": now.isoformat(),
-                                "reason": [],
-                            }
-                            continue
-
-                        if resp.status != 200:
-                            logger.warning(
-                                f"Anti-fish API returned status {resp.status} for {domain}"
-                            )
-                            continue
-
-                        data = await resp.json()
-                        matches = data.get("matches", [])
-                        is_malicious = bool(data.get("match"))
-
-                        self.phishing_domains[domain] = {
-                            "is_malicious": is_malicious,
-                            "timestamp": now.isoformat(),
-                            "reason": [
-                                f"{m['source']} ({m['type']}): {m['domain']} "
-                                f"(Trust: {m['trust_rating']:.1f})"
-                                for m in matches
-                            ],
-                        }
-
-                        if is_malicious:
-                            await self.handle_malicious_url(
-                                message, domain, self.phishing_domains[domain]["reason"]
-                            )
-                            await self.model.save_phishing_db(self.PHISHING_DB_FILE)
-                            return True
-
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout checking URL {domain}")
+                if unshortened := await unalix.unshort_url(url=url):
+                    if unshortened != url:
+                        content = content.replace(url, unshortened)
+                        modified = True
             except Exception as e:
-                logger.error(f"Error checking URL {domain}: {e}", exc_info=True)
+                logger.warning(f"Failed to unshorten URL {url}: {e}")
 
-        await self.model.save_phishing_db(self.PHISHING_DB_FILE)
-        return False
+        if links := {*self.URL_PATTERN.findall(content)}:
+            try:
+                async with aiofiles.open("scrub_rules.json", "rb") as f:
+                    rules = orjson.loads(await f.read())
+            except (FileNotFoundError, orjson.JSONDecodeError) as e:
+                logger.debug(f"Using default rules: {e}")
+                rules = self.rules
 
-    async def handle_malicious_url(
-        self, message: interactions.Message, domain: str, reasons: list[str]
-    ) -> None:
-        logger.info(
-            f"Malicious URL from domain `{domain}` detected in message {message.id}"
-        )
+            for link in links:
+                if clean_link := await self.clean_any_url(link, rules):
+                    if await self.should_replace_link(link, clean_link):
+                        content = content.replace(link, clean_link)
+                        modified = True
 
-        embed = await self.create_embed(
-            title="Malicious URL Detected",
-            description="A potentially dangerous URL was detected and removed.",
-            color=EmbedColor.ERROR,
-            fields=[
-                {"name": "Domain", "value": f"`{domain}`"},
-                {"name": "Reasons", "value": "\n".join(f"- {r}" for r in reasons)},
-                {
-                    "name": "Warning",
-                    "value": "Please be careful when clicking on unknown links!",
-                },
-            ],
-        )
-
-        try:
-            await message.delete()
-            await message.channel.send(embeds=[embed])
-        except Exception as e:
-            logger.error(f"Failed to handle malicious URL: {e}", exc_info=True)
-
-    async def process_link(self, event: MessageCreate) -> None:
-        if not self.should_process_link(event):
-            return
-
-        msg_content = event.message.content
-        if (
-            not (new_content := await self.transform_links(msg_content))
-            or new_content == msg_content
-        ):
-            return
-
-        await asyncio.gather(
-            self.send_warning(event.message.author, self.get_warning_message()),
-            self.replace_message(event, new_content),
-        )
-
-    async def send_warning(self, user: interactions.Member, message: str) -> None:
-        embed: interactions.Embed = await self.create_embed(
-            title="Warning", description=message, color=EmbedColor.WARN
-        )
-        try:
-            await user.send(embeds=[embed])
-        except Exception as e:
-            logger.warning(
-                f"Failed to send warning DM to {user.mention}: {e}", exc_info=True
-            )
+        if modified:
+            await self.handle_modified_content(event.message, content)
 
     @staticmethod
-    async def replace_message(
-        event: MessageCreate,
-        new_content: str,
+    async def should_replace_link(
+        original: str, cleaned: str, threshold: int = 2
+    ) -> bool:
+        if not cleaned:
+            return False
+        length_diff = abs(len(original) - len(cleaned))
+        return length_diff >= threshold and original.lower() not in (
+            cleaned.lower(),
+            unquote(cleaned).lower(),
+        )
+
+    async def handle_modified_content(
+        self, message: interactions.Message, new_content: str
     ) -> None:
-        channel = event.message.channel
-        webhook = None
-        thread_id = None
-
         try:
-            if isinstance(channel, interactions.ThreadChannel):
-                webhook = await channel.parent_channel.create_webhook(
-                    name="Link Webhook"
-                )
-                thread_id = channel.id
-            else:
-                webhook = await channel.create_webhook(name="Link Webhook")
-
-            await webhook.send(
-                content=new_content,
-                username=event.message.author.display_name,
-                avatar_url=event.message.author.avatar_url,
-                thread=thread_id,
+            embed = await self.create_embed(
+                title="Link Cleaned",
+                description=f"The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited. Your message has been cleaned. Here is the new content: {new_content}.",
+                color=EmbedColor.WARN,
             )
-            await event.message.delete()
+            try:
+                await message.author.send(embeds=[embed])
+            except Exception as e:
+                logger.warning(f"Failed to DM {message.author.mention}: {e}")
 
-        finally:
-            if webhook:
+            channel = message.channel
+            thread_id = (
+                channel.id if isinstance(channel, interactions.ThreadChannel) else None
+            )
+            webhook = await (
+                channel.parent_channel if thread_id else channel
+            ).create_webhook(name="Link Webhook")
+
+            try:
+                await webhook.send(
+                    content=new_content,
+                    username=message.author.display_name,
+                    avatar_url=message.author.avatar_url,
+                    thread=thread_id,
+                )
+                await message.delete()
+            finally:
                 with contextlib.suppress(Exception):
                     await webhook.delete()
 
-    @functools.lru_cache(maxsize=1024)
-    def sanitize_url(
-        self, url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
-    ) -> str:
-        u = URL(url_str)
-        query_params = frozenset(u.query.keys())
-        return str(
-            u.with_query({k: u.query[k] for k in preserve_params & query_params})
+        except Exception as e:
+            logger.error(f"Failed to handle modified content: {e}", exc_info=True)
+
+    async def clean_any_url(
+        self, url: str, rules: dict, loop: bool = True
+    ) -> Optional[str]:
+        for provider in rules.get("providers", {}).values():
+            if not re.match(provider["urlPattern"], url, re.IGNORECASE):
+                continue
+
+            if provider.get("completeProvider"):
+                return None
+
+            if any(
+                re.match(exc, url, re.IGNORECASE)
+                for exc in provider.get("exceptions", [])
+            ):
+                continue
+
+            if cleaned_url := await self.handle_redirections(url, provider, loop):
+                url = cleaned_url
+            else:
+                return None
+
+            parsed_url = urlparse(url)
+            query_params = await self.clean_query_params(parsed_url.query, provider)
+            url = urlunparse(
+                (
+                    parsed_url.scheme,
+                    parsed_url.netloc,
+                    parsed_url.path,
+                    parsed_url.params,
+                    urlencode(query_params),
+                    parsed_url.fragment,
+                )
+            )
+
+            for rule in provider.get("rawRules", []):
+                url = re.sub(rule, "", url)
+
+        return url
+
+    async def handle_redirections(
+        self, url: str, provider: dict, loop: bool
+    ) -> Optional[str]:
+        if not self.rules:
+            try:
+                async with aiofiles.open(
+                    os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
+                ) as f:
+                    self.rules = orjson.loads(await f.read())
+            except (FileNotFoundError, orjson.JSONDecodeError) as e:
+                logger.error(f"Failed to load rules.json: {e}")
+                return url
+
+        for redir in provider.get("redirections", []):
+            try:
+                if match := re.match(redir, url, re.IGNORECASE | re.MULTILINE):
+                    if group := match.group(1):
+                        unquoted = unquote(group)
+                        return (
+                            await self.clean_any_url(unquoted, self.rules, False)
+                            if loop
+                            else unquoted
+                        )
+            except (IndexError, AttributeError):
+                logger.warning(
+                    f"Redirect target match failed: {redir}",
+                    extra={"url": url, "pattern": redir},
+                )
+
+        return url
+
+    @staticmethod
+    async def clean_query_params(query: str, provider: dict) -> List[Tuple[str, str]]:
+        params = parse_qsl(query)
+        rules = [*provider.get("rules", []), *provider.get("referralMarketing", [])]
+        return [
+            (k, v)
+            for k, v in params
+            if not any(re.match(rule, k, re.IGNORECASE) for rule in rules)
+        ]
+
+    def should_process_any_link(self, event: MessageCreate) -> bool:
+        return (
+            event.message.guild
+            and event.message.guild.id == self.GUILD_ID
+            and not event.message.author.bot
+            and isinstance(event.message.channel, interactions.ThreadChannel)
+            and bool(event.message.content)
         )
 
-    @functools.lru_cache(maxsize=1)
-    def get_link_transformations(self) -> list[tuple[re.Pattern, Callable[[str], str]]]:
-        return [
+    def should_process_bilibili_link(self, event: MessageCreate) -> bool:
+        return bool(
+            (guild := event.message.guild)
+            and (member := guild.get_member(event.message.author.id))
+            and guild.id == self.GUILD_ID
+            and event.message.content
+            and not next(
+                (True for role in member.roles if role.id == self.TAIWAN_ROLE_ID), False
+            )
+        )
+
+    @functools.lru_cache(maxsize=1024)
+    async def bilibili_link(self, content: str) -> str:
+        def sanitize_url(
+            url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
+        ) -> str:
+            u = URL(url_str)
+            query_params = frozenset(u.query.keys())
+            return str(
+                u.with_query({k: u.query[k] for k in preserve_params & query_params})
+            )
+
+        patterns = [
             (
                 re.compile(
                     r"https?://(?:www\.)?(?:b23\.tv|bilibili\.com/video/(?:BV\w+|av\d+))",
                     re.IGNORECASE,
                 ),
                 lambda url: (
-                    self.sanitize_url(url)
+                    sanitize_url(url)
                     if "bilibili.com" in url.lower()
                     else str(URL(url).with_host("b23.tf"))
                 ),
             )
         ]
 
-    async def transform_links(self, content: str) -> str:
-        patterns = self.get_link_transformations()
         return await asyncio.to_thread(
             lambda: re.sub(
                 r"https?://\S+",
@@ -6667,9 +6661,44 @@ class Threads(interactions.Extension):
             )
         )
 
-    @functools.lru_cache(maxsize=1)
-    def get_warning_message(self) -> str:
-        return "The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited."
+    module_group_scrub: interactions.SlashCommand = module_base.group(
+        name="scrub",
+        description="Scrub tracking elements from hyperlinks",
+    )
+
+    @module_group_scrub.subcommand(
+        "update", sub_cmd_description="Update Scrub with the latest rules"
+    )
+    @interactions.slash_default_member_permission(
+        interactions.Permissions.ADMINISTRATOR
+    )
+    async def update(self, ctx: interactions.SlashContext) -> None:
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10),
+                headers={"Accept": "application/json"},
+            ) as session:
+                async with session.get(
+                    self.DEFAULT_URL, ssl=False, raise_for_status=True
+                ) as response:
+                    rules = orjson.loads(await response.read())
+
+            scrub_rules_path = os.path.join(BASE_DIR, "scrub_rules.json")
+            async with aiofiles.open(scrub_rules_path, mode="wb") as f:
+                await f.write(
+                    orjson.dumps(
+                        rules,
+                        option=orjson.OPT_SERIALIZE_NUMPY
+                        | orjson.OPT_SERIALIZE_DATACLASS,
+                    )
+                )
+
+            self.rules = rules
+            await self.send_success(ctx, "Rules updated and saved locally.")
+
+        except (aiohttp.ClientError, orjson.JSONDecodeError, IOError, Exception) as e:
+            logger.exception(f"Rules update failed: {str(e)}")
+            await self.send_error(ctx, f"Rules update failed: {type(e).__name__}")
 
     # Poll methods
 
@@ -6821,14 +6850,6 @@ class Threads(interactions.Extension):
             and ctx.channel.parent_id in self.ALLOWED_CHANNELS
         )
 
-    def should_process_message(self, event: MessageCreate) -> bool:
-        return (
-            event.message.guild
-            and event.message.guild.id == self.GUILD_ID
-            and isinstance(event.message.channel, interactions.ThreadChannel)
-            and bool(event.message.content)
-        )
-
     @staticmethod
     async def has_admin_permissions(member: interactions.Member) -> bool:
         return any(
@@ -6842,16 +6863,6 @@ class Threads(interactions.Extension):
         user: interactions.Member,
     ) -> bool:
         return await self.can_manage_post(thread, user)
-
-    def should_process_link(self, event: MessageCreate) -> bool:
-        guild = event.message.guild
-        return (
-            guild
-            and guild.id == self.GUILD_ID
-            and (member := guild.get_member(event.message.author.id))
-            and event.message.content
-            and not any(role.id == self.TAIWAN_ROLE_ID for role in member.roles)
-        )
 
     async def is_user_banned(
         self, channel_id: str, post_id: str, author_id: str
