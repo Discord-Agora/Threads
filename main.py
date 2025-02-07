@@ -959,9 +959,6 @@ class Threads(interactions.Extension):
         self.TIMEOUT_DURATION: int = 30
         self.STAR_EMOJIS: tuple[str, ...] = ("✨", "⭐", "🌟", "💫")
         self.URL_PATTERN = re.compile(r"(https?://\S+)")
-        self.DEFAULT_URL: str = (
-            "https://kevinroebert.gitlab.io/ClearUrls/data/data.minify.json"
-        )
 
         self.AI_TEXT_MODERATION_PROMPT = [
             {
@@ -6447,7 +6444,7 @@ class Threads(interactions.Extension):
 
         for url in self.URL_PATTERN.findall(content):
             try:
-                if unshortened := await unalix.unshort_url(url=url):
+                if unshortened := await unalix.unshort_url(url=str(url)):
                     if unshortened != url:
                         content = content.replace(url, unshortened)
                         modified = True
@@ -6674,14 +6671,30 @@ class Threads(interactions.Extension):
     )
     async def update(self, ctx: interactions.SlashContext) -> None:
         try:
+            urls = [
+                "https://rules2.clearurls.xyz/data.minify.json",
+                "https://rules1.clearurls.xyz/data.minify.json",
+            ]
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=10),
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                },
             ) as session:
-                async with session.get(
-                    self.DEFAULT_URL, ssl=False, raise_for_status=True
-                ) as response:
-                    rules = orjson.loads(await response.read())
+                for url in urls:
+                    try:
+                        async with session.get(url, ssl=False) as response:
+                            if response.status == 200:
+                                rules = await response.json()
+                                logger.info(f"Successfully updated rules from {url}")
+                                return
+                            else:
+                                logger.warning(
+                                    f"Failed to fetch rules from {url}: {response.status}"
+                                )
+                    except Exception as e:
+                        logger.warning(f"Error fetching rules from {url}: {e}")
+                        continue
 
             scrub_rules_path = os.path.join(BASE_DIR, "scrub_rules.json")
             async with aiofiles.open(scrub_rules_path, mode="wb") as f:
