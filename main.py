@@ -6,6 +6,7 @@ import functools
 import logging
 import os
 import re
+import traceback
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -50,7 +51,13 @@ from interactions.api.events import (
     MessageReactionRemove,
     NewThreadCreate,
 )
-from interactions.client.errors import Forbidden, NotFound
+from interactions.client.errors import (
+    Forbidden,
+    HTTPException,
+    MessageException,
+    NotFound,
+    ThreadException,
+)
 from interactions.ext.paginators import Paginator
 from yarl import URL
 
@@ -3782,6 +3789,13 @@ class Threads(interactions.Extension):
             },
         )
 
+    @staticmethod
+    async def has_admin_permissions(member: interactions.Member) -> bool:
+        return any(
+            role.permissions & interactions.Permissions.ADMINISTRATOR
+            for role in member.roles
+        )
+
     @module_group_timeout.subcommand(
         "poll", sub_cmd_description="Start a timeout poll for a user"
     )
@@ -6863,13 +6877,6 @@ class Threads(interactions.Extension):
             and ctx.channel.parent_id in self.ALLOWED_CHANNELS
         )
 
-    @staticmethod
-    async def has_admin_permissions(member: interactions.Member) -> bool:
-        return any(
-            role.permissions & interactions.Permissions.ADMINISTRATOR
-            for role in member.roles
-        )
-
     async def can_manage_message(
         self,
         thread: interactions.ThreadChannel,
@@ -6883,3 +6890,264 @@ class Threads(interactions.Extension):
         return await asyncio.to_thread(
             self.model.is_user_banned, channel_id, post_id, author_id
         )
+
+    # Message methods
+
+    module_group_message: interactions.SlashCommand = module_base.group(
+        name="message",
+        description="Message management commands",
+    )
+
+    @module_group_message.subcommand(
+        "delete",
+        sub_cmd_description="Delete all your messages in this guild",
+    )
+    @interactions.max_concurrency(interactions.Buckets.USER, 1)
+    @interactions.max_concurrency(interactions.Buckets.GUILD, 1)
+    async def delete_all_user_messages(self, ctx: interactions.SlashContext) -> None:
+        try:
+            try:
+                await ctx.author.send(
+                    f"You are about to delete ALL your messages in the server **{ctx.guild.name}**. This action cannot be undone. Reply with `yes` to proceed with deletion; Reply with `no` to cancel. This confirmation will expire in 60 seconds."
+                )
+            except Forbidden:
+                await self.send_error(
+                    ctx,
+                    "Unable to send you a direct message. Please enable DMs from server members to use this command.",
+                )
+                return
+
+            try:
+                response = await ctx.bot.wait_for(
+                    "message_create",
+                    check=lambda m: (
+                        m.author.id == ctx.author.id
+                        and isinstance(m.channel, interactions.DMChannel)
+                        and m.content.lower() in {"yes", "no"}
+                    ),
+                    timeout=60.0,
+                )
+            except asyncio.TimeoutError:
+                await ctx.author.send(
+                    "Operation timed out. Please run the command again if you wish to delete your messages."
+                )
+                return
+
+            if response.content.lower() == "no":
+                await ctx.author.send(
+                    "Operation cancelled. Your messages will remain unchanged."
+                )
+                return
+
+            await ctx.author.send(
+                "I am now deleting your messages across all channels. This may take some time depending on the number of messages. You will be notified when the process is complete."
+            )
+
+            async def remove_user_reactions(message: interactions.Message) -> None:
+                try:
+                    for reaction in message.reactions:
+                        users = {u.id async for u in reaction.users()}
+                        if ctx.author.id in users:
+                            await message.remove_reaction(reaction.emoji, ctx.author)
+                except (HTTPException, MessageException, ThreadException, OSError) as e:
+                    logger.error(f"Error removing reactions: {str(e)}")
+                except Exception:
+                    logger.exception(traceback.format_exc())
+
+            def is_user_message(message: Optional[interactions.Message]) -> bool:
+                return bool(
+                    message
+                    and (
+                        message.author.id == ctx.author.id
+                        or getattr(message.interaction_metadata, "_user_id", None)
+                        == ctx.author.id
+                    )
+                )
+
+            async def process_channel(channel: interactions.MessageableMixin) -> None:
+                if not channel:
+                    return
+
+                was_archived = was_locked = False
+
+                if isinstance(channel, interactions.ThreadChannel):
+                    if channel.archived:
+                        was_archived = True
+                        try:
+                            await channel.edit(archived=False)
+                        except (ThreadException, HTTPException, OSError) as e:
+                            logger.error(f"Error unarchiving thread: {str(e)}")
+                            return
+                        except Exception:
+                            logger.exception(traceback.format_exc())
+                            return
+
+                    if channel.locked:
+                        was_locked = True
+                        try:
+                            await channel.edit(locked=False)
+                        except (ThreadException, HTTPException, OSError) as e:
+                            logger.error(f"Error unlocking thread: {str(e)}")
+                            return
+                        except Exception:
+                            logger.exception(traceback.format_exc())
+                            return
+
+                try:
+                    async with MessageHistoryIterator(channel.history(0)) as history:
+                        async for message in history:
+                            try:
+                                if is_user_message(message):
+                                    if await message.delete():
+                                        continue
+                                else:
+                                    await remove_user_reactions(message)
+                            except HTTPException as e:
+                                if e.code in {10003, 10008, 50001, 50013}:
+                                    break
+                                if e.code == 50083 and isinstance(
+                                    channel, interactions.ThreadChannel
+                                ):
+                                    if channel.archived:
+                                        try:
+                                            await channel.edit(archived=False)
+                                            continue
+                                        except (StopAsyncIteration, Exception):
+                                            break
+                                elif e.code == 160005 and isinstance(
+                                    channel, interactions.ThreadChannel
+                                ):
+                                    if channel.locked:
+                                        try:
+                                            await channel.edit(locked=False)
+                                            continue
+                                        except Exception:
+                                            break
+                                elif e.code not in {50021}:
+                                    logger.error(f"HTTP Exception {e.code}")
+                            except (MessageException, ThreadException, OSError) as e:
+                                logger.error(f"Error processing message: {str(e)}")
+                            except Exception:
+                                logger.exception(traceback.format_exc())
+                finally:
+                    if was_locked:
+                        try:
+                            await channel.edit(locked=True)
+                        except (ThreadException, HTTPException, OSError) as e:
+                            logger.error(f"Error re-locking thread: {str(e)}")
+                        except Exception:
+                            logger.exception(traceback.format_exc())
+
+                    if was_archived:
+                        try:
+                            await channel.edit(archived=True)
+                        except (ThreadException, HTTPException, OSError) as e:
+                            logger.error(f"Error re-archiving thread: {str(e)}")
+                        except Exception:
+                            logger.exception(traceback.format_exc())
+
+            guild_channels = await ctx.guild.fetch_channels()
+            for channel in (
+                c
+                for c in guild_channels
+                if isinstance(c, interactions.MessageableMixin)
+            ):
+                await process_channel(channel)
+
+                if isinstance(channel, interactions.GuildText):
+                    thread_lists = await asyncio.gather(
+                        channel.fetch_active_threads(), channel.fetch_archived_threads()
+                    )
+                    for thread_list in thread_lists:
+                        for thread in thread_list.threads:
+                            await process_channel(thread)
+
+                elif isinstance(channel, interactions.GuildForum):
+                    for forum_post in channel.get_posts():
+                        await process_channel(forum_post)
+
+                    archived_posts = await self.bot.http.list_public_archived_threads(
+                        channel_id=channel.id
+                    )
+                    for post_id in map(
+                        lambda p: int(p["id"]), archived_posts["threads"]
+                    ):
+                        if forum_post := await self.bot.fetch_channel(
+                            channel_id=post_id
+                        ):
+                            await process_channel(forum_post)
+
+            if dm_channel := ctx.author.get_dm():
+                await dm_channel.send(
+                    f"All your messages have been successfully deleted from **{ctx.guild.name}**. This included: Messages you sent; Messages from commands you used; Your reactions on other messages."
+                )
+
+        except Exception as e:
+            logger.exception(f"Error in delete_all_user_messages: {str(e)}")
+            if dm_channel := ctx.author.get_dm():
+                await dm_channel.send(
+                    "An error occurred while deleting messages. Please try again later."
+                )
+
+
+class MessageHistoryIterator:
+    def __init__(self, history: interactions.ChannelHistory) -> None:
+        self.history = history
+        self._retries = 0
+        self.MAX_RETRIES = 3
+        self.BASE_DELAY = 1.0
+        self._initialized = False
+        self._error_codes = {
+            10003: ("unknown channel", True),
+            50001: ("no access", True),
+            50013: ("lacks permission", True),
+            10008: ("unknown message", True),
+            50021: ("system message", True),
+            50083: ("unarchive thread", False),
+            160005: ("unlock thread", False),
+        }
+
+    async def __aenter__(self):
+        self._initialized = True
+        return self
+
+    async def __aexit__(self, *_):
+        self._initialized = False
+        return False
+
+    def __aiter__(self):
+        if not self._initialized:
+            raise RuntimeError("Must use async with")
+        return self
+
+    async def __anext__(self):
+        while self._retries < self.MAX_RETRIES:
+            try:
+                return await self.history.__anext__()
+            except StopAsyncIteration:
+                raise
+            except HTTPException as e:
+                code = getattr(e, "code", None)
+                if code in self._error_codes:
+                    msg, should_stop = self._error_codes[code]
+                    logger.error(
+                        f"Channel {self.history.channel.name} ({self.history.channel.id}): {msg}"
+                    )
+                    if should_stop:
+                        raise StopAsyncIteration
+                else:
+                    logger.warning(
+                        f"Channel {self.history.channel.name} ({self.history.channel.id}) has unknown code {code}"
+                    )
+                    raise StopAsyncIteration
+            except (OSError, RuntimeError, TypeError) as e:
+                self._retries += 1
+                if self._retries >= self.MAX_RETRIES:
+                    logger.error(
+                        f"Failed after {self.MAX_RETRIES} retries: {e.__class__.__name__}: {str(e)}"
+                    )
+                    raise StopAsyncIteration
+                await asyncio.sleep(self.BASE_DELAY * (1 << (self._retries - 1)))
+            except (aiohttp.ClientPayloadError, Exception):
+                logger.exception(traceback.format_exc())
+                raise StopAsyncIteration
