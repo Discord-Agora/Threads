@@ -6458,20 +6458,30 @@ class Threads(interactions.Extension):
 
         for url in self.URL_PATTERN.findall(content):
             try:
-                if unshortened := await unalix.unshort_url(url=str(url)):
-                    if unshortened != url:
-                        content = content.replace(url, unshortened)
-                        modified = True
+                if not url.startswith("https://discord.com"):
+                    unshortened = None
+                    try:
+                        unshortened = unalix.unshort_url(url=str(url))
+                        if unshortened and unshortened != url:
+                            content = content.replace(url, unshortened)
+                            modified = True
+                    except Exception:
+                        cleared = unalix.clear_url(url=str(url))
+                        if cleared and cleared != url:
+                            content = content.replace(url, cleared)
+                            modified = True
             except Exception as e:
-                logger.warning(f"Failed to unshorten URL {url}: {e}")
+                logger.exception(f"Failed to process URL {url}: {e}")
 
         if links := {*self.URL_PATTERN.findall(content)}:
+            rules = self.rules
             try:
-                async with aiofiles.open("scrub_rules.json", "rb") as f:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                rules_path = os.path.join(script_dir, "scrub_rules.json")
+                async with aiofiles.open(rules_path, "rb") as f:
                     rules = orjson.loads(await f.read())
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.debug(f"Using default rules: {e}")
-                rules = self.rules
 
             for link in links:
                 if clean_link := await self.clean_any_url(link, rules):
@@ -6506,7 +6516,7 @@ class Threads(interactions.Extension):
             try:
                 await message.author.send(embeds=[embed])
             except Exception as e:
-                logger.warning(f"Failed to DM {message.author.mention}: {e}")
+                logger.exception(f"Failed to DM {message.author.mention}: {e}")
 
             channel = message.channel
             thread_id = (
@@ -6523,13 +6533,16 @@ class Threads(interactions.Extension):
                     avatar_url=message.author.avatar_url,
                     thread=thread_id,
                 )
-                await message.delete()
+                try:
+                    await message.delete()
+                except NotFound:
+                    pass
             finally:
                 with contextlib.suppress(Exception):
                     await webhook.delete()
 
         except Exception as e:
-            logger.error(f"Failed to handle modified content: {e}", exc_info=True)
+            logger.exception(f"Failed to handle modified content: {e}")
 
     async def clean_any_url(
         self, url: str, rules: dict, loop: bool = True
@@ -6684,6 +6697,7 @@ class Threads(interactions.Extension):
         interactions.Permissions.ADMINISTRATOR
     )
     async def update(self, ctx: interactions.SlashContext) -> None:
+        await ctx.defer(ephemeral=True)
         try:
             urls = [
                 "https://rules2.clearurls.xyz/data.minify.json",
@@ -6695,13 +6709,14 @@ class Threads(interactions.Extension):
                     "Accept": "application/json",
                 },
             ) as session:
+                rules = None
                 for url in urls:
                     try:
                         async with session.get(url, ssl=False) as response:
                             if response.status == 200:
                                 rules = await response.json()
                                 logger.info(f"Successfully updated rules from {url}")
-                                return
+                                break
                             else:
                                 logger.warning(
                                     f"Failed to fetch rules from {url}: {response.status}"
@@ -6710,18 +6725,22 @@ class Threads(interactions.Extension):
                         logger.warning(f"Error fetching rules from {url}: {e}")
                         continue
 
-            scrub_rules_path = os.path.join(BASE_DIR, "scrub_rules.json")
-            async with aiofiles.open(scrub_rules_path, mode="wb") as f:
-                await f.write(
-                    orjson.dumps(
-                        rules,
-                        option=orjson.OPT_SERIALIZE_NUMPY
-                        | orjson.OPT_SERIALIZE_DATACLASS,
-                    )
-                )
+                if not rules:
+                    await self.send_error(ctx, "Failed to fetch rules from all sources")
+                    return
 
-            self.rules = rules
-            await self.send_success(ctx, "Rules updated and saved locally.")
+                scrub_rules_path = os.path.join(BASE_DIR, "scrub_rules.json")
+                async with aiofiles.open(scrub_rules_path, mode="wb") as f:
+                    await f.write(
+                        orjson.dumps(
+                            rules,
+                            option=orjson.OPT_SERIALIZE_NUMPY
+                            | orjson.OPT_SERIALIZE_DATACLASS,
+                        )
+                    )
+
+                self.rules = rules
+                await self.send_success(ctx, "Rules updated and saved locally.")
 
         except (aiohttp.ClientError, orjson.JSONDecodeError, IOError, Exception) as e:
             logger.exception(f"Rules update failed: {str(e)}")
@@ -6905,12 +6924,19 @@ class Threads(interactions.Extension):
     @interactions.max_concurrency(interactions.Buckets.USER, 1)
     @interactions.max_concurrency(interactions.Buckets.GUILD, 1)
     async def delete_all_user_messages(self, ctx: interactions.SlashContext) -> None:
+        await ctx.defer(ephemeral=True)
+        logger.info(
+            f"User {ctx.author} ({ctx.author.id}) initiated message deletion in guild {ctx.guild.name} ({ctx.guild.id})"
+        )
+        deleted_count = 0
         try:
             try:
                 await ctx.author.send(
                     f"You are about to delete ALL your messages in the server **{ctx.guild.name}**. This action cannot be undone. Reply with `yes` to proceed with deletion; Reply with `no` to cancel. This confirmation will expire in 60 seconds."
                 )
+                logger.debug(f"Sent confirmation DM to user {ctx.author.id}")
             except Forbidden:
+                logger.warning(f"Unable to send DM to user {ctx.author.id}")
                 await self.send_error(
                     ctx,
                     "Unable to send you a direct message. Please enable DMs from server members to use this command.",
@@ -6920,27 +6946,29 @@ class Threads(interactions.Extension):
             try:
                 response = await ctx.bot.wait_for(
                     "message_create",
-                    check=lambda m: (
-                        m.author.id == ctx.author.id
-                        and isinstance(m.channel, interactions.DMChannel)
-                        and m.content.lower() in {"yes", "no"}
+                    checks=lambda m: (
+                        m.message.author.id == ctx.author.id
+                        and isinstance(m.message.channel, interactions.DMChannel)
+                        and m.message.content.lower() in {"yes", "no"}
                     ),
                     timeout=60.0,
                 )
             except asyncio.TimeoutError:
+                logger.info(f"User {ctx.author.id} confirmation timed out")
                 await ctx.author.send(
                     "Operation timed out. Please run the command again if you wish to delete your messages."
                 )
                 return
 
-            if response.content.lower() == "no":
+            if response.message.content.lower() == "no":
+                logger.info(f"User {ctx.author.id} cancelled the operation")
                 await ctx.author.send(
                     "Operation cancelled. Your messages will remain unchanged."
                 )
                 return
 
             await ctx.author.send(
-                "I am now deleting your messages across all channels. This may take some time depending on the number of messages. You will be notified when the process is complete."
+                "I am now deleting your messages across all channels. This may take some time depending on the number of messages. You will receive progress updates."
             )
 
             async def remove_user_reactions(message: interactions.Message) -> None:
@@ -6949,6 +6977,7 @@ class Threads(interactions.Extension):
                         users = {u.id async for u in reaction.users()}
                         if ctx.author.id in users:
                             await message.remove_reaction(reaction.emoji, ctx.author)
+                            logger.debug(f"Removed reaction from message {message.id}")
                 except (HTTPException, MessageException, ThreadException, OSError) as e:
                     logger.error(f"Error removing reactions: {str(e)}")
                 except Exception:
@@ -6964,34 +6993,38 @@ class Threads(interactions.Extension):
                     )
                 )
 
-            async def process_channel(channel: interactions.MessageableMixin) -> None:
+            async def process_channel(channel: interactions.MessageableMixin) -> int:
+                nonlocal deleted_count
                 if not channel:
-                    return
+                    return 0
 
                 was_archived = was_locked = False
+                channel_deleted = 0
 
                 if isinstance(channel, interactions.ThreadChannel):
                     if channel.archived:
                         was_archived = True
                         try:
                             await channel.edit(archived=False)
+                            logger.debug(f"Unarchived thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
                             logger.error(f"Error unarchiving thread: {str(e)}")
-                            return
+                            return 0
                         except Exception:
                             logger.exception(traceback.format_exc())
-                            return
+                            return 0
 
                     if channel.locked:
                         was_locked = True
                         try:
                             await channel.edit(locked=False)
+                            logger.debug(f"Unlocked thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
                             logger.error(f"Error unlocking thread: {str(e)}")
-                            return
+                            return 0
                         except Exception:
                             logger.exception(traceback.format_exc())
-                            return
+                            return 0
 
                 try:
                     async with MessageHistoryIterator(channel.history(0)) as history:
@@ -6999,6 +7032,12 @@ class Threads(interactions.Extension):
                             try:
                                 if is_user_message(message):
                                     if await message.delete():
+                                        channel_deleted += 1
+                                        deleted_count += 1
+                                        if deleted_count % 100 == 0:
+                                            await ctx.author.send(
+                                                f"Progress update: Deleted {deleted_count} messages so far..."
+                                            )
                                         continue
                                 else:
                                     await remove_user_reactions(message)
@@ -7011,6 +7050,9 @@ class Threads(interactions.Extension):
                                     if channel.archived:
                                         try:
                                             await channel.edit(archived=False)
+                                            logger.debug(
+                                                f"Unarchived thread {channel.id} during message processing"
+                                            )
                                             continue
                                         except (StopAsyncIteration, Exception):
                                             break
@@ -7020,19 +7062,27 @@ class Threads(interactions.Extension):
                                     if channel.locked:
                                         try:
                                             await channel.edit(locked=False)
+                                            logger.debug(
+                                                f"Unlocked thread {channel.id} during message processing"
+                                            )
                                             continue
                                         except Exception:
                                             break
                                 elif e.code not in {50021}:
-                                    logger.error(f"HTTP Exception {e.code}")
+                                    logger.error(
+                                        f"HTTP Exception {e.code} in channel {channel.id}"
+                                    )
                             except (MessageException, ThreadException, OSError) as e:
-                                logger.error(f"Error processing message: {str(e)}")
+                                logger.error(
+                                    f"Error processing message in channel {channel.id}: {str(e)}"
+                                )
                             except Exception:
                                 logger.exception(traceback.format_exc())
                 finally:
                     if was_locked:
                         try:
                             await channel.edit(locked=True)
+                            logger.debug(f"Re-locked thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
                             logger.error(f"Error re-locking thread: {str(e)}")
                         except Exception:
@@ -7041,18 +7091,29 @@ class Threads(interactions.Extension):
                     if was_archived:
                         try:
                             await channel.edit(archived=True)
+                            logger.debug(f"Re-archived thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
                             logger.error(f"Error re-archiving thread: {str(e)}")
                         except Exception:
                             logger.exception(traceback.format_exc())
 
+                logger.info(
+                    f"Deleted {channel_deleted} messages in channel {channel.id}"
+                )
+                return channel_deleted
+
             guild_channels = await ctx.guild.fetch_channels()
+            logger.info(
+                f"Starting to process {len(guild_channels)} channels in guild {ctx.guild.id}"
+            )
+
             for channel in (
                 c
                 for c in guild_channels
                 if isinstance(c, interactions.MessageableMixin)
             ):
                 await process_channel(channel)
+                await ctx.author.send(f"Processed channel: {channel.name}")
 
                 if isinstance(channel, interactions.GuildText):
                     thread_lists = await asyncio.gather(
@@ -7061,10 +7122,14 @@ class Threads(interactions.Extension):
                     for thread_list in thread_lists:
                         for thread in thread_list.threads:
                             await process_channel(thread)
+                            await ctx.author.send(f"Processed thread: {thread.name}")
 
                 elif isinstance(channel, interactions.GuildForum):
                     for forum_post in channel.get_posts():
                         await process_channel(forum_post)
+                        await ctx.author.send(
+                            f"Processed forum post: {forum_post.name}"
+                        )
 
                     archived_posts = await self.bot.http.list_public_archived_threads(
                         channel_id=channel.id
@@ -7076,10 +7141,16 @@ class Threads(interactions.Extension):
                             channel_id=post_id
                         ):
                             await process_channel(forum_post)
+                            await ctx.author.send(
+                                f"Processed archived forum post: {forum_post.name}"
+                            )
 
+            logger.info(
+                f"Completed message deletion for user {ctx.author.id}. Total messages deleted: {deleted_count}"
+            )
             if dm_channel := ctx.author.get_dm():
                 await dm_channel.send(
-                    f"All your messages have been successfully deleted from **{ctx.guild.name}**. This included: Messages you sent; Messages from commands you used; Your reactions on other messages."
+                    f"All your messages have been successfully deleted from **{ctx.guild.name}**. Total messages deleted: {deleted_count}. This included: Messages you sent; Messages from commands you used; Your reactions on other messages."
                 )
 
         except Exception as e:
