@@ -9,3 +9,4 @@ aioshutil
 aiohttp
 jieba
 Unalix-Rev
+Pillow
