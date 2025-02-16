@@ -1,77 +1,57 @@
 # Threads
 
-The **Threads** module is designed to manage thread-based conversations, user interactions, and content moderation within a Discord server. It supports all thread types.
+The **Threads** module that provides advanced moderation features and supports all thread types.
 
 Inspired by a bot from Discord server (ID: 1284782072484986993).
 
 ## Features
 
-- Lock/unlock threads to control interactions
-- Delete inappropriate or unwanted messages
-- Manage thread tags and permissions
-- Automatic timestamp prefixing for new posts
-- Automatic poll creation for new posts (configurable)
-- Featured posts system with dynamic rotation
-- User ban/unban system for threads
-- Permission management for specific users
-- Link sanitization for privacy protection
-- Comprehensive logging system
-- Message count tracking
-- AI-powered content moderation
-- Timeout voting system
+- Thread lifecycle management (creation, locking, archival)
+- Content moderation with AI-powered analysis
+- Granular permission and role-based access control
+- Automated timestamp prefixing ([YYMMDDHHSS])
+- Configurable poll generation (48h duration)
+- Dynamic featured post rotation system
+- Thread-specific user management
+- Privacy-focused link sanitization
+- Comprehensive activity logging and analytics
+- Democratic timeout voting system
+- AI-enhanced divination features
 
 ## Usage
 
 ### Slash Commands
 
-- `/threads top`: Navigate to the top of the current thread
-
-- `/threads lock`: Lock the current thread
-  - `reason` (string, required): Reason for locking the thread
-
-- `/threads unlock`: Unlock the current thread
-  - `reason` (string, required): Reason for unlocking the thread
-
-- `/threads convert`: Convert channel names between different Chinese variants
-  - `source` (choice, required): Source language variant
-    - Simplified Chinese (Mainland China)
-    - Traditional Chinese (Taiwan)
-    - Traditional Chinese (Hong Kong)
-    - Traditional Chinese (Mainland China)
+- `/threads top` - Navigate to thread origin
+- `/threads lock <reason>` - Lock current thread
+- `/threads unlock <reason>` - Unlock current thread
+- `/threads convert` - Convert channel names between Chinese variants
+  - `source` - Source language variant:
+    - Simplified Chinese (Mainland)
+    - Traditional Chinese (Taiwan/HK/Mainland)
     - Japanese Shinjitai
-  - `target` (choice, required): Target language variant (same choices as source)
-  - `scope` (choice, required): What to convert
-    - All
-    - Server Name Only
-    - Roles Only
-    - Channels Only
-
-- `/threads timeout`: Timeout management commands
-  - `/threads timeout poll`: Start a timeout poll for a user
-    - `user` (user, required): The user to timeout
-    - `reason` (string, required): Reason for timeout
-    - `duration` (integer, required): Timeout duration in minutes (1-10)
-  - `/threads timeout check`: Check message content with AI
-    - `message` (string, required): ID or URL of the message to check
-  - `/threads timeout set`: Set bot configurations (ADMIN only)
-    - `key` (string, required): Set the GROQ API key
-
-- `/threads list`: List information for current thread
-  - `type` (choice, required): Select data type to view
-    - `Banned Users`: View banned users in current thread
-    - `Thread Permissions`: View users with special permissions in current thread
-    - `Post Statistics`: View statistics for current post
-
-- `/threads view`: View configuration data (requires role)
-  - `type` (choice, required): Select data type to view
-    - `Banned Users`: View all banned users across threads
-    - `Thread Permissions`: View all thread permission assignments
-    - `Post Statistics`: View post activity statistics
-    - `Featured Threads`: View featured threads and their metrics
-
-- `/threads debug`: Debug commands (ADMIN only)
-  - `/threads debug export`: Export files from the extension directory
-    - `type` (choice, required): Type of files to export
+  - `target` - Target language variant
+  - `scope` - Conversion scope (All/Server/Roles/Channels)
+- `/threads timeout`
+  - `poll <user> <reason> <duration>` - Start timeout vote
+  - `check <message>` - AI content analysis
+  - `set <key>` - Configure GROQ API (Admin)
+- `/threads list <type>` - View thread data
+  - Banned users
+  - Permission assignments
+  - Post statistics
+- `/threads view <type>` - View global configurations
+  - Requires appropriate role
+- `/threads debate` - Debate management
+- `/threads divination`
+  - `ball <wish> [ephemeral]` - Crystal ball consultation
+  - `draw <target> [ephemeral]` - Fortune drawing
+  - `tarot <cards> <query> [ephemeral]` - Tarot reading
+  - `meaning <card> [ephemeral]` - Card interpretation
+  - `rider <question> [ephemeral]` - AI-enhanced reading
+- `/threads debug` (Admin only)
+  - `config <file> <major> [minor] <value>` - Configure settings
+  - `export <type>` - Export module files
 
 ### Context Menus
 
@@ -82,141 +62,102 @@ Inspired by a bot from Discord server (ID: 1284782072484986993).
 - User Context Menu:
   - **User in Thread**: Ban/unban users or manage their thread permissions
 
-### Quick Replies
+### Quick Replies (Reply-based)
 
-Messages can be managed by replying with these commands:
-
-- `del`: Delete the replied message
-- `pin`: Pin the replied message
-- `unpin`: Unpin the replied message
+- `del` - Delete message
+- `pin` - Pin message
+- `unpin` - Unpin message
 
 ## Configuration
 
-Key configuration options include:
+### Core Settings
 
-- `LOG_CHANNEL_ID`: ID of the log channel
-- `LOG_FORUM_ID`: ID of the log forum
-- `LOG_POST_ID`: ID of the log post
-- `POLL_FORUM_ID`: ID(s) of forums where polls are created
-- `TAIWAN_ROLE_ID`: ID of role exempt from link transformation
-- `THREADS_ROLE_ID`: ID of role required for debug commands
-- `GUILD_ID`: ID of your Discord server
-- `CONGRESS_ID`: ID of the congress channel
-- `CONGRESS_MEMBER_ROLE`: ID of congress member role
-- `CONGRESS_MOD_ROLE`: ID of congress moderator role
-- `ROLE_CHANNEL_PERMISSIONS`: Role-channel permission mappings
-- `ALLOWED_CHANNELS`: Channels where the module is active
-- `FEATURED_CHANNELS`: Channels eligible for featured posts
-- `TIMEOUT_CHANNEL_IDS`: Channels where timeout voting is allowed
-- `TIMEOUT_REQUIRED_DIFFERENCE`: Required vote difference for timeout
-- `TIMEOUT_DURATION`: Default timeout duration in minutes
+- Channel IDs
+  - `LOG_CHANNEL_ID` - Logging channel
+  - `LOG_FORUM_ID` - Log forum
+  - `LOG_POST_ID` - Log post
+  - `POLL_FORUM_ID` - Poll forums
+  - `CONGRESS_ID` - Congress channel
 
-### Files
+- Role IDs
+  - `TAIWAN_ROLE_ID` - Link transform exemption
+  - `THREADS_ROLE_ID` - Debug command access
+  - `CONGRESS_MEMBER_ROLE` - Congress members
+  - `CONGRESS_MOD_ROLE` - Congress moderators
 
-The module uses several JSON files for data storage:
+- Timeout Settings
+  - `TIMEOUT_CHANNEL_IDS` - Voting channels
+  - `TIMEOUT_REQUIRED_DIFFERENCE` - Vote threshold
+  - `TIMEOUT_DURATION` - Default duration
 
-- `banned_users.json`: Banned user records
-- `thread_permissions.json`: Thread permission assignments
-- `post_stats.json`: Post activity statistics
-- `featured_posts.json`: Featured post tracking
-- `timeout_history.json`: User timeout history
-- `.groq_key`: GROQ API key for AI moderation
+### Data Files
 
-### Algorithm
+- `banned_users.json` - Ban records
+- `thread_permissions.json` - Permission data
+- `post_stats.json` - Activity metrics
+- `featured_posts.json` - Featured content
+- `timeout_history.json` - Timeout logs
+- `.groq_key` - AI API configuration
+- `tarot.json` - Divination data
+- `debate.json` - Debate tracking
+- `/cards` - Tarot card assets
 
-1. AI Moderation
-   - Message Analysis:
-     - Evaluates message content and up to 15 messages of context
-     - Considers user roles, permissions, and interaction history
-     - Checks channel type and permission settings
-   - Severity Scoring (0-10):
-     - 0-2: Normal discussion, constructive criticism, casual conversation
-     - 3-4: Mild hostility, borderline content, heated but non-personal arguments
-     - 5-7: Direct hostility, targeted behavior, inappropriate content
-     - 8: Triggers warning, logs violation, notifies user
-     - 9-10: Automatic timeout with multipliers (2x for 9, 3x for 10)
-   - Permission Restrictions on Violations:
-     - Message sending (regular and thread)
-     - File attachments and reactions
-     - Channel/thread management
-     - Mention privileges
-     - Forum post creation
-   - System Constraints:
-     - Excludes bot messages
-     - 24-hour message age limit
-     - Exempts thread owners and managers
-     - Prevents duplicate checks
+## Technical Implementation
 
-2. Featured Posts
-   - Threshold:
-     - Calculates average post message count
-     - Reduces threshold 50% if activity < 50 msgs for 7 days
-     - Maintains 10 message minimum
-     - Weekly threshold updates
-   - Rotation:
-     - High activity (>100 msgs/day): 12h rotation
-     - Low activity (<10 msgs/day): 48h rotation
-     - Normal activity: 24h rotation
-   - Criteria:
-     - Message count vs threshold
-     - Activity within rotation window
-     - Post status (not archived/locked)
+### AI Moderation
 
-3. Timeout
-   - Base Duration:
-     - Initial: 300 seconds
-     - Multiplier: 1.2-2.0x
-   - Adjustments:
-     - Activity-based: ±20%
-     - Violation rate: +50%/-25% multiplier
-     - AI severity: 2-3x multiplier
-     - Progressive penalties with 24-48h decay
-     - Global triggers after 3+ violations
-     - Hard cap at 1 hour
+- Message Analysis
+  - 15-message context window
+  - Role/permission awareness
+  - Channel-specific rules
 
-4. Rate Limiting
-   - Per-User Limits:
-     - 10 requests/minute
-     - 2000 tokens/minute
-     - 5-minute breach cooldown
-     - 1-hour cache expiry
-   - Global Constraints:
-     - 30 requests/minute
-     - 7000 tokens/minute
-     - Daily: 7000 requests, 500000 tokens
-   - Resource Distribution:
-     - 70% user checks
-     - 20% auto-moderation
-     - 10% maintenance
-   - Model Hierarchy:
-     - Primary: `llama-3.2-90b-vision-preview`
-     - Secondary: `llama-3.2-11b-vision-preview`
-     - Fallback: `llama-3.1-70b-versatile`
+- Severity Scale (0-10)
+  - 0-2: Normal discussion
+  - 3-4: Mild concerns
+  - 5-7: Direct violations
+  - 8+: Automated actions
 
-5. Starboard
-   - Threshold:
-     - Dynamic threshold (5-15 stars)
-     - Adjusts based on:
-       - Activity score (hourly/daily/weekly stars)
-       - Time factors (peak hours multiplier)
-       - Quality score (starboard/total ratio)
-     - Weighted scoring:
-       - Activity weight: 30%
-       - Time weight: 20%
-       - Quality weight: 50%
-   - Statistics Tracking:
-     - Hourly stats (24-hour window)
-     - Daily stats (7-day window)
-     - Weekly stats (4-week window)
-     - Threshold history (last 100 adjustments)
-   - Adjustment Factors:
-     - Growth: 5% increase when score > 1.0
-     - Decay: 5% decrease when score < 1.0
-     - Time-based multipliers:
-       - 0:00-6:00: 0.8x
-       - 6:00-12:00: 1.1x
-       - 12:00-18:00: 1.2x
-       - 18:00-24:00: 1.0x
-   - System Constraints:
-     - Self-star prevention
-     - Duplicate entry prevention
+- Permission Controls
+  - Message restrictions
+  - File/reaction limits
+  - Channel access
+  - Mention privileges
+
+### Featured Posts
+
+- Dynamic Thresholds
+  - Activity-based adjustment
+  - Rotation intervals (12h-48h)
+  - Tag automation
+
+### Rate Limiting
+
+- Per-User Limits
+  - 10 requests/minute
+  - 2000 tokens/minute
+  - Progressive cooldowns
+
+- Global Constraints
+  - 30 requests/minute
+  - 7000 tokens/minute
+  - Daily caps
+
+### Starboard
+
+- Dynamic Thresholds
+  - 5-15 star range
+  - Activity/time/quality factors
+  - Weighted scoring system
+
+- Statistics
+  - Rolling windows (24h/7d/4w)
+  - Threshold history
+  - Anti-abuse measures
+
+## Acknowledgements
+
+This module incorporates code and ideas from:
+
+- [metabismuth/tarot-json](https://github.com/metabismuth/tarot-json.git) (MIT)
+- [penut85420/FriesMeowDiscordBot](https://github.com/penut85420/FriesMeowDiscordBot.git)
+- [ajzeigert/tarot.json](https://gist.github.com/32461d73c17cfd8fd475c0049db451f5.git)
