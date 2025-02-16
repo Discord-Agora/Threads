@@ -1,0 +1,1484 @@
+{
+  "00": {
+    "name": "The Fool",
+    "description": "With light step, as if earth and its trammels had little power to restrain him, a young man in gorgeous vestments pauses at the brink of a precipice among the great heights of the world; he surveys the blue distance before him-its expanse of sky rather than the prospect below. His act of eager walking is still indicated, though he is stationary at the given moment; his dog is still bounding. The edge which opens on the depth has no terror; it is as if angels were waiting to uphold him, if it came about that he leaped from the height. His countenance is full of intelligence and expectant dream. He has a rose in one hand and in the other a costly wand, from which depends over his right shoulder a wallet curiously embroidered. He is a prince of the other world on his travels through this one.",
+    "interpretation": "Folly, mania, extravagance, intoxication, delirium, frenzy, bewrayment. Reversed: Negligence, absence, distribution, carelessness, apathy, nullity, vanity.",
+    "upright": {
+      "related": "New beginnings, innocence, spontaneity, free spirit",
+      "behavior": "Taking risks, being spontaneous, following your heart",
+      "meaning": "A new beginning or adventure awaits. Trust your instincts and take a leap of faith",
+      "sexuality": "Playful and carefree approach to relationships",
+      "marriage": "Fresh start in relationships, taking chances in love"
+    },
+    "reversed": {
+      "related": "Recklessness, carelessness, risk-taking",
+      "behavior": "Being reckless, ignoring potential consequences",
+      "meaning": "Consider your actions more carefully. You may be taking unnecessary risks",
+      "sexuality": "Being too impulsive in relationships",
+      "marriage": "Need for more careful consideration in relationships"
+    }
+  },
+  "01": {
+    "name": "The Magician",
+    "description": "A youthful figure in the robe of a magician, having the countenance of divine Apollo, with smile of confidence and shining eyes. Above his head is the mysterious sign of the Holy Spirit, the sign of life, like an endless cord, forming the figure 8 in a horizontal position. About his waist is a serpent-cincture, the serpent appearing to devour its own tail. This is familiar to most as a conventional symbol of eternity. In the Magician's right hand is a wand raised towards heaven, while the left hand is pointing to the earth. On the table in front of the Magician are the symbols of the four Tarot suits, signifying the elements of natural life.",
+    "interpretation": "Skill, diplomacy, address, subtlety; sickness, pain, loss, disaster, snares of enemies; self-confidence, will. Reversed: Physician, Magus, mental disease, disgrace, disquiet.",
+    "upright": {
+      "related": "Manifestation, resourcefulness, power, inspired action",
+      "behavior": "Using your skills and resources effectively",
+      "meaning": "You have all the tools you need to succeed. Take inspired action",
+      "sexuality": "Confidence and charm in relationships",
+      "marriage": "Creating magical moments in partnership"
+    },
+    "reversed": {
+      "related": "Manipulation, poor planning, untapped talents",
+      "behavior": "Manipulating others, not using your talents",
+      "meaning": "Be careful of manipulation. You may not be using your talents effectively",
+      "sexuality": "Possible manipulation in relationships",
+      "marriage": "Need for honest communication"
+    }
+  },
+  "02": {
+    "name": "The High Priestess",
+    "description": "She has the lunar crescent at her feet, a horned diadem on her head, with a globe in the middle place, and a large solar cross on her breast. The scroll in her hands is inscribed with the word Tora. She is seated between the white and black pillars of the mystic Temple, and the veil of the Temple is behind her: it is embroidered with palms and pomegranates. The vestments are flowing and gauzy, and the mantle suggests light--a shimmering radiance.",
+    "interpretation": "Secrets, mystery, the future as yet unrevealed; silence, tenacity; mystery, wisdom, science. Reversed: Passion, moral or physical ardour, conceit, surface knowledge.",
+    "upright": {
+      "related": "Intuition, mystery, spirituality, inner knowledge",
+      "behavior": "Trusting your intuition, seeking inner wisdom",
+      "meaning": "Listen to your inner voice. Your intuition holds the answers you seek",
+      "sexuality": "Deep emotional connection, spiritual intimacy",
+      "marriage": "Understanding partner on a deeper level"
+    },
+    "reversed": {
+      "related": "Secrets, disconnection from intuition, hidden agendas",
+      "behavior": "Ignoring intuition, keeping secrets",
+      "meaning": "You may be overlooking your inner wisdom or hiding important truths",
+      "sexuality": "Lack of emotional intimacy",
+      "marriage": "Hidden aspects in relationship need addressing"
+    }
+  },
+  "03": {
+    "name": "The Empress",
+    "description": "A stately figure, seated, having rich vestments and royal aspect, as of a daughter of heaven and earth. Her diadem is of twelve stars, gathered in a cluster. The symbol of Venus is on the shield which rests near her. A field of corn is ripening in front of her, and beyond there is a fall of water. The sceptre which she bears is surmounted by the globe of this world.",
+    "interpretation": "Fruitfulness, action, initiative, length of days; the unknown, clandestine; also difficulty, doubt, ignorance. Reversed: Light, truth, the unravelling of involved matters, public rejoicings; according to another reading, vacillation.",
+    "upright": {
+      "related": "Fertility, nurturing, abundance, motherhood",
+      "behavior": "Nurturing others, expressing creativity",
+      "meaning": "A time of growth and abundance. Nurture your projects and relationships",
+      "sexuality": "Sensual and nurturing relationships",
+      "marriage": "Fertile period for relationship growth"
+    },
+    "reversed": {
+      "related": "Creative block, dependence, smothering",
+      "behavior": "Being overprotective, creative stagnation",
+      "meaning": "You may be experiencing creative blocks or being too dependent",
+      "sexuality": "Overwhelming or possessive behavior",
+      "marriage": "Need for space and independence"
+    }
+  },
+  "04": {
+    "name": "The Emperor",
+    "description": "He has a form of the Crux ansata for his sceptre and a globe in his left hand. He is a crowned monarch--commanding, stately, seated on a throne, the arms of which are fronted by rams' heads. He is executive and realization, the power of this world, here clothed with the highest of its natural attributes.",
+    "interpretation": "Stability, power, protection, realization; a great person; aid, reason, conviction; also authority and will. Reversed: Benevolence, compassion, credit; also confusion to enemies, obstruction, immaturity.",
+    "upright": {
+      "related": "Authority, structure, leadership, stability",
+      "behavior": "Taking charge, establishing order",
+      "meaning": "Time to establish structure and take control of your situation",
+      "sexuality": "Traditional approach to relationships",
+      "marriage": "Stable and secure partnership"
+    },
+    "reversed": {
+      "related": "Domination, rigidity, excessive control",
+      "behavior": "Being too controlling, inflexible thinking",
+      "meaning": "Be careful of being too rigid or authoritarian",
+      "sexuality": "Control issues in relationships",
+      "marriage": "Power struggles in partnership"
+    }
+  },
+  "05": {
+    "name": "The Hierophant",
+    "description": "He wears the triple crown and is seated between two pillars, but they are not those of the Temple which is guarded by the High Priestess. In his left hand he holds a sceptre terminating in the triple cross, and with his right hand he gives the well-known ecclesiastical sign which is called that of esotericism. At his feet are the crossed keys, and two priestly ministers in albs kneel before him.",
+    "interpretation": "Marriage, alliance, captivity, servitude; by another account, mercy and goodness; inspiration; the man to whom the Querent has recourse. Reversed: Society, good understanding, concord, overkindness, weakness.",
+    "upright": {
+      "related": "Tradition, conformity, morality, beliefs",
+      "behavior": "Following traditions, seeking guidance",
+      "meaning": "Consider traditional approaches or seek guidance from a mentor",
+      "sexuality": "Conservative approach to relationships",
+      "marriage": "Traditional values in partnership"
+    },
+    "reversed": {
+      "related": "Challenge to beliefs, unconventionality",
+      "behavior": "Questioning traditions, breaking rules",
+      "meaning": "You may need to challenge conventional wisdom",
+      "sexuality": "Breaking free from traditional views",
+      "marriage": "Unconventional relationship choices"
+    }
+  },
+  "06": {
+    "name": "The Lovers",
+    "description": "The sun shines in the zenith, and beneath is a great winged figure with arms extended, pouring down influences. In the foreground are two human figures, male and female, unveiled before each other, as if Adam and Eve when they first occupied the paradise of the earthly body. Behind the man is the Tree of Life, bearing twelve fruits, and the Tree of the Knowledge of Good and Evil is behind the woman; the serpent is twining round it.",
+    "interpretation": "Attraction, love, beauty, trials overcome. Reversed: Failure, foolish designs. Another account speaks of marriage frustrated and contrarieties of all kinds.",
+    "upright": {
+      "related": "Love, harmony, relationships, choices",
+      "behavior": "Making heart-based decisions, seeking unity",
+      "meaning": "A significant choice about love or partnership awaits",
+      "sexuality": "Harmonious and balanced relationships",
+      "marriage": "Deep connection and mutual understanding"
+    },
+    "reversed": {
+      "related": "Disharmony, imbalance, misalignment",
+      "behavior": "Internal conflict, avoiding choices",
+      "meaning": "You may be experiencing relationship conflicts or avoiding important decisions",
+      "sexuality": "Relationship difficulties",
+      "marriage": "Need to address relationship imbalances"
+    }
+  },
+  "07": {
+    "name": "The Chariot",
+    "description": "An erect and princely figure carrying a drawn sword and corresponding, broadly speaking, to the traditional description. On the shoulders of the victorious hero are supposed to be the Urim and Thummim. He has led captivity captive; he is conquest on all planes--in the mind, in science, in progress, in certain trials of initiation.",
+    "interpretation": "Succour, providence also war, triumph, presumption, vengeance, trouble. Reversed: Riot, quarrel, dispute, litigation, defeat.",
+    "upright": {
+      "related": "Victory, willpower, determination, success",
+      "behavior": "Taking control, moving forward with confidence",
+      "meaning": "Success through determination and self-control",
+      "sexuality": "Taking initiative in relationships",
+      "marriage": "Moving forward together with purpose"
+    },
+    "reversed": {
+      "related": "Lack of direction, aggression, defeat",
+      "behavior": "Losing control, lacking direction",
+      "meaning": "You may be lacking direction or losing control of your situation",
+      "sexuality": "Relationship moving in wrong direction",
+      "marriage": "Need to regain control of relationship direction"
+    }
+  },
+  "08": {
+    "name": "Strength",
+    "description": "A woman, over whose head there broods the same symbol of life which we have seen in the card of the Magician, is closing the jaws of a lion. Her beneficent fortitude has already subdued the lion, which is being led by a chain of flowers. The only point in which this design differs from the conventional presentations is that her beneficent fortitude has already subdued the lion.",
+    "interpretation": "Power, energy, action, courage, magnanimity; also complete success and honours. Reversed: Despotism, abuse if power, weakness, discord, sometimes even disgrace.",
+    "upright": {
+      "related": "Inner strength, courage, patience, compassion",
+      "behavior": "Showing courage, gentle control, patience",
+      "meaning": "Your inner strength and patience will help you overcome challenges",
+      "sexuality": "Balanced passion and control",
+      "marriage": "Strong foundation through gentle understanding"
+    },
+    "reversed": {
+      "related": "Self-doubt, weakness, lack of self-control",
+      "behavior": "Losing patience, doubting yourself",
+      "meaning": "You may need to work on your self-confidence and inner strength",
+      "sexuality": "Lack of control over desires",
+      "marriage": "Need to strengthen emotional bonds"
+    }
+  },
+  "09": {
+    "name": "The Hermit",
+    "description": "The variation from the conventional models in this card is only that the lamp is not enveloped partially in the mantle of its bearer, who blends the idea of the Ancient of Days with the Light of the World. It is a star which shines in the lantern. He is seen holding up his beacon on an eminence. Therefore the Hermit is not a wise man in search of truth and justice; his beacon intimates that 'where I am, you also may be'.",
+    "interpretation": "Prudence, circumspection; also and especially treason, dissimulation, roguery, corruption. Reversed: Concealment, disguise, policy, fear, unreasoned caution.",
+    "upright": {
+      "related": "Soul-searching, introspection, inner guidance, solitude",
+      "behavior": "Seeking solitude, inner reflection",
+      "meaning": "Take time for self-reflection and spiritual growth",
+      "sexuality": "Period of self-discovery",
+      "marriage": "Need for personal space and reflection"
+    },
+    "reversed": {
+      "related": "Isolation, loneliness, withdrawal",
+      "behavior": "Excessive isolation, avoiding others",
+      "meaning": "Be careful of isolating yourself too much",
+      "sexuality": "Emotional withdrawal",
+      "marriage": "Too much distance in relationship"
+    }
+  },
+  "10": {
+    "name": "Wheel of Fortune",
+    "description": "In this symbol the wheel itself follows the indications of Eliphas Levi in respect of Ezekiel's vision. With the French occultist, and in the design itself, the symbolic picture stands for the perpetual motion of a fluidic universe and for the flux of human life. The Sphinx is the equilibrium therein. The transliteration of Taro as Rota is inscribed on the wheel.",
+    "interpretation": "Destiny, fortune, success, elevation, luck, felicity. Reversed: Increase, abundance, superfluity.",
+    "upright": {
+      "related": "Good luck, karma, life cycles, destiny, turning point",
+      "behavior": "Accepting change, embracing destiny",
+      "meaning": "A turning point brings positive change and good fortune",
+      "sexuality": "Positive changes in relationships",
+      "marriage": "Favorable timing for relationship matters"
+    },
+    "reversed": {
+      "related": "Bad luck, resistance to change, breaking cycles",
+      "behavior": "Resisting change, fighting destiny",
+      "meaning": "You may be experiencing challenging changes or resisting necessary transitions",
+      "sexuality": "Unfortunate timing in relationships",
+      "marriage": "Difficult period requiring adaptation"
+    }
+  },
+  "11": {
+    "name": "Justice",
+    "description": "As this card follows the traditional symbolism and carries above all its obvious meanings, there is little to say regarding it. The figure is seated between pillars, like the High Priestess, and on this account it seems desirable to indicate that the moral principle which deals unto every man according to his works differs in its essence from the spiritual justice which is involved in the idea of election.",
+    "interpretation": "Equity, rightness, probity, executive; triumph of the deserving side in law. Reversed: Law in all its departments, legal complications, bigotry, bias, excessive severity.",
+    "upright": {
+      "related": "Justice, fairness, truth, cause and effect",
+      "behavior": "Being fair, seeking truth",
+      "meaning": "Truth and justice will prevail. Fair decisions lead to balance",
+      "sexuality": "Fair and balanced relationships",
+      "marriage": "Equal partnership and honest communication"
+    },
+    "reversed": {
+      "related": "Unfairness, dishonesty, lack of accountability",
+      "behavior": "Being unfair, avoiding responsibility",
+      "meaning": "You may be facing or causing unfairness. Consider your actions' consequences",
+      "sexuality": "Imbalanced relationships",
+      "marriage": "Need for fairness and honesty"
+    }
+  },
+  "12": {
+    "name": "The Hanged Man",
+    "description": "The gallows from which he is suspended forms a Tau cross, while the figure--from the position of the legs--forms a fylfot cross. There is a nimbus about the head of the seeming martyr. The tree of sacrifice is living wood, with leaves thereon; the face expresses deep entrancement, not suffering; the figure, as a whole, suggests life in suspension, but life and not death.",
+    "interpretation": "Wisdom, circumspection, discernment, trials, sacrifice, intuition, divination, prophecy. Reversed: Selfishness, the crowd, body politic.",
+    "upright": {
+      "related": "Surrender, letting go, new perspective, sacrifice",
+      "behavior": "Surrendering control, changing perspective",
+      "meaning": "Gain wisdom through surrender and seeing things differently",
+      "sexuality": "New perspectives in relationships",
+      "marriage": "Sacrifice leading to growth"
+    },
+    "reversed": {
+      "related": "Stalling, resistance, avoiding sacrifice",
+      "behavior": "Refusing to let go, stagnation",
+      "meaning": "You may be resisting necessary changes or sacrifices",
+      "sexuality": "Stuck in old relationship patterns",
+      "marriage": "Unwillingness to compromise"
+    }
+  },
+  "13": {
+    "name": "Death",
+    "description": "The veil or mask of life is perpetuated in change, transformation and passage from lower to higher. The mysterious horseman moves slowly, bearing a black banner emblazoned with the Mystic Rose, which signifies life. Between two pillars on the verge of the horizon there shines the sun of immortality. The horseman carries no visible weapon, but king and child and maiden fall before him, while a prelate with clasped hands awaits his end.",
+    "interpretation": "End, mortality, destruction, corruption also, for a man, the loss of a benefactor for a woman, many contrarieties; for a maid, failure of marriage projects. Reversed: Inertia, sleep, lethargy, petrifaction, somnambulism; hope destroyed.",
+    "upright": {
+      "related": "Endings, transformation, transition, renewal",
+      "behavior": "Embracing change, letting go of the past",
+      "meaning": "A significant transformation or ending leads to new beginnings",
+      "sexuality": "Transformation in relationships",
+      "marriage": "Major relationship changes"
+    },
+    "reversed": {
+      "related": "Resistance to change, stagnation, decay",
+      "behavior": "Resisting endings, holding onto past",
+      "meaning": "You may be resisting necessary endings or changes",
+      "sexuality": "Refusing to let go of past relationships",
+      "marriage": "Stagnation in relationship"
+    }
+  },
+  "14": {
+    "name": "Temperance",
+    "description": "A winged angel, with the sign of the sun upon his forehead and on his breast the square and triangle of the septenary. The figure is neither male nor female. It is held to be pouring the essences of life from chalice to chalice. It has one foot upon the earth and one upon waters, thus illustrating the nature of the essences.",
+    "interpretation": "Economy, moderation, frugality, management, accommodation. Reversed: Things connected with churches, religions, sects, the priesthood, sometimes even the priest who will marry the Querent; also disunion, unfortunate combinations, competing interests.",
+    "upright": {
+      "related": "Balance, moderation, patience, purpose",
+      "behavior": "Finding balance, practicing moderation",
+      "meaning": "Find harmony through balance and patience",
+      "sexuality": "Balanced approach to intimacy",
+      "marriage": "Harmonious partnership through compromise"
+    },
+    "reversed": {
+      "related": "Imbalance, excess, lack of harmony",
+      "behavior": "Being extreme, lacking patience",
+      "meaning": "You may need to address imbalances or extreme behaviors",
+      "sexuality": "Lack of balance in intimate matters",
+      "marriage": "Need for better emotional balance"
+    }
+  },
+  "15": {
+    "name": "The Devil",
+    "description": "The Horned Goat of Mendes, with wings like those of a bat, is standing on an altar. At the pit of the stomach there is the sign of Mercury. The right hand is upraised and extended, being the reverse of that benediction which is given by the Hierophant. In the left hand there is a great flaming torch, inverted towards the earth. A reversed pentagram is on the forehead.",
+    "interpretation": "Ravage, violence, vehemence, extraordinary efforts, force, fatality; that which is predestined but is not for this reason evil. Reversed: Evil fatality, weakness, pettiness, blindness.",
+    "upright": {
+      "related": "Bondage, addiction, materialism, temptation",
+      "behavior": "Facing shadows, acknowledging dependencies",
+      "meaning": "You may be trapped by material desires or unhealthy attachments",
+      "sexuality": "Intense physical attraction, unhealthy bonds",
+      "marriage": "Destructive patterns in relationship"
+    },
+    "reversed": {
+      "related": "Breaking free, release, restoring control",
+      "behavior": "Breaking chains, overcoming addiction",
+      "meaning": "Time to break free from limitations and unhealthy patterns",
+      "sexuality": "Breaking free from toxic relationships",
+      "marriage": "Liberation from harmful patterns"
+    }
+  },
+  "16": {
+    "name": "The Tower",
+    "description": "Occult explanations attached to this card are meagre and mostly disconcerting. It depicts ruin in all its aspects. The Tower is literally the fall, when evil has prevailed therein, and above all that it is the rending of a House of Doctrine. It illustrates also in the most comprehensive way the old truth that 'except the Lord build the house, they labour in vain that build it.'",
+    "interpretation": "Misery, distress, indigence, adversity, calamity, disgrace, deception, ruin. It is a card in particular of unforeseen catastrophe. Reversed: According to one account, the same in a lesser degree also oppression, imprisonment, tyranny.",
+    "upright": {
+      "related": "Sudden change, upheaval, chaos, revelation",
+      "behavior": "Facing disruption, accepting sudden changes",
+      "meaning": "Sudden changes bring necessary destruction for rebuilding",
+      "sexuality": "Sudden revelations in relationships",
+      "marriage": "Dramatic changes in partnership"
+    },
+    "reversed": {
+      "related": "Avoiding disaster, fear of change",
+      "behavior": "Resisting necessary breakdown",
+      "meaning": "You may be avoiding necessary chaos or change",
+      "sexuality": "Fear of relationship changes",
+      "marriage": "Avoiding necessary confrontation"
+    }
+  },
+  "17": {
+    "name": "The Star",
+    "description": "A great, radiant star of eight rays, surrounded by seven lesser stars--also of eight rays. The female figure in the foreground is entirely naked. Her left knee is on the land and her right foot upon the water. She pours Water of Life from two great ewers, irrigating sea and land. Behind her is rising ground and on the right a shrub or tree, whereon a bird alights. The figure expresses eternal youth and beauty.",
+    "interpretation": "Loss, theft, privation, abandonment; another reading says-hope and bright prospects, Reversed: Arrogance, haughtiness, impotence.",
+    "upright": {
+      "related": "Hope, inspiration, serenity, renewal",
+      "behavior": "Being optimistic, finding peace",
+      "meaning": "A period of hope and healing brings renewed faith",
+      "sexuality": "Renewed hope in relationships",
+      "marriage": "Optimistic period for partnership"
+    },
+    "reversed": {
+      "related": "Loss of hope, despair, disconnection",
+      "behavior": "Losing faith, feeling discouraged",
+      "meaning": "You may be losing hope or feeling disconnected",
+      "sexuality": "Loss of faith in relationships",
+      "marriage": "Need to restore hope and faith"
+    }
+  },
+  "18": {
+    "name": "The Moon",
+    "description": "The moon is increasing on what is called the side of mercy, to the right of the observer. It has sixteen chief and sixteen secondary rays. The card represents life of the imagination apart from life of the spirit. The path between the towers is the issue into the unknown. The dog and wolf are the fears of the natural mind in the presence of that place of exit, when there is only reflected light to guide it.",
+    "interpretation": "Hidden enemies, danger, calumny, darkness, terror, deception, occult forces, error. Reversed: Instability, inconstancy, silence, lesser degrees of deception and error.",
+    "upright": {
+      "related": "Illusion, fear, anxiety, subconscious",
+      "behavior": "Facing fears, trusting intuition",
+      "meaning": "Navigate through uncertainty by trusting your intuition",
+      "sexuality": "Hidden aspects in relationships",
+      "marriage": "Dealing with relationship fears"
+    },
+    "reversed": {
+      "related": "Release of fear, repressed emotion",
+      "behavior": "Overcoming illusions, releasing anxiety",
+      "meaning": "Time to release fears and face reality",
+      "sexuality": "Clearing relationship confusion",
+      "marriage": "Overcoming relationship anxiety"
+    }
+  },
+  "19": {
+    "name": "The Sun",
+    "description": "The naked child mounted on a white horse and displaying a red standard has been mentioned already as the better symbolism connected with this card. It is the destiny of the Supernatural East and the great and holy light which goes before the endless procession of humanity, coming out from the walled garden of the sensitive life and passing on the journey home.",
+    "interpretation": "Material happiness, fortunate marriage, contentment. Reversed: The same in a lesser sense.",
+    "upright": {
+      "related": "Joy, success, celebration, positivity",
+      "behavior": "Being optimistic, celebrating life",
+      "meaning": "A period of joy and success brings warmth to your life",
+      "sexuality": "Joyful and positive relationships",
+      "marriage": "Happy period in partnership"
+    },
+    "reversed": {
+      "related": "Temporary depression, lack of success",
+      "behavior": "Feeling down, lacking enthusiasm",
+      "meaning": "You may be experiencing temporary setbacks or negativity",
+      "sexuality": "Temporary relationship challenges",
+      "marriage": "Need to restore joy in partnership"
+    }
+  },
+  "20": {
+    "name": "Judgement",
+    "description": "The great angel is here encompassed by clouds, but he blows his bannered trumpet, and the cross as usual is displayed on the banner. The dead are rising from their tombs--a woman on the right, a man on the left hand, and between them their child, whose back is turned. But in this card there are more than three who are restored, and it has been thought worth while to make this variation as illustrating the insufficiency of current explanations.",
+    "interpretation": "Change of position, renewal, outcome. Another account specifies total loss though lawsuit. Reversed: Weakness, pusillanimity, simplicity; also deliberation, decision, sentence.",
+    "upright": {
+      "related": "Awakening, rebirth, inner calling, absolution",
+      "behavior": "Answering calls, self-reflection",
+      "meaning": "A spiritual awakening or calling leads to renewal",
+      "sexuality": "Spiritual awakening in relationships",
+      "marriage": "Relationship renewal or revival"
+    },
+    "reversed": {
+      "related": "Self-doubt, inner critic, ignoring calls",
+      "behavior": "Avoiding self-reflection, ignoring purpose",
+      "meaning": "You may be ignoring important calls or judgments",
+      "sexuality": "Avoiding relationship evaluation",
+      "marriage": "Need for relationship assessment"
+    }
+  },
+  "21": {
+    "name": "The World",
+    "description": "As this final message of the Major Trumps is unchanged in respect of its design, it represents the perfection and end of the Cosmos, the secret which is within it, the rapture of the universe when it understands itself in God. It is further the state of the soul in the consciousness of Divine Vision, reflected from the self-knowing spirit.",
+    "interpretation": "Assured success, recompense, voyage, route, emigration, flight, change of place. Reversed: Inertia, fixity, stagnation, permanence.",
+    "upright": {
+      "related": "Completion, integration, accomplishment, travel",
+      "behavior": "Achieving goals, feeling whole",
+      "meaning": "A cycle completes bringing fulfillment and achievement",
+      "sexuality": "Complete fulfillment in relationships",
+      "marriage": "Relationship wholeness and completion"
+    },
+    "reversed": {
+      "related": "Incomplete, lack of closure, seeking more",
+      "behavior": "Feeling incomplete, seeking closure",
+      "meaning": "You may need to complete unfinished business",
+      "sexuality": "Incomplete relationship matters",
+      "marriage": "Unfinished relationship issues"
+    }
+  },
+  "22": {
+    "name": "Ace of Wands",
+    "description": "A hand issuing from a cloud grasps a stout wand or club.",
+    "interpretation": "Creation, invention, enterprise, the powers which result in these; principle, beginning, source; birth, family, origin, and in a sense the virility which is behind them; the starting point of enterprises; according to another account, money, fortune, inheritance. Reversed: Fall, decadence, ruin, perdition, to perish also a certain clouded joy.",
+    "upright": {
+      "related": "New beginnings, inspiration, potential, creation",
+      "behavior": "Starting new projects, feeling inspired",
+      "meaning": "A new creative venture or inspiration emerges",
+      "sexuality": "New passionate beginnings",
+      "marriage": "Spark of new relationship energy"
+    },
+    "reversed": {
+      "related": "Delays, lack of motivation, false starts",
+      "behavior": "Lacking energy, false starts",
+      "meaning": "You may be experiencing delays or lack of motivation",
+      "sexuality": "Delayed passion or connection",
+      "marriage": "Delayed relationship progress"
+    }
+  },
+  "23": {
+    "name": "Two of Wands",
+    "description": "A tall man looks from a battlemented roof over sea and shore; he holds a globe in his right hand, while a staff in his left rests on the battlement; another is fixed in a ring. The Rose and Cross and Lily should be noticed on the left side.",
+    "interpretation": "Between the alternative readings there is no marriage possible; on the one hand, riches, fortune, magnificence; on the other, physical suffering, disease, chagrin, sadness, mortification. Reversed: Surprise, wonder, enchantment, emotion, trouble, fear.",
+    "upright": {
+      "related": "Planning, making decisions, leaving comfort zone",
+      "behavior": "Planning ahead, considering options",
+      "meaning": "Time to make decisions and plan your next move",
+      "sexuality": "Planning relationship future",
+      "marriage": "Making partnership plans"
+    },
+    "reversed": {
+      "related": "Fear of change, bad planning, lack of direction",
+      "behavior": "Poor planning, fear of unknown",
+      "meaning": "You may need to improve your planning or face your fears",
+      "sexuality": "Uncertainty in relationship direction",
+      "marriage": "Need for better relationship planning"
+    }
+  },
+  "24": {
+    "name": "Three of Wands",
+    "description": "A calm, stately personage, with his back turned, looking from a cliff's edge at ships passing over the sea. Three staves are planted in the ground, and he leans slightly on one of them.",
+    "interpretation": "He symbolizes established strength, enterprise, effort, trade, commerce, discovery; those are his ships, bearing his merchandise, which are sailing over the sea. Reversed: The end of troubles, suspension or cessation of adversity, toil and disappointment.",
+    "upright": {
+      "related": "Expansion, foresight, overseas opportunities",
+      "behavior": "Looking ahead, exploring opportunities",
+      "meaning": "Your plans are progressing, look for expansion opportunities",
+      "sexuality": "Exploring new relationship territories",
+      "marriage": "Growth and expansion in partnership"
+    },
+    "reversed": {
+      "related": "Delays, setbacks, lack of progress",
+      "behavior": "Facing obstacles, delayed plans",
+      "meaning": "You may be experiencing delays or need to reassess your plans",
+      "sexuality": "Relationship progress blocked",
+      "marriage": "Partnership facing obstacles"
+    }
+  },
+  "25": {
+    "name": "Four of Wands",
+    "description": "From the four great staves planted in the foreground there is a great garland suspended; two female figures uplift nosegays; at their side is a bridge over a moat, leading to an old manorial house.",
+    "interpretation": "They are for once almost on the surface--country life, haven of refuge, a species of domestic harvest-home, repose, concord, harmony, prosperity, peace, and the perfected work of these. Reversed: The meaning remains unaltered; it is prosperity, increase, felicity, beauty, embellishment.",
+    "upright": {
+      "related": "Celebration, harmony, marriage, home, community",
+      "behavior": "Celebrating achievements, finding stability",
+      "meaning": "A time of celebration and harmony in your home or community",
+      "sexuality": "Harmonious relationship phase",
+      "marriage": "Stable and joyful partnership"
+    },
+    "reversed": {
+      "related": "Lack of support, instability, homesickness",
+      "behavior": "Missing support, feeling unstable",
+      "meaning": "You may need to address instability or lack of support",
+      "sexuality": "Unstable relationship foundation",
+      "marriage": "Need for more stability"
+    }
+  },
+  "26": {
+    "name": "Five of Wands",
+    "description": "A posse of youths, who are brandishing staves, as if in sport or strife.",
+    "interpretation": "Imitation, as, for example, sham fight, but also the strenuous competition and struggle of the search after riches and fortune. In this sense it connects with the battle of life. Hence some attributions say that it is a card of gold, gain, opulence. Reversed: Litigation, disputes, trickery, contradiction.",
+    "upright": {
+      "related": "Competition, conflict, rivalry, challenges",
+      "behavior": "Facing competition, dealing with conflicts",
+      "meaning": "Competition or conflicts require your attention and energy",
+      "sexuality": "Relationship conflicts",
+      "marriage": "Partnership challenges"
+    },
+    "reversed": {
+      "related": "Avoiding conflict, resolution, harmony",
+      "behavior": "Resolving conflicts, finding peace",
+      "meaning": "Time to resolve conflicts or avoid unnecessary competition",
+      "sexuality": "Resolving relationship tensions",
+      "marriage": "Overcoming partnership struggles"
+    }
+  },
+  "27": {
+    "name": "Six of Wands",
+    "description": "A laurelled horseman bears one staff adorned with a laurel crown; footmen with staves are at his side.",
+    "interpretation": "The card has been so designed that it can cover several significations; on the surface, it is a victor triumphing, but it is also great news, such as might be carried in state by the King's courier. Reversed: Apprehension, fear, as of a victorious enemy at the gate; treachery, disloyalty.",
+    "upright": {
+      "related": "Victory, success, public recognition, progress",
+      "behavior": "Achieving goals, receiving recognition",
+      "meaning": "Success and recognition are coming your way",
+      "sexuality": "Relationship achievements",
+      "marriage": "Partnership success"
+    },
+    "reversed": {
+      "related": "Excess pride, lack of recognition, fall from grace",
+      "behavior": "Dealing with setbacks, lacking recognition",
+      "meaning": "Be careful of pride or prepare for temporary setbacks",
+      "sexuality": "Relationship pride issues",
+      "marriage": "Partnership recognition issues"
+    }
+  },
+  "28": {
+    "name": "Seven of Wands",
+    "description": "A young man on a craggy eminence brandishing a staff; six other staves are raised towards him from below.",
+    "interpretation": "It is a card of valour, for, on the surface, six are attacking one, who has, however, the vantage position. On the intellectual plane, it signifies discussion, wordy strife; in business--negotiations, war of trade, barter, competition. Reversed: Perplexity, embarrassments, anxiety.",
+    "upright": {
+      "related": "Challenge, competition, protection, perseverance",
+      "behavior": "Standing your ground, defending position",
+      "meaning": "Stand firm in your position and defend your achievements",
+      "sexuality": "Defending relationship values",
+      "marriage": "Protecting partnership"
+    },
+    "reversed": {
+      "related": "Giving up, overwhelmed, surrender",
+      "behavior": "Feeling overwhelmed, yielding",
+      "meaning": "You may be feeling overwhelmed or need to choose your battles",
+      "sexuality": "Overwhelmed by relationship demands",
+      "marriage": "Partnership pressure"
+    }
+  },
+  "29": {
+    "name": "Eight of Wands",
+    "description": "The card represents motion through the immovable-a flight of wands through an open country; but they draw to the term of their course. That which they signify is at hand; it may be even on the threshold.",
+    "interpretation": "Activity in undertakings, the path of such activity, swiftness, as that of an express messenger; great haste, great hope, speed towards an end which promises assured felicity. Reversed: Arrows of jealousy, internal dispute, stingings of conscience, quarrels.",
+    "upright": {
+      "related": "Speed, action, air travel, movement",
+      "behavior": "Taking swift action, moving forward",
+      "meaning": "Swift action and progress are coming your way",
+      "sexuality": "Fast-moving relationship",
+      "marriage": "Quick partnership developments"
+    },
+    "reversed": {
+      "related": "Delays, frustration, slowing down",
+      "behavior": "Experiencing delays, slowing pace",
+      "meaning": "You may need to slow down or handle delays patiently",
+      "sexuality": "Relationship delays",
+      "marriage": "Partnership slowdown"
+    }
+  },
+  "30": {
+    "name": "Nine of Wands",
+    "description": "The figure leans upon his staff and has an expectant look, as if awaiting an enemy. Behind are eight other staves--erect, in orderly disposition, like a palisade.",
+    "interpretation": "The card signifies strength in opposition. If attacked, the person will meet an onslaught boldly; and his build shews, that he may prove a formidable antagonist. Reversed: Obstacles, adversity, calamity.",
+    "upright": {
+      "related": "Resilience, courage, persistence, test of faith",
+      "behavior": "Showing resilience, persisting",
+      "meaning": "Stay resilient - you're almost at the finish line",
+      "sexuality": "Persistent relationship effort",
+      "marriage": "Partnership perseverance"
+    },
+    "reversed": {
+      "related": "Exhaustion, giving up, low energy",
+      "behavior": "Feeling exhausted, losing hope",
+      "meaning": "You may need rest or to reassess your persistence",
+      "sexuality": "Relationship exhaustion",
+      "marriage": "Partnership fatigue"
+    }
+  },
+  "31": {
+    "name": "Ten of Wands",
+    "description": "A man oppressed by the weight of the ten staves which he is carrying.",
+    "interpretation": "A card of many significances, and some of the readings cannot be harmonized. The chief meaning is oppression simply, but it is also fortune, gain, any kind of success, and then it is the oppression of these things. Reversed: Contrarieties, difficulties, intrigues, and their analogies.",
+    "upright": {
+      "related": "Burden, responsibility, hard work, stress",
+      "behavior": "Carrying burdens, taking responsibility",
+      "meaning": "You're carrying heavy burdens - consider sharing the load",
+      "sexuality": "Relationship burdens",
+      "marriage": "Partnership responsibilities"
+    },
+    "reversed": {
+      "related": "Laying down burdens, release, delegation",
+      "behavior": "Releasing burdens, delegating tasks",
+      "meaning": "Time to release burdens and delegate responsibilities",
+      "sexuality": "Releasing relationship pressure",
+      "marriage": "Sharing partnership load"
+    }
+  },
+  "32": {
+    "name": "Page of Wands",
+    "description": "In a scene similar to the former, a young man stands in the act of proclamation. He is unknown but faithful, and his tidings are strange.",
+    "interpretation": "Dark young man, faithful, a lover, an envoy, a postman. Beside a man, he will bear favourable testimony concerning him. Has the chief qualities of his suit. Reversed: Anecdotes, announcements, evil news. Also indecision and the instability which accompanies it.",
+    "upright": {
+      "related": "New ideas, inspiration, discovery, excitement",
+      "behavior": "Being enthusiastic, exploring new ideas",
+      "meaning": "A new creative phase or message brings excitement",
+      "sexuality": "New romantic interests",
+      "marriage": "Fresh energy in partnership"
+    },
+    "reversed": {
+      "related": "Lack of direction, procrastination, instability",
+      "behavior": "Procrastinating, lacking focus",
+      "meaning": "You may need to focus your energy or overcome procrastination",
+      "sexuality": "Immature approach to relationships",
+      "marriage": "Need for relationship maturity"
+    }
+  },
+  "33": {
+    "name": "Knight of Wands",
+    "description": "He is shewn as if upon a journey, armed with a short wand, and although mailed is not on a warlike errand. He is passing mounds or pyramids. The motion of the horse is a key to the character of its rider, and suggests the precipitate mood, or things connected therewith.",
+    "interpretation": "Departure, absence, flight, emigration. A dark young man, friendly. Change of residence. Reversed: Rupture, division, interruption, discord.",
+    "upright": {
+      "related": "Action, adventure, fearlessness, impulsiveness",
+      "behavior": "Taking action, being adventurous",
+      "meaning": "Time for bold action and adventure",
+      "sexuality": "Passionate pursuit",
+      "marriage": "Exciting partnership phase"
+    },
+    "reversed": {
+      "related": "Frustration, delays, scattered energy",
+      "behavior": "Being reckless, scattered energy",
+      "meaning": "Be careful of impulsive actions or scattered energy",
+      "sexuality": "Reckless romantic behavior",
+      "marriage": "Partnership impulsiveness"
+    }
+  },
+  "34": {
+    "name": "Queen of Wands",
+    "description": "The Wands throughout this suit are always in leaf, as it is a suit of life and animation. Emotionally and otherwise, the Queen's personality corresponds to that of the King, but is more magnetic.",
+    "interpretation": "A dark woman, countrywoman, friendly, chaste, loving, honourable. If the card beside her signifies a man, she is well disposed towards him; if a woman, she is interested in the Querent. Reversed: Good, economical, obliging, serviceable.",
+    "upright": {
+      "related": "Confidence, determination, social butterfly",
+      "behavior": "Being confident, inspiring others",
+      "meaning": "Express your confidence and inspire others",
+      "sexuality": "Confident relationship approach",
+      "marriage": "Strong partnership leadership"
+    },
+    "reversed": {
+      "related": "Jealousy, demanding, vengeful",
+      "behavior": "Being demanding, showing jealousy",
+      "meaning": "Watch for jealousy or demanding behavior",
+      "sexuality": "Relationship jealousy",
+      "marriage": "Partnership power struggles"
+    }
+  },
+  "35": {
+    "name": "King of Wands",
+    "description": "The physical and emotional nature to which this card is attributed is dark, ardent, lithe, animated, impassioned, noble. The King uplifts a flowering wand, and wears, like his three correspondences in the remaining suits, what is called a cap of maintenance beneath his crown. He connects with the symbol of the lion, which is emblazoned on the back of his throne.",
+    "interpretation": "Dark man, friendly, countryman, generally married, honest and conscientious. The card always signifies honesty, and may mean news concerning an unexpected heritage to fall in before very long. Reversed: Good, but severe; austere, yet tolerant.",
+    "upright": {
+      "related": "Leadership, vision, entrepreneur, honor",
+      "behavior": "Leading with vision, taking charge",
+      "meaning": "Time to take leadership and pursue your vision",
+      "sexuality": "Relationship leadership",
+      "marriage": "Partnership vision and direction"
+    },
+    "reversed": {
+      "related": "Impulsiveness, haste, ruthlessness",
+      "behavior": "Being hasty, showing ruthlessness",
+      "meaning": "Be careful of hasty decisions or ruthless behavior",
+      "sexuality": "Dominating relationship behavior",
+      "marriage": "Overbearing partnership attitude"
+    }
+  },
+  "36": {
+    "name": "Ace of Cups",
+    "description": "The waters are beneath, and thereon are water-lilies; the hand issues from the cloud, holding in its palm the cup, from which four streams are pouring; a dove, bearing in its bill a cross-marked Host, descends to place the Wafer in the Cup; the dew of water is falling on all sides.",
+    "interpretation": "House of the true heart, joy, content, abode, nourishment, abundance, fertility; Holy Table, felicity hereof. Reversed: House of the false heart, mutation, instability, revolution.",
+    "upright": {
+      "related": "New love, intuition, emotional awakening",
+      "behavior": "Opening heart, embracing emotions",
+      "meaning": "A new emotional beginning or relationship is emerging",
+      "sexuality": "New emotional connection",
+      "marriage": "Fresh emotional start"
+    },
+    "reversed": {
+      "related": "Emotional loss, blocked feelings, repression",
+      "behavior": "Blocking emotions, feeling empty",
+      "meaning": "You may be blocking emotions or experiencing loss",
+      "sexuality": "Blocked emotional connection",
+      "marriage": "Emotional disconnection"
+    }
+  },
+  "37": {
+    "name": "Two of Cups",
+    "description": "A youth and maiden are pledging one another, and above their cups rises the Caduceus of Hermes, between the great wings of which there appears a lion's head. It is a variant of a sign which is found in a few old examples of this card.",
+    "interpretation": "Love, passion, friendship, affinity, union, concord, sympathy, the interrelation of the sexes, and--as a suggestion apart from all offices of divination--that desire which is not in Nature, but by which Nature is sanctified.",
+    "upright": {
+      "related": "Partnership, attraction, connection, harmony",
+      "behavior": "Forming bonds, connecting deeply",
+      "meaning": "A meaningful partnership or connection is forming",
+      "sexuality": "Mutual attraction",
+      "marriage": "Deep partnership connection"
+    },
+    "reversed": {
+      "related": "Broken partnership, disharmony, tension",
+      "behavior": "Experiencing separation, tension",
+      "meaning": "Relationship tensions or separations may need attention",
+      "sexuality": "Relationship discord",
+      "marriage": "Partnership strain"
+    }
+  },
+  "38": {
+    "name": "Three of Cups",
+    "description": "Maidens in a garden-ground with cups uplifted, as if pledging one another.",
+    "interpretation": "The conclusion of any matter in plenty, perfection and merriment; happy issue, victory, fulfilment, solace, healing. Reversed: Expedition, dispatch, achievement, end. It signifies also the side of excess in physical enjoyment, and the pleasures of the senses.",
+    "upright": {
+      "related": "Celebration, friendship, community, joy",
+      "behavior": "Celebrating with others, socializing",
+      "meaning": "Time for celebration and enjoying friendships",
+      "sexuality": "Social relationship harmony",
+      "marriage": "Celebrating partnership"
+    },
+    "reversed": {
+      "related": "Overindulgence, gossip, isolation",
+      "behavior": "Overdoing celebration, isolating",
+      "meaning": "Watch for excess or negative social influences",
+      "sexuality": "Relationship overindulgence",
+      "marriage": "Partnership social issues"
+    }
+  },
+  "39": {
+    "name": "Four of Cups",
+    "description": "A young man is seated under a tree and contemplates three cups set on the grass before him; an arm issuing from a cloud offers him another cup. His expression notwithstanding is one of discontent with his environment.",
+    "interpretation": "Weariness, disgust, aversion, imaginary vexations, as if the wine of this world had caused satiety only; another wine, as if a fairy gift, is now offered the wastrel, but he sees no consolation therein. Reversed: Novelty, presage, new instruction, new relations.",
+    "upright": {
+      "related": "Contemplation, apathy, reevaluation",
+      "behavior": "Contemplating choices, feeling apathetic",
+      "meaning": "Time to reevaluate and notice opportunities around you",
+      "sexuality": "Relationship contemplation",
+      "marriage": "Partnership reevaluation"
+    },
+    "reversed": {
+      "related": "New opportunities, acceptance, motivation",
+      "behavior": "Accepting new possibilities, finding motivation",
+      "meaning": "Opening up to new opportunities and possibilities",
+      "sexuality": "New relationship perspectives",
+      "marriage": "Fresh partnership outlook"
+    }
+  },
+  "40": {
+    "name": "Five of Cups",
+    "description": "A dark, cloaked figure, looking sideways at three prone cups two others stand upright behind him; a bridge is in the background, leading to a small keep or holding.",
+    "interpretation": "It is a card of loss, but something remains over; three have been taken, but two are left; it is a card of inheritance, patrimony, transmission, but not corresponding to expectations. Reversed: News, alliances, affinity, consanguinity, ancestry, return, false projects.",
+    "upright": {
+      "related": "Loss, grief, disappointment, regret",
+      "behavior": "Grieving losses, feeling regret",
+      "meaning": "Focus on what remains rather than what's lost",
+      "sexuality": "Relationship disappointment",
+      "marriage": "Partnership grief"
+    },
+    "reversed": {
+      "related": "Recovery, forgiveness, moving on",
+      "behavior": "Healing, accepting past",
+      "meaning": "Time to heal and move forward from past hurts",
+      "sexuality": "Relationship healing",
+      "marriage": "Partnership recovery"
+    }
+  },
+  "41": {
+    "name": "Six of Cups",
+    "description": "Children in an old garden, their cups filled with flowers.",
+    "interpretation": "A card of the past and of memories, looking back, as--for example--on childhood; happiness, enjoyment, but coming rather from the past; things that have vanished. Reversed: The future, renewal, that which will come to pass presently.",
+    "upright": {
+      "related": "Nostalgia, childhood memories, innocence",
+      "behavior": "Reminiscing, reconnecting with past",
+      "meaning": "Past connections or memories bring joy",
+      "sexuality": "Past relationship memories",
+      "marriage": "Partnership nostalgia"
+    },
+    "reversed": {
+      "related": "Living in past, moving forward, leaving home",
+      "behavior": "Letting go of past, moving forward",
+      "meaning": "Time to move forward rather than dwelling in the past",
+      "sexuality": "Moving past old relationships",
+      "marriage": "Partnership evolution"
+    }
+  },
+  "42": {
+    "name": "Seven of Cups",
+    "description": "Strange chalices of vision, but the images are more especially those of the fantastic spirit.",
+    "interpretation": "Fairy favours, images of reflection, sentiment, imagination, things seen in the glass of contemplation; some attainment in these degrees, but nothing permanent or substantial is suggested. Reversed: Desire, will, determination, project.",
+    "upright": {
+      "related": "Choices, fantasy, illusion, opportunities",
+      "behavior": "Dreaming, exploring options",
+      "meaning": "Many choices available but beware of illusions",
+      "sexuality": "Relationship choices",
+      "marriage": "Partnership options"
+    },
+    "reversed": {
+      "related": "Clarity, focus, commitment",
+      "behavior": "Finding clarity, making choices",
+      "meaning": "Time to focus and make realistic choices",
+      "sexuality": "Relationship clarity",
+      "marriage": "Partnership commitment"
+    }
+  },
+  "43": {
+    "name": "Eight of Cups",
+    "description": "A man of dejected aspect is deserting the cups of his felicity, enterprise, undertaking or previous concern.",
+    "interpretation": "The card speaks for itself on the surface, but other readings are entirely antithetical--giving joy, mildness, timidity, honour, modesty. In practice, it is usually found that the card shews the decline of a matter. Reversed: Great joy, happiness, feasting.",
+    "upright": {
+      "related": "Walking away, disillusionment, leaving behind",
+      "behavior": "Seeking more, leaving comfort",
+      "meaning": "Time to move on from what no longer serves you",
+      "sexuality": "Leaving relationship",
+      "marriage": "Partnership transition"
+    },
+    "reversed": {
+      "related": "Confusion, fear of change, aimless drifting",
+      "behavior": "Staying in comfort zone, fearing change",
+      "meaning": "You may be avoiding necessary changes",
+      "sexuality": "Relationship stagnation",
+      "marriage": "Partnership uncertainty"
+    }
+  },
+  "44": {
+    "name": "Nine of Cups",
+    "description": "A goodly personage has feasted to his heart's content, and abundant refreshment of wine is on the arched counter behind him, seeming to indicate that the future is also assured. The picture offers the material side only, but there are other aspects.",
+    "interpretation": "Concord, contentment, physical bien-etre; also victory, success, advantage; satisfaction for the Querent or person for whom the consultation is made. Reversed: Truth, loyalty, liberty; but the readings vary and include mistakes, imperfections, etc.",
+    "upright": {
+      "related": "Contentment, satisfaction, wishes fulfilled",
+      "behavior": "Feeling satisfied, enjoying success",
+      "meaning": "Your wishes are being fulfilled, enjoy the contentment",
+      "sexuality": "Relationship satisfaction",
+      "marriage": "Partnership happiness"
+    },
+    "reversed": {
+      "related": "Inner happiness, materialism, dissatisfaction",
+      "behavior": "Seeking true happiness, feeling unfulfilled",
+      "meaning": "Look within for true happiness",
+      "sexuality": "Relationship dissatisfaction",
+      "marriage": "Partnership discontent"
+    }
+  },
+  "45": {
+    "name": "Ten of Cups",
+    "description": "Appearance of Cups in a rainbow; it is contemplated in wonder and ecstacy by a man and woman below, evidently husband and wife. His right arm is about her; his left is raised upward; she raises her right arm. The two children dancing near them have not observed the prodigy but are happy after their own manner. There is a home-scene beyond.",
+    "interpretation": "Contentment, repose of the entire heart; the perfection of that state; also perfection of human love and friendship. Reversed: Repose of the false heart, indignation, violence.",
+    "upright": {
+      "related": "Divine love, blissful relationships, harmony",
+      "behavior": "Experiencing harmony, sharing love",
+      "meaning": "Complete emotional fulfillment and harmony",
+      "sexuality": "Perfect relationship harmony",
+      "marriage": "Ideal partnership"
+    },
+    "reversed": {
+      "related": "Broken dreams, disharmony, family conflicts",
+      "behavior": "Facing family issues, broken harmony",
+      "meaning": "Family or relationship issues need attention",
+      "sexuality": "Relationship discord",
+      "marriage": "Partnership struggles"
+    }
+  },
+  "46": {
+    "name": "Page of Cups",
+    "description": "A fair, pleasing, somewhat effeminate page, of studious and intent aspect, contemplates a fish rising from a cup to look at him. It is the pictures of the mind taking form.",
+    "interpretation": "Fair young man, one impelled to render service and with whom the Querent will be connected; a studious youth; news, message; application, reflection, meditation. Reversed: Taste, inclination, attachment, seduction, artifice.",
+    "upright": {
+      "related": "New feelings, intuitive messages, creativity",
+      "behavior": "Being emotionally open, creative",
+      "meaning": "New emotional phase or creative inspiration begins",
+      "sexuality": "New emotional experiences",
+      "marriage": "Fresh emotional start"
+    },
+    "reversed": {
+      "related": "Emotional immaturity, blocked creativity",
+      "behavior": "Being emotionally immature, blocked",
+      "meaning": "Need to mature emotionally or unblock creativity",
+      "sexuality": "Emotional immaturity",
+      "marriage": "Partnership inexperience"
+    }
+  },
+  "47": {
+    "name": "Knight of Cups",
+    "description": "Graceful, but not warlike; riding quietly, wearing a winged helmet, referring to those higher graces of the imagination which sometimes characterize this card. He too is a dreamer, but the images of the side of sense haunt him in his vision.",
+    "interpretation": "Arrival, approach--sometimes that of a messenger; advances, proposition, demeanour, invitation, incitement. Reversed: Trickery, artifice, subtlety, swindling, duplicity, fraud.",
+    "upright": {
+      "related": "Romance, charm, imagination, beauty",
+      "behavior": "Being romantic, following heart",
+      "meaning": "A romantic opportunity or creative pursuit arrives",
+      "sexuality": "Romantic advances",
+      "marriage": "Romantic partnership phase"
+    },
+    "reversed": {
+      "related": "Moodiness, disappointment, unrealistic",
+      "behavior": "Being moody, unrealistic expectations",
+      "meaning": "Be careful of emotional manipulation or unrealistic dreams",
+      "sexuality": "Unrealistic romantic ideas",
+      "marriage": "Partnership disillusionment"
+    }
+  },
+  "48": {
+    "name": "Queen of Cups",
+    "description": "Beautiful, fair, dreamy--as one who sees visions in a cup. This is, however, only one of her aspects; she sees, but she also acts, and her activity feeds her dream.",
+    "interpretation": "Good, fair woman; honest, devoted woman, who will do service to the Querent; loving intelligence, and hence the gift of vision; success, happiness, pleasure; also wisdom, virtue. Reversed: The accounts vary; good woman; otherwise, distinguished woman but one not to be trusted; perverse woman; vice, dishonour, depravity.",
+    "upright": {
+      "related": "Compassion, calm, comfort, healing",
+      "behavior": "Being nurturing, emotionally wise",
+      "meaning": "Trust your intuition and show compassion",
+      "sexuality": "Emotional nurturing",
+      "marriage": "Nurturing partnership"
+    },
+    "reversed": {
+      "related": "Emotional insecurity, dependency, manipulation",
+      "behavior": "Being emotionally manipulative, dependent",
+      "meaning": "Watch for emotional manipulation or codependency",
+      "sexuality": "Emotional dependency",
+      "marriage": "Partnership codependency"
+    }
+  },
+  "49": {
+    "name": "King of Cups",
+    "description": "He holds a short sceptre in his left hand and a great cup in his right; his throne is set upon the sea; on one side a ship is riding and on the other a dolphin is leaping. The implicit is that the Sign of the Cup naturally refers to water, which appears in all the court cards.",
+    "interpretation": "Fair man, man of business, law, or divinity; responsible, disposed to oblige the Querent; also equity, art and science, including those who profess science, law and art; creative intelligence. Reversed: Dishonest, double-dealing man; roguery, exaction, injustice, vice, scandal.",
+    "upright": {
+      "related": "Emotional balance, diplomacy, wisdom",
+      "behavior": "Being emotionally mature, diplomatic",
+      "meaning": "Master your emotions and show diplomatic leadership",
+      "sexuality": "Emotional mastery",
+      "marriage": "Wise partnership leadership"
+    },
+    "reversed": {
+      "related": "Emotional manipulation, moodiness",
+      "behavior": "Being emotionally volatile, manipulative",
+      "meaning": "Be careful of emotional manipulation or volatility",
+      "sexuality": "Emotional volatility",
+      "marriage": "Partnership instability"
+    }
+  },
+  "50": {
+    "name": "Ace of Swords",
+    "description": "A hand issues from a cloud, grasping as word, the point of which is encircled by a crown.",
+    "interpretation": "Triumph, the excessive degree in everything, conquest, triumph of force. It is a card of great force, in love as well as in hatred. Reversed: The same, but the results are disastrous; another account says--conception, childbirth, augmentation, multiplicity.",
+    "upright": {
+      "related": "Breakthrough, clarity, sharp mind, truth",
+      "behavior": "Finding clarity, speaking truth",
+      "meaning": "A moment of clarity or truth brings breakthrough",
+      "sexuality": "Clear communication",
+      "marriage": "Partnership clarity"
+    },
+    "reversed": {
+      "related": "Confusion, chaos, brutality",
+      "behavior": "Being confused, harsh communication",
+      "meaning": "Mental confusion or harsh words may cause problems",
+      "sexuality": "Relationship confusion",
+      "marriage": "Partnership miscommunication"
+    }
+  },
+  "51": {
+    "name": "Two of Swords",
+    "description": "A hoodwinked female figure balances two swords upon her shoulders.",
+    "interpretation": "Conformity and the equipoise which it suggests, courage, friendship, concord in a state of arms; another reading gives tenderness, affection, intimacy. Reversed: Imposture, falsehood, duplicity, disloyalty.",
+    "upright": {
+      "related": "Decision, stalemate, blocked emotions",
+      "behavior": "Avoiding decisions, maintaining peace",
+      "meaning": "Time to face a difficult decision or truth",
+      "sexuality": "Relationship indecision",
+      "marriage": "Partnership crossroads"
+    },
+    "reversed": {
+      "related": "Indecision, confusion, information overload",
+      "behavior": "Being overwhelmed, unable to decide",
+      "meaning": "Release mental blocks and make necessary decisions",
+      "sexuality": "Relationship uncertainty",
+      "marriage": "Partnership confusion"
+    }
+  },
+  "52": {
+    "name": "Three of Swords",
+    "description": "Three swords piercing a heart; cloud and rain behind.",
+    "interpretation": "Removal, absence, delay, division, rupture, dispersion, and all that the design signifies naturally, being too simple and obvious to call for specific enumeration. Reversed: Mental alienation, error, loss, distraction, disorder, confusion.",
+    "upright": {
+      "related": "Heartbreak, emotional pain, sorrow",
+      "behavior": "Experiencing grief, facing pain",
+      "meaning": "A painful truth or heartbreak needs to be faced",
+      "sexuality": "Relationship heartbreak",
+      "marriage": "Partnership pain"
+    },
+    "reversed": {
+      "related": "Recovery, forgiveness, moving on",
+      "behavior": "Healing from pain, forgiving",
+      "meaning": "Time to heal from past hurts and forgive",
+      "sexuality": "Relationship healing",
+      "marriage": "Partnership recovery"
+    }
+  },
+  "53": {
+    "name": "Four of Swords",
+    "description": "The effigy of a knight in the attitude of prayer, at full length upon his tomb.",
+    "interpretation": "Vigilance, retreat, solitude, hermit's repose, exile, tomb and coffin. It is these last that have suggested the design. Reversed: Wise administration, circumspection, economy, avarice, precaution, testament.",
+    "upright": {
+      "related": "Rest, recuperation, meditation",
+      "behavior": "Taking time to rest, reflecting",
+      "meaning": "Take time for rest and mental recovery",
+      "sexuality": "Relationship pause",
+      "marriage": "Partnership reflection"
+    },
+    "reversed": {
+      "related": "Restlessness, burnout, stress",
+      "behavior": "Being restless, unable to rest",
+      "meaning": "Need for rest and recovery is becoming urgent",
+      "sexuality": "Relationship exhaustion",
+      "marriage": "Partnership burnout"
+    }
+  },
+  "54": {
+    "name": "Five of Swords",
+    "description": "A disdainful man looks after two retreating and dejected figures. Their swords lie upon the ground. He carries two others on his left shoulder, and a third sword is in his right hand, point to earth. He is the master in possession of the field.",
+    "interpretation": "Degradation, destruction, revocation, infamy, dishonour, loss, with the variants and analogues of these. Reversed: The same; burial and obsequies.",
+    "upright": {
+      "related": "Conflict, defeat, win at all costs, hostility",
+      "behavior": "Engaging in conflict, seeking victory",
+      "meaning": "Consider if winning at all costs is worth it",
+      "sexuality": "Relationship conflict",
+      "marriage": "Partnership battles"
+    },
+    "reversed": {
+      "related": "Reconciliation, forgiveness, moving on",
+      "behavior": "Seeking peace, reconciling",
+      "meaning": "Time to reconcile and move past conflicts",
+      "sexuality": "Relationship reconciliation",
+      "marriage": "Partnership peace"
+    }
+  },
+  "55": {
+    "name": "Six of Swords",
+    "description": "A ferryman carrying passengers in his punt to the further shore. The course is smooth, and seeing that the freight is light, it may be noted that the work is not beyond his strength.",
+    "interpretation": "Journey by water, route, way, envoy, commissionary, expedient. Reversed: Declaration, confession, publicity; one account says that it is a proposal of love.",
+    "upright": {
+      "related": "Transition, leaving behind, moving forward",
+      "behavior": "Moving away from trouble, seeking peace",
+      "meaning": "Moving toward calmer waters and better times",
+      "sexuality": "Relationship transition",
+      "marriage": "Partnership progress"
+    },
+    "reversed": {
+      "related": "Stuck, resistance to change, baggage",
+      "behavior": "Resisting necessary changes, holding on",
+      "meaning": "You may be resisting necessary transitions",
+      "sexuality": "Relationship baggage",
+      "marriage": "Partnership stagnation"
+    }
+  },
+  "56": {
+    "name": "Seven of Swords",
+    "description": "A man in the act of carrying away five swords rapidly; the two others of the card remain stuck in the ground. A camp is close at hand.",
+    "interpretation": "Design, attempt, wish, hope, confidence; also quarrelling, a plan that may fail, annoyance. The design is uncertain in its import, because the significations are widely at variance with each other. Reversed: Good advice, counsel, instruction, slander, babbling.",
+    "upright": {
+      "related": "Deception, strategy, sneaking away",
+      "behavior": "Being strategic, avoiding confrontation",
+      "meaning": "Be careful of deception or strategic withdrawal",
+      "sexuality": "Relationship deception",
+      "marriage": "Partnership dishonesty"
+    },
+    "reversed": {
+      "related": "Confession, honesty, coming clean",
+      "behavior": "Being honest, facing consequences",
+      "meaning": "Time for honesty and facing the truth",
+      "sexuality": "Relationship honesty",
+      "marriage": "Partnership truth"
+    }
+  },
+  "57": {
+    "name": "Eight of Swords",
+    "description": "A woman, bound and hoodwinked, with the swords of the card about her. Yet it is rather a card of temporary durance than of irretrievable bondage.",
+    "interpretation": "Bad news, violent chagrin, crisis, censure, power in trammels, conflict, calumny; also sickness. Reversed: Disquiet, difficulty, opposition, accident, treachery; what is unforeseen; fatality.",
+    "upright": {
+      "related": "Restriction, imprisonment, self-imposed bounds",
+      "behavior": "Feeling trapped, self-limiting",
+      "meaning": "You may be trapped by your own thoughts",
+      "sexuality": "Relationship restrictions",
+      "marriage": "Partnership limitations"
+    },
+    "reversed": {
+      "related": "Freedom, self-acceptance, new perspective",
+      "behavior": "Breaking free, seeing clearly",
+      "meaning": "Time to break free from mental restrictions",
+      "sexuality": "Relationship freedom",
+      "marriage": "Partnership liberation"
+    }
+  },
+  "58": {
+    "name": "Nine of Swords",
+    "description": "One seated on her couch in lamentation, with the swords over her. She is as one who knows no sorrow which is like unto hers. It is a card of utter desolation.",
+    "interpretation": "Death, failure, miscarriage, delay, deception, disappointment, despair. Reversed: Imprisonment, suspicion, doubt, reasonable fear, shame.",
+    "upright": {
+      "related": "Anxiety, worry, fear, depression",
+      "behavior": "Experiencing anxiety, overthinking",
+      "meaning": "Mental anxiety and worries need addressing",
+      "sexuality": "Relationship anxiety",
+      "marriage": "Partnership fears"
+    },
+    "reversed": {
+      "related": "Hope, reaching out, despair ending",
+      "behavior": "Finding hope, seeking help",
+      "meaning": "Light at the end of the tunnel is appearing",
+      "sexuality": "Relationship healing",
+      "marriage": "Partnership hope"
+    }
+  },
+  "59": {
+    "name": "Ten of Swords",
+    "description": "A prostrate figure, pierced by all the swords belonging to the card.",
+    "interpretation": "Whatsoever is intimated by the design; also pain, affliction, tears, sadness, desolation. It is not especially a card of violent death. Reversed: Advantage, profit, success, favour, but none of these are permanent; also power and authority.",
+    "upright": {
+      "related": "Painful endings, deep wounds, betrayal",
+      "behavior": "Experiencing endings, feeling betrayed",
+      "meaning": "A difficult situation reaches its conclusion",
+      "sexuality": "Relationship ending",
+      "marriage": "Partnership conclusion"
+    },
+    "reversed": {
+      "related": "Recovery, regeneration, resisting an end",
+      "behavior": "Recovering, resisting closure",
+      "meaning": "Time for healing and accepting endings",
+      "sexuality": "Relationship recovery",
+      "marriage": "Partnership renewal"
+    }
+  },
+  "60": {
+    "name": "Page of Swords",
+    "description": "A lithe, active figure holds a sword upright in both hands, while in the act of swift walking. He is passing over rugged land, and about his way the clouds are collocated wildly. He is alert and lithe, looking this way and that, as if an expected enemy might appear at any moment.",
+    "interpretation": "Authority, overseeing, secret service, vigilance, spying, examination, and the qualities thereto belonging. Reversed: More evil side of these qualities; what is unforeseen, unprepared state; sickness is also intimated.",
+    "upright": {
+      "related": "New ideas, curiosity, communication",
+      "behavior": "Being curious, seeking truth",
+      "meaning": "New information or truth comes to light",
+      "sexuality": "Relationship curiosity",
+      "marriage": "Partnership discovery"
+    },
+    "reversed": {
+      "related": "Gossip, scattered energy, delays",
+      "behavior": "Spreading gossip, lacking focus",
+      "meaning": "Be careful with communications and stay focused",
+      "sexuality": "Relationship gossip",
+      "marriage": "Partnership rumors"
+    }
+  },
+  "61": {
+    "name": "Knight of Swords",
+    "description": "He is riding in full course, as if scattering his enemies. In the design he is really a prototypical hero of romantic chivalry. He might almost be Galahad, whose sword is swift and sure because he is clean of heart.",
+    "interpretation": "Skill, bravery, capacity, defence, address, enmity, wrath, war, destruction, opposition, resistance, ruin. There is therefore a sense in which the card signifies death, but it carries this meaning only in its proximity to other cards of fatality. Reversed: Imprudence, incapacity, extravagance.",
+    "upright": {
+      "related": "Action, adventure, fearlessness, impulsiveness",
+      "behavior": "Taking action, being adventurous",
+      "meaning": "Time for bold action and adventure",
+      "sexuality": "Passionate pursuit",
+      "marriage": "Exciting partnership phase"
+    },
+    "reversed": {
+      "related": "Frustration, delays, scattered energy",
+      "behavior": "Being reckless, scattered energy",
+      "meaning": "Be careful of impulsive actions or scattered energy",
+      "sexuality": "Reckless romantic behavior",
+      "marriage": "Partnership impulsiveness"
+    }
+  },
+  "62": {
+    "name": "Queen of Swords",
+    "description": "Her right hand raises the weapon vertically and the hilt rests on an arm of her royal chair the left hand is extended, the arm raised her countenance is severe but chastened; it suggests familiarity with sorrow. It does not represent mercy, and, her sword notwithstanding, she is scarcely a symbol of power.",
+    "interpretation": "Widowhood, female sadness and embarrassment, absence, sterility, mourning, privation, separation. Reversed: Malice, bigotry, artifice, prudery, bale, deceit.",
+    "upright": {
+      "related": "Independent, clear thinking, judgment, direct",
+      "behavior": "Being direct, thinking clearly",
+      "meaning": "Use clear judgment and direct communication",
+      "sexuality": "Clear boundaries",
+      "marriage": "Partnership clarity"
+    },
+    "reversed": {
+      "related": "Harsh judgment, bitterness, cruelty",
+      "behavior": "Being bitter, overly critical",
+      "meaning": "Watch for excessive criticism or bitterness",
+      "sexuality": "Relationship criticism",
+      "marriage": "Partnership harshness"
+    }
+  },
+  "63": {
+    "name": "King of Swords",
+    "description": "He sits in judgment, holding the unsheathed sign of his suit. He recalls, of course, the conventional Symbol of justice in the Trumps Major, and he may represent this virtue, but he is rather the power of life and death, in virtue of his office.",
+    "interpretation": "Whatsoever arises out of the idea of judgment and all its connexions-power, command, authority, militant intelligence, law, offices of the crown, and so forth. Reversed: Cruelty, perversity, barbarity, perfidy, evil intention.",
+    "upright": {
+      "related": "Intellectual power, authority, truth",
+      "behavior": "Using logic, showing authority",
+      "meaning": "Lead with clear thinking and ethical authority",
+      "sexuality": "Logical approach",
+      "marriage": "Partnership leadership"
+    },
+    "reversed": {
+      "related": "Abuse of power, manipulation, coldness",
+      "behavior": "Being manipulative, cold",
+      "meaning": "Be careful of intellectual tyranny",
+      "sexuality": "Relationship manipulation",
+      "marriage": "Partnership control"
+    }
+  },
+  "64": {
+    "name": "Ace of Pentacles",
+    "description": "A hand--issuing, as usual, from a cloud--holds up a pentacle.",
+    "interpretation": "Perfect contentment, felicity, ecstasy; also speedy intelligence; gold. Reversed: The evil side of wealth, bad intelligence; also great riches. In any case it shews prosperity, comfortable material conditions, but whether these are of advantage to the possessor will depend on whether the card is reversed or not.",
+    "upright": {
+      "related": "New opportunity, prosperity, abundance",
+      "behavior": "Starting new ventures, manifesting",
+      "meaning": "A new material opportunity or beginning arrives",
+      "sexuality": "Physical attraction",
+      "marriage": "Material security"
+    },
+    "reversed": {
+      "related": "Lost opportunity, lack of planning, greed",
+      "behavior": "Missing opportunities, poor planning",
+      "meaning": "Missed opportunities need better planning",
+      "sexuality": "Materialistic approach",
+      "marriage": "Financial concerns"
+    }
+  },
+  "65": {
+    "name": "Two of Pentacles",
+    "description": "A young man, in the act of dancing, has a pentacle in either hand, and they are joined by that endless cord which is like the number 8 reversed.",
+    "interpretation": "On the one hand it is represented as a card of gaiety, recreation and its connexions, which is the subject of the design; but it is read also as news and messages in writing, as obstacles, agitation, trouble, embroilment. Reversed: Enforced gaiety, simulated enjoyment, literal sense, handwriting, composition, letters of exchange.",
+    "upright": {
+      "related": "Balance, adaptability, time management",
+      "behavior": "Juggling responsibilities, adapting",
+      "meaning": "Balance multiple responsibilities with flexibility",
+      "sexuality": "Balancing relationships",
+      "marriage": "Partnership balance"
+    },
+    "reversed": {
+      "related": "Imbalance, disorganization, overwhelm",
+      "behavior": "Being overwhelmed, losing balance",
+      "meaning": "Need to restore balance and organization",
+      "sexuality": "Relationship imbalance",
+      "marriage": "Partnership stress"
+    }
+  },
+  "66": {
+    "name": "Three of Pentacles",
+    "description": "A sculptor at his work in a monastery. Compare the design which illustrates the Eight of Pentacles. The apprentice or amateur therein has received his reward and is now at work in earnest.",
+    "interpretation": "Metier, trade, skilled labour; usually, however, regarded as a card of nobility, aristocracy, renown, glory. Reversed: Mediocrity, in work and otherwise, puerility, pettiness, weakness.",
+    "upright": {
+      "related": "Teamwork, collaboration, learning",
+      "behavior": "Working together, developing skills",
+      "meaning": "Success through collaboration and skill development",
+      "sexuality": "Relationship growth",
+      "marriage": "Partnership building"
+    },
+    "reversed": {
+      "related": "Lack of teamwork, disharmony, competition",
+      "behavior": "Working alone, lacking cooperation",
+      "meaning": "Need for better collaboration and skill development",
+      "sexuality": "Lack of cooperation",
+      "marriage": "Partnership discord"
+    }
+  },
+  "67": {
+    "name": "Four of Pentacles",
+    "description": "A crowned figure, having a pentacle over his crown, clasps another with hands and arms; two pentacles are under his feet. He holds to that which he has.",
+    "interpretation": "The surety of possessions, cleaving to that which one has, gift, legacy, inheritance. Reversed: Suspense, delay, opposition.",
+    "upright": {
+      "related": "Security, conservation, frugality",
+      "behavior": "Being protective, saving resources",
+      "meaning": "Focus on security but don't be too rigid",
+      "sexuality": "Possessive love",
+      "marriage": "Financial security"
+    },
+    "reversed": {
+      "related": "Greed, materialism, letting go",
+      "behavior": "Being greedy, holding too tight",
+      "meaning": "Time to release material attachments",
+      "sexuality": "Relationship possessiveness",
+      "marriage": "Financial obsession"
+    }
+  },
+  "68": {
+    "name": "Five of Pentacles",
+    "description": "Two mendicants in a snow-storm pass a lighted casement.",
+    "interpretation": "The card foretells material trouble above all, whether in the form illustrated--that is, destitution--or otherwise. For some cartomancists, it is a card of love and lovers-wife, husband, friend, mistress; also concordance, affinities. Reversed: Disorder, chaos, ruin, discord, profligacy.",
+    "upright": {
+      "related": "Hardship, loss, worry about money",
+      "behavior": "Experiencing hardship, feeling excluded",
+      "meaning": "Material difficulties require faith and support",
+      "sexuality": "Relationship hardship",
+      "marriage": "Financial strain"
+    },
+    "reversed": {
+      "related": "Recovery, spiritual growth, asking for help",
+      "behavior": "Recovering, seeking help",
+      "meaning": "Recovery from difficulties is coming",
+      "sexuality": "Relationship recovery",
+      "marriage": "Financial recovery"
+    }
+  },
+  "69": {
+    "name": "Six of Pentacles",
+    "description": "A person in the guise of a merchant weighs money in a pair of scales and distributes it to the needy and distressed. It is a testimony to his own success in life, as well as to his goodness of heart.",
+    "interpretation": "Presents, gifts, gratification another account says attention, vigilance now is the accepted time, present prosperity, etc. Reversed: Desire, cupidity, envy, jealousy, illusion.",
+    "upright": {
+      "related": "Generosity, charity, sharing wealth",
+      "behavior": "Being generous, sharing resources",
+      "meaning": "A time of giving or receiving help and resources",
+      "sexuality": "Balanced giving",
+      "marriage": "Financial sharing"
+    },
+    "reversed": {
+      "related": "Selfishness, debt, unequal power",
+      "behavior": "Being selfish, creating debt",
+      "meaning": "Watch for power imbalances in giving/receiving",
+      "sexuality": "Unequal relationship",
+      "marriage": "Financial imbalance"
+    }
+  },
+  "70": {
+    "name": "Seven of Pentacles",
+    "description": "A young man, leaning on his staff, looks intently at seven pentacles attached to a clump of greenery on his right; one would say that these were his treasures and that his heart was there.",
+    "interpretation": "These are exceedingly contradictory; in the main, it is a card of money, business, barter; but one reading gives altercation, quarrels--and another innocence, ingenuity, purgation. Reversed: Cause for anxiety regarding money which it may be proposed to lend.",
+    "upright": {
+      "related": "Assessment, patience, investment",
+      "behavior": "Evaluating progress, being patient",
+      "meaning": "Time to evaluate long-term investments",
+      "sexuality": "Relationship evaluation",
+      "marriage": "Partnership assessment"
+    },
+    "reversed": {
+      "related": "Poor planning, impatience, anxiety",
+      "behavior": "Being impatient, poor planning",
+      "meaning": "Impatience may lead to poor results",
+      "sexuality": "Relationship impatience",
+      "marriage": "Partnership anxiety"
+    }
+  },
+  "71": {
+    "name": "Eight of Pentacles",
+    "description": "An artist in stone at his work, which he exhibits in the form of trophies.",
+    "interpretation": "Work, employment, commission, craftsmanship, skill in craft and business, perhaps in the preparatory stage. Reversed: Voided ambition, vanity, cupidity, exaction, usury. It may also signify the possession of skill, in the sense of the ingenious mind turned to cunning and intrigue.",
+    "upright": {
+      "related": "Skill development, craftsmanship, dedication",
+      "behavior": "Working diligently, improving skills",
+      "meaning": "Focus on developing skills and craftsmanship",
+      "sexuality": "Relationship skills",
+      "marriage": "Partnership dedication"
+    },
+    "reversed": {
+      "related": "Perfectionism, lack of progress, shortcuts",
+      "behavior": "Taking shortcuts, being perfectionist",
+      "meaning": "Avoid perfectionism and shortcuts",
+      "sexuality": "Relationship perfectionism",
+      "marriage": "Partnership effort"
+    }
+  },
+  "72": {
+    "name": "Nine of Pentacles",
+    "description": "A woman, with a bird upon her wrist, stands amidst a great abundance of grapevines in the garden of a manorial house. It is a wide domain, suggesting plenty in all things. Possibly it is her own possession and testifies to material well-being.",
+    "interpretation": "Prudence, safety, success, accomplishment, certitude, discernment. Reversed: Roguery, deception, voided project, bad faith.",
+    "upright": {
+      "related": "Independence, luxury, self-reliance",
+      "behavior": "Being self-sufficient, enjoying luxury",
+      "meaning": "Enjoy the fruits of your independent work",
+      "sexuality": "Self-sufficient love",
+      "marriage": "Individual growth"
+    },
+    "reversed": {
+      "related": "Showing off, materialism, codependence",
+      "behavior": "Being materialistic, dependent",
+      "meaning": "Watch for excessive materialism or dependence",
+      "sexuality": "Relationship dependence",
+      "marriage": "Partnership materialism"
+    }
+  },
+  "73": {
+    "name": "Ten of Pentacles",
+    "description": "A man and woman beneath an archway which gives entrance to a house and domain. They are accompanied by a child, who looks curiously at two dogs accosting an ancient personage seated in the foreground. The child's hand is on one of them.",
+    "interpretation": "Gain, riches; family matters, archives, extraction, the abode of a family. Reversed: Chance, fatality, loss, robbery, games of hazard; sometimes gift, dowry, pension.",
+    "upright": {
+      "related": "Wealth, family, inheritance, establishment",
+      "behavior": "Building legacy, family security",
+      "meaning": "Long-term security and family wealth achieved",
+      "sexuality": "Lasting relationship",
+      "marriage": "Family security"
+    },
+    "reversed": {
+      "related": "Family problems, financial failure, loss",
+      "behavior": "Experiencing family issues, losing wealth",
+      "meaning": "Family or financial foundations need attention",
+      "sexuality": "Family relationship issues",
+      "marriage": "Partnership instability"
+    }
+  },
+  "74": {
+    "name": "Page of Pentacles",
+    "description": "A youthful figure, looking intently at the pentacle which hovers over his raised hands. He moves slowly, insensible of that which is about him.",
+    "interpretation": "Application, study, scholarship, reflection another reading says news, messages and the bringer thereof; also rule, management. Reversed: Prodigality, dissipation, liberality, luxury; unfavourable news.",
+    "upright": {
+      "related": "New opportunities, study, manifestation",
+      "behavior": "Learning new skills, starting projects",
+      "meaning": "New financial or educational opportunity begins",
+      "sexuality": "New physical connection",
+      "marriage": "Partnership learning"
+    },
+    "reversed": {
+      "related": "Lack of progress, procrastination, boredom",
+      "behavior": "Procrastinating, lacking focus",
+      "meaning": "Need to focus on practical matters",
+      "sexuality": "Relationship stagnation",
+      "marriage": "Partnership boredom"
+    }
+  },
+  "75": {
+    "name": "Knight of Pentacles",
+    "description": "He rides a slow, enduring, heavy horse, to which his own aspect corresponds. He exhibits his symbol, but does not look therein.",
+    "interpretation": "Utility, serviceableness, interest, responsibility, rectitude-all on the normal and external plane. Reversed: inertia, idleness, repose of that kind, stagnation; also placidity, discouragement, carelessness.",
+    "upright": {
+      "related": "Hard work, routine, conservatism",
+      "behavior": "Working steadily, being reliable",
+      "meaning": "Steady progress through reliable effort",
+      "sexuality": "Steady relationship",
+      "marriage": "Reliable partnership"
+    },
+    "reversed": {
+      "related": "Boredom, stagnation, perfectionism",
+      "behavior": "Being stuck, obsessing over details",
+      "meaning": "Don't let perfectionism halt progress",
+      "sexuality": "Relationship routine",
+      "marriage": "Partnership stagnation"
+    }
+  },
+  "76": {
+    "name": "Queen of Pentacles",
+    "description": "The face suggests that of a dark woman, whose qualities might be summed up in the idea of greatness of soul; she has also the serious cast of intelligence; she contemplates her symbol and may see worlds therein.",
+    "interpretation": "Opulence, generosity, magnificence, security, liberty. Reversed: Evil, suspicion, suspense, fear, mistrust.",
+    "upright": {
+      "related": "Nurturing, practical, abundance",
+      "behavior": "Being nurturing, managing resources",
+      "meaning": "Practical nurturing brings material success",
+      "sexuality": "Nurturing relationship",
+      "marriage": "Domestic harmony"
+    },
+    "reversed": {
+      "related": "Materialism, smothering, self-neglect",
+      "behavior": "Being materialistic, neglecting self",
+      "meaning": "Watch for excessive materialism or self-neglect",
+      "sexuality": "Possessive relationship",
+      "marriage": "Domestic issues"
+    }
+  },
+  "77": {
+    "name": "King of Pentacles",
+    "description": "The figure calls for no special description the face is rather dark, suggesting also courage, but somewhat lethargic in tendency. The bull's head should be noted as a recurrent symbol on the throne. The sign of this suit is represented throughout as engraved or blazoned with the pentagram, typifying the correspondence of the four elements in human nature and that by which they may be governed.",
+    "interpretation": "Valour, realizing intelligence, business and normal intellectual aptitude, sometimes mathematical gifts and attainments of this kind; success in these paths. Reversed: Vice, weakness, ugliness, perversity, corruption, peril.",
+    "upright": {
+      "related": "Wealth, business, leadership, security",
+      "behavior": "Managing wealth, providing security",
+      "meaning": "Success through practical leadership",
+      "sexuality": "Stable relationship",
+      "marriage": "Financial leadership"
+    },
+    "reversed": {
+      "related": "Greed, materialism, poor financial decisions",
+      "behavior": "Being greedy, mismanaging resources",
+      "meaning": "Watch for greed or poor financial choices",
+      "sexuality": "Materialistic relationship",
+      "marriage": "Financial problems"
+    }
+  }
+}
