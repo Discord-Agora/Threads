@@ -3,9 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import hashlib
+import io
 import logging
 import os
+import random
 import re
+import secrets
 import traceback
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -15,6 +19,7 @@ from itertools import starmap
 from logging.handlers import RotatingFileHandler
 from math import sqrt
 from operator import mul
+from pathlib import Path
 from typing import (
     Any,
     DefaultDict,
@@ -60,6 +65,7 @@ from interactions.client.errors import (
 )
 from interactions.client.utils import code_block
 from interactions.ext.paginators import Paginator
+from PIL import Image
 from yarl import URL
 
 BASE_DIR: str = os.path.abspath(os.path.dirname(__file__))
@@ -158,6 +164,10 @@ class PostStats:
         )
 
 
+
+
+
+
 @dataclass
 class TimeoutConfig:
     base_duration: int = 300
@@ -248,6 +258,9 @@ class Model:
         self.last_timeout_adjustment = datetime.now(timezone.utc)
         self.timeout_adjustment_interval = timedelta(hours=1)
         self.groq_api_key: Optional[str] = None
+        self.tarot: Dict[str, Any] = {}
+        self.query: Dict[str, int] = {}
+        self.query_pattern = re.compile(r".*")
         self.starred_messages: Dict[str, int] = {}
         self.starboard_messages: Dict[str, str] = {}
         self.star_threshold: int = 3
@@ -589,6 +602,62 @@ class Model:
             logger.error(f"Error saving GROQ API key: {e}", exc_info=True)
             raise
 
+    async def load_tarot_data(self, file_path: str) -> None:
+        try:
+            async with aiofiles.open(file_path) as file:
+                self.tarot: dict = orjson.loads(await file.read())
+                self.query: dict[str, int] = {
+                    card["name"]: int(idx) for idx, card in self.tarot.items()
+                }
+                self.query_pattern = re.compile(
+                    f"({'|'.join(map(re.escape, self.query))})", re.I | re.M
+                )
+                logger.info("Successfully loaded tarot data")
+
+                required_fields: set[str] = {
+                    "name",
+                    "description",
+                    "interpretation",
+                    "upright",
+                    "reversed",
+                }
+                required_subfields: set[str] = {
+                    "related",
+                    "behavior",
+                    "meaning",
+                    "sexuality",
+                    "marriage",
+                }
+                orientations: tuple[str, ...] = ("upright", "reversed")
+
+                missing_fields = (
+                    (idx, field)
+                    for idx, card in self.tarot.items()
+                    for field in required_fields
+                    if field not in card
+                )
+                missing_subfields = (
+                    (idx, orientation, field)
+                    for idx, card in self.tarot.items()
+                    for orientation in orientations
+                    for field in required_subfields
+                    if field not in card[orientation]
+                )
+
+                for idx, field in missing_fields:
+                    logger.warning(f"Card {idx} missing required field: {field}")
+                for idx, orientation, field in missing_subfields:
+                    logger.warning(
+                        f"Card {idx} missing required {orientation} sub-field: {field}"
+                    )
+
+        except FileNotFoundError:
+            logger.warning("Tarot data file not found")
+        except orjson.JSONDecodeError as e:
+            logger.error(f"Error decoding tarot JSON data: {e}", exc_info=True)
+        except Exception as e:
+            logger.exception(f"Error loading tarot data: {e}")
+
     async def load_phishing_db(self, file_path: str) -> None:
         try:
             async with aiofiles.open(file_path, mode="rb") as f:
@@ -871,6 +940,69 @@ def log_action(func):
 # Controller
 
 
+class MessageHistoryIterator:
+    def __init__(self, history: interactions.ChannelHistory) -> None:
+        self.history = history
+        self._retries = 0
+        self.MAX_RETRIES = 3
+        self.BASE_DELAY = 1.0
+        self._initialized = False
+        self._error_codes = {
+            10003: ("unknown channel", True),
+            50001: ("no access", True),
+            50013: ("lacks permission", True),
+            10008: ("unknown message", True),
+            50021: ("system message", True),
+            50083: ("unarchive thread", False),
+            160005: ("unlock thread", False),
+        }
+
+    async def __aenter__(self):
+        self._initialized = True
+        return self
+
+    async def __aexit__(self, *_):
+        self._initialized = False
+        return False
+
+    def __aiter__(self):
+        if not self._initialized:
+            raise RuntimeError("Must use async with")
+        return self
+
+    async def __anext__(self):
+        while self._retries < self.MAX_RETRIES:
+            try:
+                return await self.history.__anext__()
+            except StopAsyncIteration:
+                raise
+            except HTTPException as e:
+                code = getattr(e, "code", None)
+                if code in self._error_codes:
+                    msg, should_stop = self._error_codes[code]
+                    logger.error(
+                        f"Channel {self.history.channel.name} ({self.history.channel.id}): {msg}"
+                    )
+                    if should_stop:
+                        raise StopAsyncIteration
+                else:
+                    logger.warning(
+                        f"Channel {self.history.channel.name} ({self.history.channel.id}) has unknown code {code}"
+                    )
+                    raise StopAsyncIteration
+            except (OSError, RuntimeError, TypeError) as e:
+                self._retries += 1
+                if self._retries >= self.MAX_RETRIES:
+                    logger.error(
+                        f"Failed after {self.MAX_RETRIES} retries: {e.__class__.__name__}: {str(e)}"
+                    )
+                    raise StopAsyncIteration
+                await asyncio.sleep(self.BASE_DELAY * (1 << (self._retries - 1)))
+            except (aiohttp.ClientPayloadError, Exception):
+                logger.exception(traceback.format_exc())
+                raise StopAsyncIteration
+
+
 class Threads(interactions.Extension):
     def __init__(self, bot: interactions.Client) -> None:
         self.bot: interactions.Client = bot
@@ -880,10 +1012,8 @@ class Threads(interactions.Extension):
         self.message_record: MessageRecord = MessageRecord(
             timestamp=datetime.now(timezone.utc)
         )
-
         self.ban_lock: asyncio.Lock = asyncio.Lock()
         self.groq_client: Optional[groq.AsyncGroq] = None
-
         self.conversion_task: Optional[asyncio.Task] = None
         self.active_timeout_polls: Dict[int, asyncio.Task] = {}
         self.phishing_domains: Dict[str, Dict[str, Any]] = {}
@@ -891,15 +1021,18 @@ class Threads(interactions.Extension):
         self.phishing_cache_duration = timedelta(hours=24)
         self.message_count_threshold: int = 200
         self.star_threshold: int = 3
+        self.tarot: Dict[str, Any] = {}
+        self.query: Dict[str, int] = {}
+        self.query_pattern = re.compile(r".*")
         self.rotation_interval: timedelta = timedelta(hours=23)
         self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
         self.last_log_key: Optional[str] = None
         self.last_threshold_adjustment: datetime = datetime.now(
             timezone.utc
         ) - timedelta(days=8)
-
         self.GROQ_KEY_FILE: str = os.path.join(BASE_DIR, ".groq_key")
         self.DEBATES_FILE: str = os.path.join(BASE_DIR, "debates.json")
+        self.TAROT_DATA_FILE: str = os.path.join(BASE_DIR, "tarot.json")
         self.PHISHING_DB_FILE: str = os.path.join(BASE_DIR, "phishing_domains.json")
         self.BANNED_USERS_FILE: str = os.path.join(BASE_DIR, "banned_users.json")
         self.THREAD_PERMISSIONS_FILE: str = os.path.join(
@@ -943,7 +1076,6 @@ class Threads(interactions.Extension):
             1213490790341279754: (1185259262654562355, 1151389184779636766),
             1251935385521750116: (1151389184779636766,),
         }
-
         self.ALLOWED_CHANNELS: Tuple[int, ...] = (
             1152311220557320202,
             1168209956802142360,
@@ -1069,6 +1201,65 @@ class Threads(interactions.Extension):
                 Keep responses factual and calculation-based. Show all work.""",
             }
         ]
+
+        self.AI_TAROT_PROMPT = """You are a Rider–Waite Tarot card reader providing readings for questions. Follow these steps to give an insightful reading:
+
+                1. Card Interpretation:
+                - Understand the core symbolism and meaning
+                - Consider upright vs reversed position
+                - Analyze the elemental influences
+                - Examine key symbols and imagery
+
+                2. Question Analysis:
+                - Connect card meaning to the question
+                - Consider timing and context
+                - Identify relevant themes
+                - Note any special synchronicities
+
+                3. Spiritual Guidance:
+                - Draw wisdom from traditional meanings
+                - Consider multiple perspectives
+                - Look for hidden messages
+                - Find practical applications
+
+                4. Response Formation:
+                - Provide clear spiritual insights
+                - Balance practical and mystical aspects
+                - Maintain respectful and encouraging tone
+                - Give actionable guidance
+
+                Input Format:
+                - Question from user
+                - Drawn Tarot card
+
+                Required Output Format (JSON):
+                {
+                    "interpretation": {
+                        "card_meaning": "Step 1: Analyze core symbolism and meaning",
+                        "connection": "Step 2: Link symbols to question context",
+                        "guidance": "Step 3: Provide reasoned spiritual advice"
+                    },
+                    "action_steps": [
+                        "Step 4: List 3-5 concrete actions based on reading"
+                    ],
+                }
+
+                Requirements:
+                - Provide deep spiritual insights
+                - Write 250-300 words with clear reasoning
+                - Use encouraging tone
+                - Write in Simplified Chinese
+                - Use spiritual language
+                - Give constructive advice with explanation
+
+                Avoid:
+                - Breaking character
+                - Mentioning AI
+                - Asking questions
+                - Negative predictions
+                - Overly mathematical approaches
+
+                Let's start."""
 
         self.AI_VISION_MODERATION_PROMPT = [
             {
@@ -1208,6 +1399,7 @@ class Threads(interactions.Extension):
             self.model.load_timeout_history(self.TIMEOUT_HISTORY_FILE),
             self.model.load_phishing_db(self.PHISHING_DB_FILE),
             self.model.load_starred_messages(self.STARRED_MESSAGES_FILE),
+            self.model.load_tarot_data(self.TAROT_DATA_FILE),
         )
 
         # await self.scan_existing_featured_posts()
@@ -1215,6 +1407,10 @@ class Threads(interactions.Extension):
         try:
             if self.model.groq_api_key:
                 self.groq_client = groq.AsyncGroq(api_key=self.model.groq_api_key)
+            if self.model.tarot and self.model.query and self.model.query_pattern:
+                self.tarot = self.model.tarot
+                self.query = self.model.query
+                self.query_pattern = self.model.query_pattern
         except Exception as e:
             logger.error(f"Failed to initialize Groq client: {e}", exc_info=True)
             self.groq_client = None
@@ -1346,11 +1542,12 @@ class Threads(interactions.Extension):
             ]
         ],
         message: str,
+        title: str = "Error",
         log_to_channel: bool = False,
         ephemeral: bool = True,
     ) -> None:
         await self.send_response(
-            ctx, "Error", message, EmbedColor.ERROR, log_to_channel, ephemeral
+            ctx, title, message, EmbedColor.ERROR, log_to_channel, ephemeral
         )
 
     async def send_success(
@@ -1363,11 +1560,12 @@ class Threads(interactions.Extension):
             ]
         ],
         message: str,
+        title: str = "Success",
         log_to_channel: bool = False,
         ephemeral: bool = True,
     ) -> None:
         await self.send_response(
-            ctx, "Success", message, EmbedColor.INFO, log_to_channel, ephemeral
+            ctx, title, message, EmbedColor.INFO, log_to_channel, ephemeral
         )
 
     async def log_action_internal(self, details: ActionDetails) -> None:
@@ -3783,9 +3981,6 @@ class Threads(interactions.Extension):
                     else "N/A"
                 ),
                 "model_used": f"`{completion.model}` ({completion.usage.total_tokens} tokens)",
-                "id": completion.id,
-                "created": completion.created,
-                "system_fingerprint": completion.system_fingerprint,
                 "thinking": code_block(completion.choices[0].message.reasoning, "py"),
             },
         )
@@ -4323,7 +4518,7 @@ class Threads(interactions.Extension):
 
     @staticmethod
     async def fetch_oldest_message_url(
-        channel: Union[interactions.GuildText, interactions.ThreadChannel]
+        channel: Union[interactions.GuildText, interactions.ThreadChannel],
     ) -> Optional[str]:
         try:
             async for message in channel.history(limit=1):
@@ -6466,7 +6661,6 @@ class Threads(interactions.Extension):
         for url in self.URL_PATTERN.findall(content):
             try:
                 if not url.startswith("https://discord.com"):
-                    unshortened = None
                     try:
                         unshortened = unalix.unshort_url(url=str(url))
                         if unshortened and unshortened != url:
@@ -7167,65 +7361,632 @@ class Threads(interactions.Extension):
                     "An error occurred while deleting messages. Please try again later."
                 )
 
+    """
+    Fortune-telling commands
+    """
 
-class MessageHistoryIterator:
-    def __init__(self, history: interactions.ChannelHistory) -> None:
-        self.history = history
-        self._retries = 0
-        self.MAX_RETRIES = 3
-        self.BASE_DELAY = 1.0
-        self._initialized = False
-        self._error_codes = {
-            10003: ("unknown channel", True),
-            50001: ("no access", True),
-            50013: ("lacks permission", True),
-            10008: ("unknown message", True),
-            50021: ("system message", True),
-            50083: ("unarchive thread", False),
-            160005: ("unlock thread", False),
+    module_group_divination: interactions.SlashCommand = module_base.group(
+        name="divination",
+        description="Divination commands",
+    )
+
+    @module_group_divination.subcommand(
+        "ball",
+        sub_cmd_description="Consult the crystal ball for guidance and predictions",
+    )
+    @interactions.slash_option(
+        name="wish",
+        description="Submit a question or wish for divination",
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="ephemeral",
+        description="Whether the response should be ephemeral (only visible to you)",
+        opt_type=interactions.OptionType.BOOLEAN,
+        required=False,
+    )
+    async def crystal_ball(
+        self,
+        ctx: interactions.SlashContext,
+        wish: str = "",
+        ephemeral: bool = False,
+    ) -> None:
+        wish_text = wish or "你的未来"
+        base_embed = await self.create_embed(
+            title="水晶球占卜",
+            description=f"{ctx.author.mention}\n- 正在为你占卜关于 `{wish_text}` 的信息",
+        )
+
+        if ephemeral:
+
+            try:
+                msg = await ctx.author.send(embeds=[base_embed])
+                await ctx.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="水晶球占卜", description="占卜结果已发送到你的私信！"
+                        )
+                    ],
+                    ephemeral=True,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send DM: {e}")
+                await self.send_error(
+                    ctx,
+                    "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            msg = await ctx.send(embeds=[base_embed])
+
+        steps = (
+            "- 水晶球中浮现出神秘的能量",
+            "- 虚无的形体在其中凝聚",
+            f'- 一个景象浮现：`{random.choice(("光芒", "启示", "预言", "洞察", "清晰"))}`',
+        )
+
+        content = [msg.embeds[0].description]
+        for step in steps:
+            await asyncio.sleep(1)
+            content.append(step)
+            await msg.edit(
+                embeds=[
+                    await self.create_embed(
+                        title="水晶球占卜", description="\n".join(content)
+                    )
+                ]
+            )
+
+    @module_group_divination.subcommand(
+        "draw", sub_cmd_description="Draw a fortune to divine your prospects"
+    )
+    @interactions.slash_option(
+        name="target",
+        description="Specify an aspect of life for focused divination",
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="ephemeral",
+        description="Whether the response should be ephemeral (only visible to you)",
+        opt_type=interactions.OptionType.BOOLEAN,
+        required=False,
+    )
+    async def draw(
+        self,
+        ctx: interactions.SlashContext,
+        target: str = "",
+        ephemeral: bool = False,
+    ) -> None:
+        fortunes: tuple[str, ...] = (
+            "大吉",
+            "中吉",
+            "小吉",
+            "小凶",
+            "凶",
+            "大凶",
+        )
+
+        if target:
+            seed = "".join(
+                (
+                    target,
+                    str(ctx.author.id),
+                    datetime.now(timezone.utc).strftime("%Y%m%d"),
+                )
+            )
+            fortune_len = len(fortunes)
+            fortune_idx = (
+                sum(ord(c) for c in hashlib.sha384(seed.encode()).hexdigest())
+                % fortune_len
+            )
+            fortune = fortunes[fortune_idx]
+
+            await self.send_success(
+                ctx,
+                title="抽签结果",
+                message=f"{ctx.author.mention}\n- 关于`{target}`的运势：{fortune}。",
+                ephemeral=ephemeral,
+            )
+        else:
+            fortune = secrets.choice(fortunes)
+            await self.send_success(
+                ctx,
+                title="今日运势",
+                message=f"{ctx.author.mention}\n- 今日运势：{fortune}。",
+                ephemeral=ephemeral,
+            )
+
+    @module_group_divination.subcommand(
+        "tarot", sub_cmd_description="Seek guidance through tarot divination"
+    )
+    @interactions.slash_option(
+        name="number",
+        description="Select number of cards to draw (1-78)",
+        opt_type=interactions.OptionType.INTEGER,
+        min_value=1,
+        max_value=78,
+        argument_name="num_cards",
+    )
+    @interactions.slash_option(
+        name="dream",
+        description="Present a dream or inquiry for interpretation",
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="ephemeral",
+        description="Whether the response should be ephemeral (only visible to you)",
+        opt_type=interactions.OptionType.BOOLEAN,
+        required=False,
+    )
+    async def tarot_1(
+        self,
+        ctx: interactions.SlashContext,
+        num_cards: int = 1,
+        dream: Optional[str] = None,
+        ephemeral: bool = False,
+    ):
+        if not self.tarot:
+            await self.send_error(
+                ctx,
+                "The tarot deck is currently unavailable. Please retry momentarily.",
+                ephemeral=ephemeral,
+            )
+            return
+
+        if ephemeral:
+            try:
+                await ctx.author.send(
+                    embeds=[
+                        await self.create_embed(
+                            title="Tarot Reading",
+                            description="The reading has been sent to your DMs!",
+                        )
+                    ],
+                    ephemeral=True,
+                )
+            except Exception:
+                await self.send_error(
+                    ctx,
+                    "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            send = ctx.send
+
+        wish = self.exchange_name(dream) if dream else None
+        msg = (
+            f"{ctx.author.mention}\n- 正在为 `{wish}` 进行塔罗牌占卜"
+            if wish
+            else f"{ctx.author.mention}\n- 抽取塔罗牌为你指明方向"
+        )
+        await send(
+            embeds=[await self.create_embed(title="塔罗牌占卜", description=msg)]
+        )
+
+        cards = random.sample(
+            [(i >> 1, i & 1) for i in range(len(self.tarot) << 1)],
+            min(num_cards, len(self.tarot) << 1),
+        )
+
+        for card_idx, is_inverted in cards:
+            msg, file = self.get_tarot_msg_with_image(card_idx, is_inverted)
+            await send(
+                embeds=[await self.create_embed(title="抽到的牌", description=msg)],
+                file=file,
+            )
+
+        if random.random() < 0.1:
+            await send(
+                embeds=[
+                    await self.create_embed(
+                        title="Enhanced Reading Available",
+                        description="Consider using /super_tarot for an AI-enhanced interpretation of your reading",
+                    )
+                ]
+            )
+
+    def get_tarot_msg_with_image(self, i: int, r: int) -> tuple[str, interactions.File]:
+        card_id = f"{i:02d}"
+        tarot_card = self.tarot[card_id]
+        card_name = f"{self.STR_REVERSED[r]} {tarot_card['name']}"
+        logger.info("Card drawn: %s", card_name)
+
+        filename = self.get_card_filename(i)
+        image_path = Path(BASE_DIR) / "cards" / filename
+
+        buffer = io.BytesIO()
+        with Image.open(image_path) as img:
+            if r:
+                img = img.rotate(180, expand=False)
+            img.save(buffer, format="JPEG", optimize=True, quality=85, progressive=True)
+
+        buffer.seek(0)
+
+        reversed_key = self.KEY_REVERSED[r]
+        msg = f"**{card_name}**\n{self.parse_result_detail(tarot_card[reversed_key])}"
+        return msg, interactions.File(buffer, file_name=filename)
+
+    @staticmethod
+    def get_card_filename(i: int) -> str:
+        if i <= 21:
+            prefix = "m"
+        else:
+            i -= 22
+            suit_idx = i // 14
+            prefix = "wcsp"[suit_idx]
+
+        card_num = i if i <= 21 else (i % 14) + 1
+        return f"{prefix}{card_num:02d}.jpg"
+
+    @module_group_divination.subcommand(
+        "meaning",
+        sub_cmd_description="Explore tarot card symbolism and interpretation",
+    )
+    @interactions.slash_option(
+        name="card",
+        description="Specify a tarot card",
+        opt_type=interactions.OptionType.STRING,
+        required=True,
+        argument_name="card_name",
+        autocomplete=True,
+    )
+    @interactions.slash_option(
+        name="ephemeral",
+        description="Whether the response should be ephemeral (only visible to you)",
+        opt_type=interactions.OptionType.BOOLEAN,
+        required=False,
+    )
+    async def tarot_query(
+        self,
+        ctx: interactions.SlashContext,
+        card_name: str,
+        ephemeral: bool = False,
+    ) -> None:
+        if not self.tarot:
+            await self.send_error(
+                ctx,
+                "The tarot deck is currently unavailable. Please retry momentarily.",
+                ephemeral=ephemeral,
+            )
+            return
+
+        msg = self.query_card(card_name)
+        await self.send_success(ctx, title="牌义解释", message=msg, ephemeral=ephemeral)
+
+    def query_card(self, query: str) -> str:
+        try:
+            query_card = next(self.query_pattern.finditer(query)).group()
+            return self.get_tarot_msg(
+                self.query[query_card], "reversed" in query.lower()
+            )
+        except (StopIteration, KeyError, AttributeError):
+            return f"Card `{query}` not found. Did you mean `{self.calc_similarity(query)}`?"
+
+    def calc_similarity(self, query: str) -> str:
+        names = {
+            f"{orientation} {card['name']}"[9:]
+            for card in self.tarot.values()
+            for orientation in self.STR_REVERSED
+        }
+        return max(
+            names,
+            key=lambda x: len(set(x.lower()) & set(query.lower()))
+            / len(set(x.lower()) | set(query.lower())),
+        )
+
+    def get_tarot_msg(self, i: int, r: bool) -> str:
+        tarot_card = self.tarot[f"{i:02d}"]
+        card_name = f"{self.STR_REVERSED[int(r)]} {tarot_card['name']}"
+        logger.info("Card drawn: %s", card_name)
+        return f"**{card_name}**\n{self.parse_result_detail(tarot_card[self.KEY_REVERSED[int(r)]])}"
+
+    @tarot_query.autocomplete("card")
+    async def tarot_query_autocomplete(
+        self,
+        ctx: interactions.AutocompleteContext,
+    ) -> None:
+        if not self.tarot:
+            return None
+
+        input_lower = ctx.input_text.lower()
+        matches = [
+            name
+            for name in (
+                f"{orientation} {card['name']}"
+                for card in self.tarot.values()
+                for orientation in self.STR_REVERSED
+            )
+            if input_lower in name.lower()
+        ][:25]
+
+        await ctx.send(matches)
+
+    @module_group_divination.subcommand(
+        "rider",
+        sub_cmd_description="Receive AI-enhanced tarot interpretation",
+    )
+    @interactions.slash_option(
+        name="question",
+        description="Present your inquiry for interpretation",
+        opt_type=interactions.OptionType.STRING,
+        required=True,
+    )
+    @interactions.slash_option(
+        name="ephemeral",
+        description="Whether the response should be ephemeral (only visible to you)",
+        opt_type=interactions.OptionType.BOOLEAN,
+        required=False,
+    )
+    async def tarot_2(
+        self,
+        ctx: interactions.SlashContext,
+        question: str,
+        ephemeral: bool = False,
+    ):
+        if not (self.tarot and self.model.groq_api_key and self.groq_client):
+            await self.send_error(
+                ctx,
+                (
+                    "Service temporarily unavailable."
+                    if self.tarot
+                    else "AI interpretation service temporarily unavailable."
+                ),
+                ephemeral=ephemeral,
+            )
+            return
+
+        models = [
+            {
+                "name": "deepseek-r1-distill-llama-70b",
+                "rpm": 30,
+                "rpd": 1000,
+                "tpm": 6000,
+                "tpd": 500000,
+            },
+            {
+                "name": "deepseek-r1-distill-qwen-32b",
+                "rpm": 30,
+                "rpd": 1000,
+                "tpm": 6000,
+                "tpd": 500000,
+            },
+        ]
+
+        now = datetime.now(timezone.utc)
+        bucket_keys = {
+            model["name"]: {
+                f"rate_limit_{ctx.author.id}_{model['name']}",
+                f"rate_limit_{ctx.guild_id}_{model['name']}",
+            }
+            for model in models
         }
 
-    async def __aenter__(self):
-        self._initialized = True
-        return self
+        self.url_cache.update(
+            {
+                key: {"requests": 0, "tokens": 0, "last_reset": now}
+                for keys in bucket_keys.values()
+                for key in keys
+                if key not in self.url_cache
+            }
+        )
 
-    async def __aexit__(self, *_):
-        self._initialized = False
-        return False
+        for bucket in self.url_cache.values():
+            if (now - bucket["last_reset"]).total_seconds() >= 60:
+                bucket.update({"requests": 0, "tokens": 0, "last_reset": now})
 
-    def __aiter__(self):
-        if not self._initialized:
-            raise RuntimeError("Must use async with")
-        return self
+        for model_config in models:
+            model = model_config["name"]
+            user_key, guild_key = bucket_keys[model]
 
-    async def __anext__(self):
-        while self._retries < self.MAX_RETRIES:
+            if any(
+                self.url_cache[key]["requests"] >= model_config["rpm"]
+                for key in (user_key, guild_key)
+            ):
+                continue
+
             try:
-                return await self.history.__anext__()
-            except StopAsyncIteration:
-                raise
-            except HTTPException as e:
-                code = getattr(e, "code", None)
-                if code in self._error_codes:
-                    msg, should_stop = self._error_codes[code]
-                    logger.error(
-                        f"Channel {self.history.channel.name} ({self.history.channel.id}): {msg}"
+                async with asyncio.timeout(60):
+                    self.model_params["model"] = model
+                    self.model_params["reasoning_format"] = (
+                        "hidden"
+                        if model
+                        in {
+                            "deepseek-r1-distill-llama-70b",
+                            "deepseek-r1-distill-qwen-32b",
+                        }
+                        else self.model_params.pop("reasoning_format", None)
                     )
-                    if should_stop:
-                        raise StopAsyncIteration
-                else:
-                    logger.warning(
-                        f"Channel {self.history.channel.name} ({self.history.channel.id}) has unknown code {code}"
+
+                    prompt, card_name = self.get_gpt_prompt(question)
+                    response = await self.groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt.strip()}],
+                        **self.model_params,
                     )
-                    raise StopAsyncIteration
-            except (OSError, RuntimeError, TypeError) as e:
-                self._retries += 1
-                if self._retries >= self.MAX_RETRIES:
-                    logger.error(
-                        f"Failed after {self.MAX_RETRIES} retries: {e.__class__.__name__}: {str(e)}"
+
+                    for key in (user_key, guild_key):
+                        self.url_cache[key]["requests"] += 1
+                        self.url_cache[key]["tokens"] += response.usage.total_tokens
+
+                    wish = self.exchange_name(question)
+                    head_msg = f"{ctx.author.mention}\n- 为 `{wish}` 解读塔罗牌。\n- 抽到的牌：`{card_name}`\n"
+                    wait_msg = "正在解读…"
+
+                    i, r = self.get_tarot_info()
+                    card_filename = self.get_card_filename(i)
+                    image_path = os.path.join(BASE_DIR, "cards", card_filename)
+
+                    with Image.open(image_path) as img:
+                        buffer = io.BytesIO()
+                        (img.rotate(180) if r else img).save(buffer, format="JPEG")
+                        buffer.seek(0)
+                        file = interactions.File(buffer, file_name=card_filename)
+
+                    if ephemeral:
+                        if not (dm_channel := ctx.author.get_dm()):
+                            await self.send_error(
+                                ctx,
+                                "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
+                                ephemeral=True,
+                            )
+                            return
+
+                        msg = await dm_channel.send(
+                            embeds=[
+                                await self.create_embed(
+                                    title="AI Tarot Reading",
+                                    description=head_msg + wait_msg,
+                                )
+                            ],
+                            file=file,
+                        )
+
+                        await ctx.send(
+                            embeds=[
+                                await self.create_embed(
+                                    title="AI Tarot Reading",
+                                    description="The reading has been sent to your DMs!",
+                                )
+                            ],
+                            ephemeral=True,
+                        )
+                    else:
+                        msg = await ctx.send(
+                            embeds=[
+                                await self.create_embed(
+                                    title="AI Tarot Reading",
+                                    description=head_msg + wait_msg,
+                                )
+                            ],
+                            file=file,
+                        )
+
+                    response_content = self.preprocess_msg(
+                        response.choices[0].message.content
                     )
-                    raise StopAsyncIteration
-                await asyncio.sleep(self.BASE_DELAY * (1 << (self._retries - 1)))
-            except (aiohttp.ClientPayloadError, Exception):
-                logger.exception(traceback.format_exc())
-                raise StopAsyncIteration
+                    try:
+                        response_json = orjson.loads(response_content)
+                        formatted_response = (
+                            "### Card Interpretation\n"
+                            f"{response_json['interpretation']['card_meaning']}\n"
+                            "### Personal Connection\n"
+                            f"{response_json['interpretation']['connection']}\n"
+                            "### Guidance\n"
+                            f"{response_json['interpretation']['guidance']}\n"
+                            "### Recommended Actions\n"
+                            + "\n".join(
+                                f"- {step}" for step in response_json["action_steps"]
+                            )
+                        )
+
+                        await msg.edit(
+                            embeds=[
+                                await self.create_embed(
+                                    title="AI Tarot Reading",
+                                    description=head_msg + formatted_response,
+                                )
+                            ]
+                        )
+                    except Exception as e:
+                        logger.error(f"Error editing message: {e}", exc_info=True)
+                        await msg.edit(
+                            embeds=[
+                                await self.create_embed(
+                                    title="AI Tarot Reading",
+                                    description=head_msg
+                                    + "Interpretation unavailable. Please request another reading.",
+                                    color=EmbedColor.ERROR,
+                                )
+                            ]
+                        )
+
+                    logger.info(f"Question: {question}")
+                    logger.info(f"Response: {response_content}")
+                    return
+
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error(f"Error with model {model}: {e}", exc_info=True)
+                continue
+
+        await self.send_error(
+            ctx,
+            title="Reading Interrupted",
+            message="AI interpretation service connection failed. Please try again later.",
+            ephemeral=ephemeral,
+        )
+
+    @staticmethod
+    def exchange_name(msg: str) -> str:
+        return functools.reduce(
+            lambda m, p: m.replace(*p),
+            [
+                ("我", "!@#$1$#@!"),
+                ("I", "!@#$1$#@!"),
+                ("my", "!@#$2$#@!"),
+                ("My", "!@#$3$#@!"),
+                ("MY", "!@#$4$#@!"),
+                ("你", "我"),
+                ("妳", "我"),
+                ("您", "我"),
+                ("!@#$1$#@!", "你"),
+                ("!@#$2$#@!", "your"),
+                ("!@#$3$#@!", "Your"),
+                ("!@#$4$#@!", "YOUR"),
+                ("you", "I"),
+                ("You", "I"),
+                ("YOU", "I"),
+                ("!@#$1$#@!", "you"),
+                ("!@#$2$#@!", "your"),
+                ("!@#$3$#@!", "Your"),
+                ("!@#$4$#@!", "YOUR"),
+            ],
+            msg,
+        )
+
+    @staticmethod
+    def preprocess_msg(msg: str) -> str:
+        return msg.strip('"').strip()
+
+    KEY_REVERSED: tuple[str, str] = ("upright", "reversed")
+    STR_REVERSED: tuple[str, str] = ("正位", "逆位")
+    STR_COLUMN: dict[str, str] = {
+        "behavior": "行为洞察",
+        "marriage": "爱情婚姻",
+        "meaning": "牌义解释",
+        "related": "关键主题",
+        "sexuality": "人际关系",
+    }
+
+    DETAIL_ORDER: tuple[str, ...] = (
+        "related",
+        "behavior",
+        "meaning",
+        "sexuality",
+        "marriage",
+    )
+    SIMPLE_ORDER: tuple[str, str] = ("related", "meaning")
+
+    def get_gpt_prompt(self, problem: str) -> tuple[str, str]:
+        i, r = self.get_tarot_info()
+        tarot_card = self.tarot[f"{i:02d}"]
+        card = tarot_card[self.KEY_REVERSED[r]]
+        card_name = f"{self.STR_REVERSED[r]} {tarot_card['name']}"
+        return (
+            f"{self.AI_TAROT_PROMPT}\n\nQuestion: {problem[:500]}\n"
+            f"Tarot Card: {card_name}\nKeywords: {card['related'].strip('.')}\n"
+            "Begin Interpretation:"
+        ), card_name
+
+    def get_tarot_info(self) -> tuple[int, int]:
+        return random.randrange(len(self.tarot)), random.randrange(2)
+
+    def parse_result_detail(self, r: dict) -> str:
+        return "\n".join(f"- {self.STR_COLUMN[k]}：{r[k]}" for k in self.DETAIL_ORDER)
+
+    @staticmethod
+    def sim(q1: str, q2: str) -> float:
+        s1, s2 = set(q1), set(q2)
+        return len(s1 & s2) / len(s1 | s2)
