@@ -164,10 +164,6 @@ class PostStats:
         )
 
 
-
-
-
-
 @dataclass
 class TimeoutConfig:
     base_duration: int = 300
@@ -1225,12 +1221,13 @@ class Threads(interactions.Extension):
                 4. Response Formation:
                 - Provide clear spiritual insights
                 - Balance practical and mystical aspects
-                - Maintain respectful and encouraging tone
                 - Give actionable guidance
 
                 Input Format:
-                - Question from user
-                - Drawn Tarot card
+                - Question: User's inquiry (max 500 chars)
+                - Tarot Card: [Position] [Card Name] 
+                - Description: Card's physical appearance and symbolism
+                - Interpretation: Card's divinatory meanings
 
                 Required Output Format (JSON):
                 {
@@ -1247,7 +1244,6 @@ class Threads(interactions.Extension):
                 Requirements:
                 - Provide deep spiritual insights
                 - Write 250-300 words with clear reasoning
-                - Use encouraging tone
                 - Write in Simplified Chinese
                 - Use spiritual language
                 - Give constructive advice with explanation
@@ -1256,7 +1252,6 @@ class Threads(interactions.Extension):
                 - Breaking character
                 - Mentioning AI
                 - Asking questions
-                - Negative predictions
                 - Overly mathematical approaches
 
                 Let's start."""
@@ -7605,7 +7600,12 @@ class Threads(interactions.Extension):
         buffer.seek(0)
 
         reversed_key = self.KEY_REVERSED[r]
-        msg = f"**{card_name}**\n{self.parse_result_detail(tarot_card[reversed_key])}"
+        msg = (
+            f"**{card_name}**\n"
+            f"**描述**：{tarot_card['description']}\n"
+            f"**解释**：{tarot_card['interpretation']}\n"
+            f"**解读**：\n{self.parse_result_detail(tarot_card[reversed_key])}"
+        )
         return msg, interactions.File(buffer, file_name=filename)
 
     @staticmethod
@@ -7680,7 +7680,13 @@ class Threads(interactions.Extension):
         tarot_card = self.tarot[f"{i:02d}"]
         card_name = f"{self.STR_REVERSED[int(r)]} {tarot_card['name']}"
         logger.info("Card drawn: %s", card_name)
-        return f"**{card_name}**\n{self.parse_result_detail(tarot_card[self.KEY_REVERSED[int(r)]])}"
+        reversed_key = self.KEY_REVERSED[int(r)]
+        return (
+            f"**{card_name}**\n"
+            f"**描述**：{tarot_card['description']}\n"
+            f"**解释**：{tarot_card['interpretation']}\n"
+            f"**解读**：\n{self.parse_result_detail(tarot_card[reversed_key])}"
+        )
 
     @tarot_query.autocomplete("card")
     async def tarot_query_autocomplete(
@@ -7967,16 +7973,17 @@ class Threads(interactions.Extension):
         "sexuality",
         "marriage",
     )
-    SIMPLE_ORDER: tuple[str, str] = ("related", "meaning")
 
     def get_gpt_prompt(self, problem: str) -> tuple[str, str]:
         i, r = self.get_tarot_info()
         tarot_card = self.tarot[f"{i:02d}"]
-        card = tarot_card[self.KEY_REVERSED[r]]
         card_name = f"{self.STR_REVERSED[r]} {tarot_card['name']}"
         return (
-            f"{self.AI_TAROT_PROMPT}\n\nQuestion: {problem[:500]}\n"
-            f"Tarot Card: {card_name}\nKeywords: {card['related'].strip('.')}\n"
+            f"{self.AI_TAROT_PROMPT}\n\n"
+            f"- Question: {problem[:500]}\n"
+            f"- Tarot Card: {card_name}\n"
+            f"- Description: {tarot_card['description']}\n"
+            f"- Interpretation: {tarot_card['interpretation']}\n\n"
             "Begin Interpretation:"
         ), card_name
 
