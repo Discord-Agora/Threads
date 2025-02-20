@@ -7385,6 +7385,12 @@ class Threads(interactions.Extension):
         wish: str = "",
         ephemeral: bool = False,
     ) -> None:
+        logger.info(
+            f"Crystal ball reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+        )
+        logger.info(f"Wish: {wish}")
+        logger.info(f"Ephemeral: {ephemeral}")
+
         wish_text = wish or "你的未来"
         base_embed = await self.create_embed(
             title="水晶球占卜",
@@ -7392,9 +7398,9 @@ class Threads(interactions.Extension):
         )
 
         if ephemeral:
-
             try:
                 msg = await ctx.author.send(embeds=[base_embed])
+                logger.info(f"Sent crystal ball reading to DM for user {ctx.author.id}")
                 await ctx.send(
                     embeds=[
                         await self.create_embed(
@@ -7404,7 +7410,7 @@ class Threads(interactions.Extension):
                     ephemeral=True,
                 )
             except Exception as e:
-                logger.error(f"Failed to send DM: {e}")
+                logger.error(f"Failed to send DM to user {ctx.author.id}: {e}")
                 await self.send_error(
                     ctx,
                     "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
@@ -7412,6 +7418,9 @@ class Threads(interactions.Extension):
                 return
         else:
             msg = await ctx.send(embeds=[base_embed])
+            logger.info(
+                f"Sent crystal ball reading in channel for user {ctx.author.id}"
+            )
 
         steps = (
             "- 水晶球中浮现出神秘的能量",
@@ -7430,6 +7439,7 @@ class Threads(interactions.Extension):
                     )
                 ]
             )
+            logger.debug(f"Updated crystal ball reading with step: {step}")
 
     @module_group_divination.subcommand(
         "draw", sub_cmd_description="Draw a fortune to divine your prospects"
@@ -7450,6 +7460,12 @@ class Threads(interactions.Extension):
         target: str = "",
         ephemeral: bool = False,
     ) -> None:
+        logger.info(
+            f"Fortune drawing requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+        )
+        logger.info(f"Target: {target}")
+        logger.info(f"Ephemeral: {ephemeral}")
+
         fortunes: tuple[str, ...] = (
             "大吉",
             "中吉",
@@ -7473,6 +7489,7 @@ class Threads(interactions.Extension):
                 % fortune_len
             )
             fortune = fortunes[fortune_idx]
+            logger.info(f"Generated fortune for target '{target}': {fortune}")
 
             await self.send_success(
                 ctx,
@@ -7482,6 +7499,7 @@ class Threads(interactions.Extension):
             )
         else:
             fortune = secrets.choice(fortunes)
+            logger.info(f"Generated random fortune: {fortune}")
             await self.send_success(
                 ctx,
                 title="今日运势",
@@ -7517,7 +7535,15 @@ class Threads(interactions.Extension):
         dream: Optional[str] = None,
         ephemeral: bool = False,
     ):
+        logger.info(
+            f"Tarot reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+        )
+        logger.info(f"Number of cards: {num_cards}")
+        logger.info(f"Dream: {dream}")
+        logger.info(f"Ephemeral: {ephemeral}")
+
         if not self.tarot:
+            logger.error("Tarot deck unavailable")
             await self.send_error(
                 ctx,
                 "The tarot deck is currently unavailable. Please retry momentarily.",
@@ -7536,7 +7562,9 @@ class Threads(interactions.Extension):
                     ],
                     ephemeral=True,
                 )
-            except Exception:
+                logger.info(f"Sent tarot reading to DM for user {ctx.author.id}")
+            except Exception as e:
+                logger.error(f"Failed to send DM to user {ctx.author.id}: {e}")
                 await self.send_error(
                     ctx,
                     "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
@@ -7559,6 +7587,7 @@ class Threads(interactions.Extension):
             [(i >> 1, i & 1) for i in range(len(self.tarot) << 1)],
             min(num_cards, len(self.tarot) << 1),
         )
+        logger.info(f"Drew {len(cards)} cards")
 
         for card_idx, is_inverted in cards:
             msg, file = self.get_tarot_msg_with_image(card_idx, is_inverted)
@@ -7566,8 +7595,10 @@ class Threads(interactions.Extension):
                 embeds=[await self.create_embed(title="抽到的牌", description=msg)],
                 file=file,
             )
+            logger.debug(f"Sent card {card_idx} (inverted: {is_inverted})")
 
         if random.random() < 0.1:
+            logger.info("Suggesting enhanced reading")
             await send(
                 embeds=[
                     await self.create_embed(
@@ -7581,9 +7612,10 @@ class Threads(interactions.Extension):
         card_id = f"{i:02d}"
         tarot_card = self.tarot[card_id]
         card_name = f"{self.STR_REVERSED[r]} {tarot_card['name']}"
-        logger.info("Card drawn: %s", card_name)
+        logger.info(f"Card index: {i}, Card ID: {card_id}, Card name: {card_name}")
 
         filename = self.get_card_filename(i)
+        logger.info(f"Generated filename: {filename}")
         image_path = Path(BASE_DIR) / "cards" / filename
 
         buffer = io.BytesIO()
@@ -7591,6 +7623,7 @@ class Threads(interactions.Extension):
             if r:
                 img = img.rotate(180)
             img.save(buffer, format="JPEG", optimize=True, quality=85, progressive=True)
+        logger.debug(f"Processed image for card {card_id}")
 
         buffer.seek(0)
 
@@ -7602,24 +7635,6 @@ class Threads(interactions.Extension):
             f"**解读**：\n{self.parse_result_detail(tarot_card[reversed_key])}"
         )
         return msg, interactions.File(buffer, file_name=filename)
-
-    @staticmethod
-    def get_card_filename(i: int) -> str:
-        try:
-            prefix, offset = next(
-                (p, o)
-                for p, r, o in (
-                    ("m", range(22), 0),
-                    ("w", range(22, 36), 21),
-                    ("c", range(36, 50), 35),
-                    ("s", range(50, 64), 49),
-                    ("p", range(64, 78), 63),
-                )
-                if i in r
-            )
-            return f"{prefix}{(i - offset):02d}.jpg"
-        except StopIteration:
-            raise ValueError("Invalid card index")
 
     @module_group_divination.subcommand(
         "meaning",
@@ -7644,7 +7659,14 @@ class Threads(interactions.Extension):
         card_name: str,
         ephemeral: bool = False,
     ) -> None:
+        logger.info(
+            f"Tarot card query by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+        )
+        logger.info(f"Card name: {card_name}")
+        logger.info(f"Ephemeral: {ephemeral}")
+
         if not self.tarot:
+            logger.error("Tarot deck unavailable")
             await self.send_error(
                 ctx,
                 "The tarot deck is currently unavailable. Please retry momentarily.",
@@ -7658,11 +7680,15 @@ class Threads(interactions.Extension):
     def query_card(self, query: str) -> str:
         try:
             query_card = next(self.query_pattern.finditer(query)).group()
+            logger.info(f"Found matching card: {query_card}")
             return self.get_tarot_msg(
                 self.query[query_card], "reversed" in query.lower()
             )
-        except (StopIteration, KeyError, AttributeError):
-            return f"Card `{query}` not found. Did you mean `{self.calc_similarity(query)}`?"
+        except (StopIteration, KeyError, AttributeError) as e:
+            logger.warning(f"Card query failed: {e}")
+            similar = self.calc_similarity(query)
+            logger.info(f"Suggesting similar card: {similar}")
+            return f"Card `{query}` not found. Did you mean `{similar}`?"
 
     def calc_similarity(self, query: str) -> str:
         names = {
@@ -7670,11 +7696,13 @@ class Threads(interactions.Extension):
             for card in self.tarot.values()
             for orientation in self.STR_REVERSED
         }
-        return max(
+        similar = max(
             names,
             key=lambda x: len(set(x.lower()) & set(query.lower()))
             / len(set(x.lower()) | set(query.lower())),
         )
+        logger.debug(f"Found most similar card name: {similar}")
+        return similar
 
     def get_tarot_msg(self, i: int, r: bool) -> str:
         tarot_card = self.tarot[f"{i:02d}"]
@@ -7709,6 +7737,25 @@ class Threads(interactions.Extension):
 
         await ctx.send(matches)
 
+    @staticmethod
+    def get_card_filename(i: int) -> str:
+        try:
+            if i < 22:
+                return f"m{i:02d}.jpg"
+            elif i < 36:
+                return f"w{i-21:02d}.jpg"
+            elif i < 50:
+                return f"c{i-35:02d}.jpg"
+            elif i < 64:
+                return f"s{i-49:02d}.jpg"
+            elif i < 78:
+                return f"p{i-63:02d}.jpg"
+            else:
+                raise ValueError(f"Invalid card index: {i}")
+        except Exception as e:
+            logger.error(f"Error generating filename for index {i}: {e}")
+            raise
+
     @module_group_divination.subcommand(
         "rider",
         sub_cmd_description="Receive AI-enhanced tarot interpretation",
@@ -7730,7 +7777,14 @@ class Threads(interactions.Extension):
         question: str,
         ephemeral: bool = False,
     ):
+        logger.info(
+            f"Tarot reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+        )
+        logger.info(f"Question: {question}")
+        logger.info(f"Ephemeral: {ephemeral}")
+
         if not (self.tarot and self.model.groq_api_key and self.groq_client):
+            logger.warning("Service unavailable - Missing required components")
             await self.send_error(
                 ctx,
                 (
@@ -7768,6 +7822,7 @@ class Threads(interactions.Extension):
             for model in models
         }
 
+        logger.debug("Initializing rate limit buckets")
         self.url_cache.update(
             {
                 key: {"requests": 0, "tokens": 0, "last_reset": now}
@@ -7779,20 +7834,24 @@ class Threads(interactions.Extension):
 
         for bucket in self.url_cache.values():
             if (now - bucket["last_reset"]).total_seconds() >= 60:
+                logger.debug(f"Resetting bucket {bucket}")
                 bucket.update({"requests": 0, "tokens": 0, "last_reset": now})
 
         for model_config in models:
             model = model_config["name"]
             user_key, guild_key = bucket_keys[model]
+            logger.info(f"Attempting to use model: {model}")
 
             if any(
                 self.url_cache[key]["requests"] >= model_config["rpm"]
                 for key in (user_key, guild_key)
             ):
+                logger.warning(f"Rate limit exceeded for model {model}")
                 continue
 
             try:
                 async with asyncio.timeout(60):
+                    logger.debug(f"Setting up model parameters for {model}")
                     self.model_params["model"] = model
                     self.model_params["reasoning_format"] = (
                         "hidden"
@@ -7805,23 +7864,36 @@ class Threads(interactions.Extension):
                     )
 
                     prompt, card_name = self.get_gpt_prompt(question)
+                    i, r = self._last_tarot_info
+                    logger.info(f"Generated prompt for card: {card_name}")
+
+                    logger.debug("Sending request to Groq API")
                     response = await self.groq_client.chat.completions.create(
                         messages=[{"role": "user", "content": prompt.strip()}],
                         **self.model_params,
+                    )
+                    logger.info(
+                        f"Received response from Groq API. Total tokens: {response.usage.total_tokens}"
                     )
 
                     for key in (user_key, guild_key):
                         self.url_cache[key]["requests"] += 1
                         self.url_cache[key]["tokens"] += response.usage.total_tokens
+                        logger.debug(
+                            f"Updated rate limit bucket {key}: {self.url_cache[key]}"
+                        )
 
                     wish = self.exchange_name(question)
                     head_msg = f"{ctx.author.mention}\n- 为 `{wish}` 解读塔罗牌。\n- 抽到的牌：`{card_name}`\n"
                     wait_msg = "正在解读…"
 
-                    i, r = self.get_tarot_info()
                     card_filename = self.get_card_filename(i)
+                    logger.info(
+                        f"Card details - Index: {i}, Reversed: {r}, Filename: {card_filename}, Name: {card_name}"
+                    )
                     image_path = os.path.join(BASE_DIR, "cards", card_filename)
 
+                    logger.debug(f"Processing card image: {image_path}")
                     with Image.open(image_path) as img:
                         buffer = io.BytesIO()
                         (img.rotate(180) if r else img).save(buffer, format="JPEG")
@@ -7830,12 +7902,18 @@ class Threads(interactions.Extension):
 
                     if ephemeral:
                         if not (dm_channel := ctx.author.get_dm()):
+                            logger.error(
+                                f"Failed to get DM channel for user {ctx.author.id}"
+                            )
                             await self.send_error(
                                 ctx,
                                 "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
                             )
                             return
 
+                        logger.info(
+                            f"Sending ephemeral reading to user {ctx.author.id} via DM"
+                        )
                         msg = await dm_channel.send(
                             embeds=[
                                 await self.create_embed(
@@ -7856,6 +7934,7 @@ class Threads(interactions.Extension):
                             ephemeral=True,
                         )
                     else:
+                        logger.info("Sending non-ephemeral reading to channel")
                         msg = await ctx.send(
                             embeds=[
                                 await self.create_embed(
@@ -7870,6 +7949,7 @@ class Threads(interactions.Extension):
                         response.choices[0].message.content
                     )
                     try:
+                        logger.debug("Parsing response content as JSON")
                         response_json = orjson.loads(response_content)
                         formatted_response = (
                             "### Card Interpretation\n"
@@ -7884,6 +7964,7 @@ class Threads(interactions.Extension):
                             )
                         )
 
+                        logger.info("Updating message with formatted response")
                         await msg.edit(
                             embeds=[
                                 await self.create_embed(
@@ -7893,7 +7974,7 @@ class Threads(interactions.Extension):
                             ]
                         )
                     except Exception as e:
-                        logger.error(f"Error editing message: {e}", exc_info=True)
+                        logger.error(f"Failed to process response: {e}", exc_info=True)
                         await msg.edit(
                             embeds=[
                                 await self.create_embed(
@@ -7905,16 +7986,18 @@ class Threads(interactions.Extension):
                             ]
                         )
 
-                    logger.info(f"Question: {question}")
-                    logger.info(f"Response: {response_content}")
+                    logger.info(f"Completed reading for question: {question}")
+                    logger.debug(f"Full response content: {response_content}")
                     return
 
             except asyncio.TimeoutError:
+                logger.warning(f"Timeout occurred with model {model}")
                 continue
             except Exception as e:
-                logger.error(f"Error with model {model}: {e}", exc_info=True)
+                logger.error(f"Error occurred with model {model}: {e}", exc_info=True)
                 continue
 
+        logger.error("All models failed, sending error message")
         await self.send_error(
             ctx,
             title="Reading Interrupted",
@@ -7974,8 +8057,10 @@ class Threads(interactions.Extension):
 
     def get_gpt_prompt(self, problem: str) -> tuple[str, str]:
         i, r = self.get_tarot_info()
+        self._last_tarot_info = (i, r)
         tarot_card = self.tarot[f"{i:02d}"]
         card_name = f"{self.STR_REVERSED[r]} {tarot_card['name']}"
+        logger.info(f"Card index: {i}, Card ID: {tarot_card}, Card name: {card_name}")
         return (
             f"{self.AI_TAROT_PROMPT}\n\n"
             f"- Question: {problem[:500]}\n"
