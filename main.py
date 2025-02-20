@@ -7610,15 +7610,21 @@ class Threads(interactions.Extension):
 
     @staticmethod
     def get_card_filename(i: int) -> str:
-        if i <= 21:
-            prefix = "m"
-        else:
-            i -= 22
-            suit_idx = i // 14
-            prefix = "wcsp"[suit_idx]
-
-        card_num = i if i <= 21 else (i % 14) + 1
-        return f"{prefix}{card_num:02d}.jpg"
+        try:
+            prefix, offset = next(
+                (p, o)
+                for p, r, o in (
+                    ("m", range(22), 0),
+                    ("w", range(22, 36), 21),
+                    ("c", range(36, 50), 35),
+                    ("s", range(50, 64), 49),
+                    ("p", range(64, 78), 63),
+                )
+                if i in r
+            )
+            return f"{prefix}{(i - offset):02d}.jpg"
+        except StopIteration:
+            raise ValueError("Invalid card index")
 
     @module_group_divination.subcommand(
         "meaning",
