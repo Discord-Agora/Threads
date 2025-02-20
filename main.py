@@ -7391,6 +7391,8 @@ class Threads(interactions.Extension):
         logger.info(f"Wish: {wish}")
         logger.info(f"Ephemeral: {ephemeral}")
 
+        await ctx.defer(ephemeral=ephemeral)
+
         wish_text = wish or "你的未来"
         base_embed = await self.create_embed(
             title="水晶球占卜",
@@ -7465,6 +7467,8 @@ class Threads(interactions.Extension):
         )
         logger.info(f"Target: {target}")
         logger.info(f"Ephemeral: {ephemeral}")
+
+        await ctx.defer(ephemeral=ephemeral)
 
         fortunes: tuple[str, ...] = (
             "大吉",
@@ -7541,6 +7545,8 @@ class Threads(interactions.Extension):
         logger.info(f"Number of cards: {num_cards}")
         logger.info(f"Dream: {dream}")
         logger.info(f"Ephemeral: {ephemeral}")
+
+        await ctx.defer(ephemeral=ephemeral)
 
         if not self.tarot:
             logger.error("Tarot deck unavailable")
@@ -7664,6 +7670,8 @@ class Threads(interactions.Extension):
         )
         logger.info(f"Card name: {card_name}")
         logger.info(f"Ephemeral: {ephemeral}")
+
+        await ctx.defer(ephemeral=ephemeral)
 
         if not self.tarot:
             logger.error("Tarot deck unavailable")
@@ -7795,6 +7803,8 @@ class Threads(interactions.Extension):
                 ephemeral=ephemeral,
             )
             return
+
+        await ctx.defer(ephemeral=ephemeral)
 
         models = [
             {
