@@ -7378,7 +7378,6 @@ class Threads(interactions.Extension):
         name="ephemeral",
         description="Whether the response should be ephemeral (only visible to you)",
         opt_type=interactions.OptionType.BOOLEAN,
-        required=False,
     )
     async def crystal_ball(
         self,
@@ -7409,7 +7408,6 @@ class Threads(interactions.Extension):
                 await self.send_error(
                     ctx,
                     "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
-                    ephemeral=True,
                 )
                 return
         else:
@@ -7445,7 +7443,6 @@ class Threads(interactions.Extension):
         name="ephemeral",
         description="Whether the response should be ephemeral (only visible to you)",
         opt_type=interactions.OptionType.BOOLEAN,
-        required=False,
     )
     async def draw(
         self,
@@ -7512,7 +7509,6 @@ class Threads(interactions.Extension):
         name="ephemeral",
         description="Whether the response should be ephemeral (only visible to you)",
         opt_type=interactions.OptionType.BOOLEAN,
-        required=False,
     )
     async def tarot_1(
         self,
@@ -7544,7 +7540,6 @@ class Threads(interactions.Extension):
                 await self.send_error(
                     ctx,
                     "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
-                    ephemeral=True,
                 )
                 return
         else:
@@ -7594,7 +7589,7 @@ class Threads(interactions.Extension):
         buffer = io.BytesIO()
         with Image.open(image_path) as img:
             if r:
-                img = img.rotate(180, expand=False)
+                img = img.rotate(180)
             img.save(buffer, format="JPEG", optimize=True, quality=85, progressive=True)
 
         buffer.seek(0)
@@ -7642,7 +7637,6 @@ class Threads(interactions.Extension):
         name="ephemeral",
         description="Whether the response should be ephemeral (only visible to you)",
         opt_type=interactions.OptionType.BOOLEAN,
-        required=False,
     )
     async def tarot_query(
         self,
@@ -7729,7 +7723,6 @@ class Threads(interactions.Extension):
         name="ephemeral",
         description="Whether the response should be ephemeral (only visible to you)",
         opt_type=interactions.OptionType.BOOLEAN,
-        required=False,
     )
     async def tarot_2(
         self,
@@ -7840,7 +7833,6 @@ class Threads(interactions.Extension):
                             await self.send_error(
                                 ctx,
                                 "Unable to send DM. Please enable DMs or use non-ephemeral mode.",
-                                ephemeral=True,
                             )
                             return
 
