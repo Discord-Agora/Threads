@@ -1225,7 +1225,7 @@ class Threads(interactions.Extension):
 
                 Input Format:
                 - Question: User's inquiry (max 500 chars)
-                - Tarot Card: [Position] [Card Name] 
+                - Tarot Card: [Position] [Card Name]
                 - Description: Card's physical appearance and symbolism
                 - Interpretation: Card's divinatory meanings
 
@@ -7002,7 +7002,7 @@ class Threads(interactions.Extension):
                 poll = interactions.Poll.create(
                     question="您对此持何意见？What is your position?",
                     duration=48,
-                    answers=["正  In Favor", "反  Opposed", "无  Abstain"],
+                    answers=["正 AYE", "反 NO", "无 NV"],
                 )
                 tasks.append(thread.send(poll=poll))
 
