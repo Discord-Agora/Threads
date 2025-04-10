@@ -7,6 +7,7 @@ import hashlib
 import io
 import logging
 import os
+import time
 import random
 import re
 import secrets
@@ -55,6 +56,8 @@ from interactions.api.events import (
     MessageReactionAdd,
     MessageReactionRemove,
     NewThreadCreate,
+    ThreadUpdate,
+    MessageDelete,
 )
 from interactions.client.errors import (
     Forbidden,
@@ -1814,7 +1817,7 @@ class Threads(interactions.Extension):
         return dot_product / (norm1 * norm2) if norm1 and norm2 else 0.0
 
     def check_text_similarity(
-        self, new_text: str, old_text: str | None, channel_id: str | None = None
+        self, new_text: str, old_text: Optional[str], channel_id: Optional[str] = None
     ) -> Tuple[bool, Dict[str, float]]:
         if old_text is None:
             return False, {}
@@ -2085,6 +2088,95 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(
                 f"Error handling spam message from user {user_id}: {e}", exc_info=True
+            )
+
+    # Archive thread
+
+    @interactions.listen(ThreadUpdate)
+    async def on_thread_update_for_archive(self, event: ThreadUpdate) -> None:
+        if not event.thread.guild:
+            return
+        if not isinstance(event.thread, interactions.GuildForumPost):
+            return
+
+        await self.check_and_archive_thread(event.thread)
+
+    @interactions.listen(MessageDelete)
+    async def on_message_delete_for_archive(self, event: MessageDelete) -> None:
+        if not event.message.guild:
+            return
+        if not isinstance(event.message.channel, interactions.GuildForumPost):
+            return
+
+        await self.check_and_archive_thread(event.message.channel)
+
+    async def check_and_archive_thread(
+        self, thread: interactions.GuildForumPost
+    ) -> None:
+        try:
+            INACTIVITY_THRESHOLD = timedelta(days=7)
+            current_time = datetime.now(timezone.utc)
+            thread_id_str = str(thread.id)
+
+            if (post_stats := self.model.post_stats.get(thread_id_str)) and (
+                current_time - post_stats.last_activity
+            ) >= INACTIVITY_THRESHOLD:
+                await thread.edit(archived=True, reason="Inactivity")
+                logger.info(
+                    f"Thread {thread.id} archived due to inactivity (last_activity)"
+                )
+                return
+
+            if thread.last_message_id:
+                try:
+                    last_message = await thread.fetch_message(thread.last_message_id)
+                    if (current_time - last_message.created_at) >= INACTIVITY_THRESHOLD:
+                        await thread.edit(archived=True, reason="Inactivity")
+                        logger.info(
+                            f"Thread {thread.id} archived due to inactivity (last_message_id)"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(
+                        f"Could not fetch last message for thread {thread.id}: {e}"
+                    )
+
+            try:
+                messages = await thread.history(limit=1).flatten()
+
+                if not messages:
+                    await thread.edit(archived=True, reason="Inactivity")
+                    logger.info(
+                        f"Thread {thread.id} archived due to inactivity (empty history)"
+                    )
+                    return
+
+                last_message = messages[0]
+
+                if (current_time - last_message.created_at) >= INACTIVITY_THRESHOLD:
+                    await thread.edit(archived=True, reason="Inactivity")
+                    logger.info(
+                        f"Thread {thread.id} archived due to inactivity (history timestamp)"
+                    )
+                    return
+
+                if last_message.timestamp:
+                    last_active_time = last_message.timestamp.timestamp()
+                    if (
+                            time.time() - last_active_time
+                    ) >= INACTIVITY_THRESHOLD.total_seconds():
+                        await thread.edit(archived=True, reason="Inactivity")
+                        logger.info(
+                            f"Thread {thread.id} archived due to inactivity (raw timestamp)"
+                        )
+            except asyncio.TimeoutError:
+                logger.debug(f"Timeout fetching history for thread {thread.id}")
+            except Exception as e:
+                logger.exception(f"Could not fetch history for thread {thread.id}: {e}")
+
+        except Exception as e:
+            logger.exception(
+                f"Error checking thread {thread.id} for archival: {e}", exc_info=True
             )
 
     # Tag operations
@@ -5990,653 +6082,26 @@ class Threads(interactions.Extension):
         if not (referenced_message := await msg.fetch_referenced_message()):
             return
 
-        match content:
-            case action if action in {"shoot"}:
-                await self.perform_ai_check(msg, msg.channel, referenced_message)
-            case action if action in {"del", "pin", "unpin"}:
-                try:
-                    if not isinstance(msg.channel, interactions.ThreadChannel):
-                        return
-
-                    if not await self.can_manage_message(msg.channel, msg.author):
-                        return
-
-                    await asyncio.shield(msg.delete())
-
-                    action_map = {
-                        "del": lambda: self.delete_message_action(
-                            msg, msg.channel, referenced_message
-                        ),
-                        "pin": lambda: self.pin_message_action(
-                            msg, msg.channel, referenced_message, True
-                        ),
-                        "unpin": lambda: self.pin_message_action(
-                            msg, msg.channel, referenced_message, False
-                        ),
-                    }
-
-                    await action_map[content]()
-
-                except Exception as e:
-                    logger.error(f"Error processing message action: {e}", exc_info=True)
-
-    async def perform_ai_check(
-        self,
-        message: interactions.Message,
-        post: Union[interactions.ThreadChannel, interactions.GuildChannel],
-        referenced_message: interactions.Message,
-    ) -> Optional[ActionDetails]:
-        """
-        Similar to ai_check_message_action but handles Message context instead of Component/Slash context.
-        """
-        await message.channel.send(
-            "Please use message context menu `Message in Thread` instead! This command is currently still in development.",
-            ephemeral=True,
-        )
-        return None
-
-        try:
-            await asyncio.shield(message.delete())
-
-            channel_id = (
-                message.channel.parent_id
-                if isinstance(message.channel, interactions.ThreadChannel)
-                else message.channel.id
-            )
-
-            if channel_id == 1151301324143603712:
-                return None
-
-            if not (self.model.groq_api_key and self.groq_client):
-                await message.channel.send(
-                    embeds=[
-                        await self.create_embed(
-                            title="Error",
-                            description="The AI service is not configured.",
-                            color=EmbedColor.ERROR,
-                        )
-                    ],
-                    delete_after=5,
-                )
-                return None
-
-            if referenced_message.author.bot:
-                await message.channel.send(
-                    embeds=[
-                        await self.create_embed(
-                            title="Error",
-                            description="Bot messages cannot be checked for abuse.",
-                            color=EmbedColor.ERROR,
-                        )
-                    ],
-                    delete_after=5,
-                )
-                return None
-
-            if datetime.now(timezone.utc) - referenced_message.created_at > timedelta(
-                days=1
-            ):
-                await message.channel.send(
-                    embeds=[
-                        await self.create_embed(
-                            title="Error",
-                            description="Messages older than 1 day cannot be checked.",
-                            color=EmbedColor.ERROR,
-                        )
-                    ],
-                    delete_after=5,
-                )
-                return None
-
-            if isinstance(
-                post, (interactions.ThreadChannel, interactions.GuildChannel)
-            ):
-                try:
-                    target_channel = getattr(post, "parent_channel", post)
-                    if member_perms := target_channel.permissions_for(
-                        referenced_message.author
-                    ):
-                        if not (member_perms & interactions.Permissions.SEND_MESSAGES):
-                            await message.channel.send(
-                                embeds=[
-                                    await self.create_embed(
-                                        title="Error",
-                                        description=f"{referenced_message.author.mention} is currently timed out and cannot be checked for additional violations.",
-                                        color=EmbedColor.ERROR,
-                                    )
-                                ],
-                                delete_after=5,
-                            )
-                            return None
-                except Exception as e:
-                    logger.error(
-                        f"Error checking user timeout status: {e}", exc_info=True
-                    )
-
-            if isinstance(post, interactions.ThreadChannel):
-                if (
-                    referenced_message.author.id == post.owner_id
-                    or await self.can_manage_post(post, referenced_message.author)
-                ):
-                    await message.channel.send(
-                        embeds=[
-                            await self.create_embed(
-                                title="Error",
-                                description="Cannot perform AI check on messages from thread owners or users with management permissions.",
-                                color=EmbedColor.ERROR,
-                            )
-                        ],
-                        delete_after=5,
-                    )
-                    return None
-
+        action_set = frozenset(("del", "pin", "unpin"))
+        if content in action_set:
             try:
-                message_author = await message.guild.fetch_member(message.author.id)
-            except NotFound:
-                logger.error("NotFound member.")
-                return None
+                if not isinstance(msg.channel, interactions.ThreadChannel):
+                    return
+
+                if not await self.can_manage_message(msg.channel, msg.author):
+                    return
+
+                await asyncio.shield(msg.delete())
+
+                if content == "del":
+                    await self.delete_message_action(msg, msg.channel, referenced_message)
+                elif content == "pin":
+                    await self.pin_message_action(msg, msg.channel, referenced_message, True)
+                elif content == "unpin":
+                    await self.pin_message_action(msg, msg.channel, referenced_message, False)
+
             except Exception as e:
-                logger.error(f"Error fetching message or member: {e}", exc_info=True)
-                return None
-
-            ai_cache_key = f"ai_check_{referenced_message.id}"
-            try:
-                if cached := self.url_cache.get(ai_cache_key):
-                    await message.channel.send(
-                        embeds=[
-                            await self.create_embed(
-                                title="Error",
-                                description=f"This message has already been checked by {'you' if cached['checker_id'] == message_author.id else 'another user'}.",
-                                color=EmbedColor.ERROR,
-                            )
-                        ],
-                        delete_after=5,
-                    )
-                    return None
-            except Exception:
-                pass
-
-            self.url_cache[ai_cache_key] = {
-                "timestamp": datetime.now(timezone.utc),
-                "checker_id": message_author.id,
-            }
-
-            messages = [
-                f"Caller: <@{message_author.id}>",
-                f"Author: <@{referenced_message.author.id}>",
-            ]
-
-            history_messages = []
-            async for msg in message.channel.history(
-                limit=15, before=referenced_message.id + 1
-            ):
-                history_messages.append(msg)
-
-            caller_found = next(
-                (
-                    True
-                    for msg in history_messages
-                    if msg.author.id == message_author.id
-                ),
-                False,
-            )
-            messages.append(
-                "Note: "
-                + (
-                    "No direct interaction history found"
-                    if not caller_found
-                    else "Direct interaction history present"
-                )
-            )
-
-            messages.append("History:")
-            for msg in reversed(history_messages):
-                messages.append(
-                    f"<@{msg.author.id}>: {next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author.id == message_author.id, msg.id == referenced_message.id, msg.author.id == referenced_message.author.id, True]) if cond)}{msg.content}{next(('<<<', '|||', '***', '+++')[i] for i, cond in enumerate([msg.author.id == message_author.id, msg.id == referenced_message.id, msg.author.id == referenced_message.author.id, True]) if cond)}"
-                )
-
-            image_attachments = [
-                att
-                for att in referenced_message.attachments
-                if att.content_type and att.content_type.startswith("image/")
-            ]
-
-            if not (referenced_message.content or image_attachments):
-                await message.channel.send(
-                    embeds=[
-                        await self.create_embed(
-                            title="Error",
-                            description="No content or images to check.",
-                            color=EmbedColor.ERROR,
-                        )
-                    ],
-                    delete_after=5,
-                )
-                return None
-
-            user_message = "\n".join(messages)
-
-            models = []
-
-            if not image_attachments:
-                models.extend(
-                    [
-                        {
-                            "name": "llama-3.3-70b-versatile",
-                            "rpm": 30,
-                            "rpd": 1000,
-                            "tpm": 6000,
-                            "tpd": 500000,
-                        },
-                        {
-                            "name": "gemma2-9b-it",
-                            "rpm": 30,
-                            "rpd": 14400,
-                            "tpm": 15000,
-                            "tpd": 500000,
-                        },
-                    ]
-                )
-
-            models.extend(
-                [
-                    {
-                        "name": "llama-3.2-90b-vision-preview",
-                        "rpm": 15,
-                        "rpd": 3500,
-                        "tpm": 7000,
-                        "tpd": 250000,
-                    },
-                    {
-                        "name": "llama-3.2-11b-vision-preview",
-                        "rpm": 30,
-                        "rpd": 7000,
-                        "tpm": 7000,
-                        "tpd": 500000,
-                    },
-                ]
-            )
-
-            completion = None
-            for model_config in models:
-                model = model_config["name"]
-
-                user_bucket_key = f"rate_limit_{message_author.id}_{model}"
-                if user_bucket_key not in self.url_cache:
-                    self.url_cache[user_bucket_key] = {
-                        "requests": 0,
-                        "tokens": 0,
-                        "last_reset": datetime.now(timezone.utc),
-                    }
-
-                guild_bucket_key = f"rate_limit_{message.guild.id}_{model}"
-                if guild_bucket_key not in self.url_cache:
-                    self.url_cache[guild_bucket_key] = {
-                        "requests": 0,
-                        "tokens": 0,
-                        "last_reset": datetime.now(timezone.utc),
-                    }
-
-                now = datetime.now(timezone.utc)
-                for bucket_key in [user_bucket_key, guild_bucket_key]:
-                    bucket = self.url_cache[bucket_key]
-                    if (now - bucket["last_reset"]).total_seconds() >= 60:
-                        bucket["requests"] = 0
-                        bucket["tokens"] = 0
-                        bucket["last_reset"] = now
-
-                if (
-                    self.url_cache[user_bucket_key]["requests"] >= model_config["rpm"]
-                    or self.url_cache[guild_bucket_key]["requests"]
-                    >= model_config["rpm"]
-                ):
-                    continue
-
-                try:
-                    async with asyncio.timeout(60):
-                        self.model_params["model"] = model
-
-                        if image_attachments:
-                            completion = await self.groq_client.chat.completions.create(
-                                messages=self.AI_VISION_MODERATION_PROMPT
-                                + [
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "text",
-                                                "text": (
-                                                    user_message
-                                                    if isinstance(user_message, str)
-                                                    else orjson.dumps(user_message)
-                                                ),
-                                            },
-                                            {
-                                                "type": "image_url",
-                                                "image_url": {
-                                                    "url": image_attachments[0].url
-                                                },
-                                            },
-                                        ],
-                                    }
-                                ],
-                                **self.model_params,
-                            )
-                        else:
-                            completion = await self.groq_client.chat.completions.create(
-                                messages=self.AI_TEXT_MODERATION_PROMPT
-                                + [
-                                    {
-                                        "role": "user",
-                                        "content": (
-                                            user_message
-                                            if isinstance(user_message, str)
-                                            else orjson.dumps(user_message)
-                                        ),
-                                    }
-                                ],
-                                **self.model_params,
-                            )
-
-                        for bucket_key in [user_bucket_key, guild_bucket_key]:
-                            self.url_cache[bucket_key]["requests"] += (
-                                1 if not image_attachments else 2
-                            )
-                            self.url_cache[bucket_key][
-                                "tokens"
-                            ] += completion.usage.total_tokens
-
-                        break
-
-                except asyncio.TimeoutError:
-                    continue
-                except Exception as e:
-                    logger.error(f"Error with model {model}: {e}", exc_info=True)
-                    continue
-            else:
-                logger.error(f"AI analysis failed for message {referenced_message.id}")
-                await message.channel.send(
-                    embeds=[
-                        await self.create_embed(
-                            title="Error",
-                            description="AI service request failed. Please try again later.",
-                            color=EmbedColor.ERROR,
-                        )
-                    ],
-                    delete_after=5,
-                )
-                return None
-
-            response_content = completion.choices[0].message.content.strip()
-            try:
-                response_json = orjson.loads(response_content)
-                severity_score = str(response_json.get("severity_score", "N/A"))
-                key_concerns = response_json.get("key_concerns", [])
-                if not key_concerns:
-                    key_concerns = [
-                        {
-                            "type": "No specific concerns",
-                            "evidence": "N/A",
-                            "impact": "N/A",
-                            "context": "N/A",
-                        }
-                    ]
-                for concern in key_concerns:
-                    concern["type"] = " ".join(
-                        word.capitalize() for word in concern["type"].split("_")
-                    )
-                pattern_analysis = response_json.get(
-                    "pattern_analysis", "No pattern analysis provided"
-                )
-                reasoning = response_json.get("reasoning", "No reasoning provided")
-            except Exception as e:
-                logger.error(f"Error parsing AI response JSON: {e}", exc_info=True)
-                severity_score = "N/A"
-                key_concerns = [
-                    {
-                        "type": "No specific concerns",
-                        "evidence": "N/A",
-                        "impact": "N/A",
-                        "context": "N/A",
-                    }
-                ]
-                pattern_analysis = "No pattern analysis provided"
-                reasoning = "No reasoning provided"
-
-            concerns_text = []
-            for concern in key_concerns:
-                concerns_text.append(f'    - {concern["type"]}')
-                concerns_text.append(f'        - Evidence: {concern["evidence"]}')
-                concerns_text.append(f'        - Impact: {concern["impact"]}')
-                concerns_text.append(f'        - Context: {concern["context"]}')
-
-            formatted_response = f"""
-    1. Severity Score: {severity_score}
-    2. Key Concerns:
-    {chr(10).join(concerns_text)}
-    3. Pattern Analysis: {pattern_analysis}
-    4. Reasoning: {reasoning}
-    """
-
-            ai_response = "\n".join(
-                line for line in formatted_response.splitlines() if line.strip()
-            )
-
-            score = next(
-                (
-                    int(m.group(1))
-                    for m in [re.search(r"Severity Score:\s*(\d+)", ai_response)]
-                    if m
-                ),
-                0,
-            )
-
-            if score >= 8 and not referenced_message.author.bot:
-                self.model.record_violation(post.id)
-                self.model.record_message(post.id)
-
-                timeout_duration = self.model.calculate_timeout_duration(
-                    str(referenced_message.author.id)
-                )
-                await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
-                await self.model.adjust_timeout_cfg()
-
-                if score >= 8:
-                    if score >= 9:
-                        multiplier = 3 if score >= 10 else 2
-                        timeout_duration = min(int(timeout_duration * multiplier), 3600)
-
-                        try:
-                            deny_perms = [
-                                interactions.Permissions.SEND_MESSAGES,
-                                interactions.Permissions.SEND_MESSAGES_IN_THREADS,
-                                interactions.Permissions.SEND_TTS_MESSAGES,
-                                interactions.Permissions.SEND_VOICE_MESSAGES,
-                                interactions.Permissions.ADD_REACTIONS,
-                                interactions.Permissions.ATTACH_FILES,
-                                interactions.Permissions.CREATE_INSTANT_INVITE,
-                                interactions.Permissions.MENTION_EVERYONE,
-                                interactions.Permissions.MANAGE_MESSAGES,
-                                interactions.Permissions.MANAGE_THREADS,
-                                interactions.Permissions.MANAGE_CHANNELS,
-                            ]
-                            forum_perms = [
-                                interactions.Permissions.CREATE_POSTS,
-                                *deny_perms,
-                            ]
-                            target_channel = getattr(post, "parent_channel", post)
-
-                            try:
-                                if hasattr(target_channel, "parent_channel"):
-                                    target_channel = target_channel.parent_channel
-                                    perms = forum_perms
-                                else:
-                                    perms = deny_perms
-
-                                severity = (
-                                    "extreme violation"
-                                    if score >= 10
-                                    else "critical violation"
-                                )
-                                await target_channel.add_permission(
-                                    referenced_message.author,
-                                    deny=perms,
-                                    reason=f"AI detected {severity} - {timeout_duration}s timeout",
-                                )
-
-                                if score >= 10:
-                                    user_data = self.model.timeout_history.get(
-                                        str(referenced_message.author.id), {}
-                                    )
-                                    violation_count = user_data.get(
-                                        "violation_count", 0
-                                    )
-
-                                    if violation_count >= 3:
-                                        global_timeout_duration = min(
-                                            timeout_duration * 2, 3600
-                                        )
-                                        timeout_until = datetime.now(
-                                            timezone.utc
-                                        ) + timedelta(seconds=global_timeout_duration)
-
-                                        try:
-                                            await referenced_message.author.timeout(
-                                                communication_disabled_until=timeout_until,
-                                                reason=f"Multiple severe violations detected - {global_timeout_duration}s global timeout",
-                                            )
-                                        except Exception as e:
-                                            logger.error(
-                                                f"Failed to apply global timeout: {e}"
-                                            )
-
-                                logger.info(
-                                    f"Successfully applied permissions for user {referenced_message.author.id}"
-                                )
-
-                            except Forbidden:
-                                logger.error(
-                                    f"Permission denied when trying to timeout user {referenced_message.author.id}"
-                                )
-                                await message.channel.send(
-                                    embeds=[
-                                        await self.create_embed(
-                                            title="Error",
-                                            description="The bot needs to have enough permissions.",
-                                            color=EmbedColor.ERROR,
-                                        )
-                                    ],
-                                    delete_after=5,
-                                )
-                                return None
-
-                            asyncio.create_task(
-                                self.restore_permissions(
-                                    target_channel,
-                                    referenced_message.author,
-                                    timeout_duration // 60,
-                                )
-                            )
-
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to apply timeout for user {referenced_message.author.id}: {e}",
-                                exc_info=True,
-                            )
-                            await message.channel.send(
-                                embeds=[
-                                    await self.create_embed(
-                                        title="Error",
-                                        description=f"Failed to apply timeout to {referenced_message.author.mention}",
-                                        color=EmbedColor.ERROR,
-                                    )
-                                ],
-                                delete_after=5,
-                            )
-                            return None
-                    else:
-                        warning_message = "Content warning issued for potentially inappropriate content (Score: 8)"
-                        try:
-                            await referenced_message.author.send(warning_message)
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to send DM to user {referenced_message.author.id}: {e}"
-                            )
-
-            embed = await self.create_embed(
-                title="AI Content Check Result",
-                description=(
-                    f"The AI detected potentially offensive content:\n{ai_response}\n"
-                    + (
-                        f"User <@{referenced_message.author.id}> has been temporarily muted for {timeout_duration} seconds."
-                        + (
-                            f" and globally muted for {global_timeout_duration} seconds."
-                            if "global_timeout_duration" in locals()
-                            else ""
-                        )
-                        if score >= 9
-                        else (
-                            "Content has been flagged for review."
-                            if score >= 5
-                            else "No serious violations detected."
-                        )
-                    )
-                ),
-                color=(
-                    EmbedColor.FATAL
-                    if score >= 9
-                    else EmbedColor.WARN if score >= 5 else EmbedColor.INFO
-                ),
-            )
-
-            if score >= 5:
-                msg_link = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{referenced_message.id}"
-                embed.add_field(
-                    name="Message", value=f"[Link]({msg_link})", inline=True
-                )
-                embed.add_field(name="Model", value=model, inline=True)
-
-            await message.channel.send(embed=embed, ephemeral=score < 9)
-
-            return ActionDetails(
-                action=ActionType.CHECK,
-                reason=f"AI content check performed by {message_author.mention}",
-                post_name=post.name,
-                actor=message_author,
-                channel=post if isinstance(post, interactions.ThreadChannel) else None,
-                target=referenced_message.author,
-                additional_info={
-                    "checked_message_id": str(referenced_message.id),
-                    "checked_message_content": (
-                        referenced_message.content[:1000]
-                        if referenced_message.content
-                        else "N/A"
-                    ),
-                    "ai_result": f"\n{ai_response}",
-                    "is_offensive": score >= 9,
-                    "timeout_duration": timeout_duration if score >= 9 else "N/A",
-                    "global_timeout_duration": (
-                        global_timeout_duration
-                        if "global_timeout_duration" in locals()
-                        else "N/A"
-                    ),
-                    "model_used": f"`{model}` ({completion.usage.total_tokens} tokens)",
-                },
-            )
-
-        except Exception as e:
-            logger.error(f"Error in perform_ai_check: {e}", exc_info=True)
-            await message.channel.send(
-                embeds=[
-                    await self.create_embed(
-                        title="Error",
-                        description="An error occurred while processing the AI check.",
-                        color=EmbedColor.ERROR,
-                    )
-                ],
-                delete_after=5,
-            )
-            return None
+                logger.error("Error processing message action: %s", e, exc_info=True)
 
     # Link methods
 
@@ -6647,46 +6112,66 @@ class Threads(interactions.Extension):
 
         content = event.message.content
         modified = False
+        logger.debug(f"Processing links in message: {event.message.id}")
 
         if self.should_process_bilibili_link(event):
+            logger.debug(f"Processing bilibili link for message: {event.message.id}")
             if new_content := await self.bilibili_link(content):
                 if new_content != content:
+                    logger.debug(f"Bilibili link modified in message: {event.message.id}")
                     content, modified = new_content, True
 
         for url in self.URL_PATTERN.findall(content):
+            logger.debug(f"Found URL in message {event.message.id}: {url}")
             try:
                 if not url.startswith("https://discord.com"):
                     try:
+                        logger.debug(f"Attempting to unshorten URL: {url}")
                         unshortened = unalix.unshort_url(url=str(url))
                         if unshortened and unshortened != url:
+                            logger.debug(f"URL unshortened: {url} -> {unshortened}")
                             content = content.replace(url, unshortened)
                             modified = True
-                    except Exception:
+                    except Exception as unshort_error:
+                        logger.debug(f"Failed to unshorten URL {url}: {unshort_error}")
+                        logger.debug(f"Attempting to clear URL: {url}")
                         cleared = unalix.clear_url(url=str(url))
                         if cleared and cleared != url:
+                            logger.debug(f"URL cleared: {url} -> {cleared}")
                             content = content.replace(url, cleared)
                             modified = True
             except Exception as e:
                 logger.exception(f"Failed to process URL {url}: {e}")
 
         if links := {*self.URL_PATTERN.findall(content)}:
+            logger.debug(f"Found {len(links)} unique links in message {event.message.id}")
             rules = self.rules
             try:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 rules_path = os.path.join(script_dir, "scrub_rules.json")
+                logger.debug(f"Loading rules from {rules_path}")
                 async with aiofiles.open(rules_path, "rb") as f:
                     rules = orjson.loads(await f.read())
+                    logger.debug(f"Loaded rules with {len(rules.get('providers', {}))} providers")
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.debug(f"Using default rules: {e}")
 
             for link in links:
+                logger.debug(f"Cleaning URL: {link}")
                 if clean_link := await self.clean_any_url(link, rules):
+                    logger.debug(f"URL cleaned: {link} -> {clean_link}")
                     if await self.should_replace_link(link, clean_link):
+                        logger.debug(f"Replacing URL in content: {link} -> {clean_link}")
                         content = content.replace(link, clean_link)
                         modified = True
+                else:
+                    logger.debug(f"URL not cleaned: {link}")
 
         if modified:
+            logger.info(f"Content modified for message {event.message.id}, handling modified content")
             await self.handle_modified_content(event.message, content)
+        else:
+            logger.debug(f"No modifications needed for message {event.message.id}")
 
     @staticmethod
     async def should_replace_link(
@@ -6695,21 +6180,25 @@ class Threads(interactions.Extension):
         if not cleaned:
             return False
         length_diff = abs(len(original) - len(cleaned))
-        return length_diff >= threshold and original.lower() not in (
+        result = length_diff >= threshold and original.lower() not in (
             cleaned.lower(),
             unquote(cleaned).lower(),
         )
+        logger.debug(f"should_replace_link: {original} -> {cleaned}, diff={length_diff}, result={result}")
+        return result
 
     async def handle_modified_content(
         self, message: interactions.Message, new_content: str
     ) -> None:
         try:
+            logger.debug(f"Creating embed for modified content in message {message.id}")
             embed = await self.create_embed(
                 title="Link Cleaned",
                 description=f"The link you sent may expose your ID. To protect the privacy of members, sending such links is prohibited. Your message has been cleaned. Here is the new content: {new_content}.",
                 color=EmbedColor.WARN,
             )
             try:
+                logger.debug(f"Sending DM to user {message.author.id}")
                 await message.author.send(embeds=[embed])
             except Exception as e:
                 logger.exception(f"Failed to DM {message.author.mention}: {e}")
@@ -6718,11 +6207,13 @@ class Threads(interactions.Extension):
             thread_id = (
                 channel.id if isinstance(channel, interactions.ThreadChannel) else None
             )
+            logger.debug(f"Creating webhook in channel {channel.id}, thread_id={thread_id}")
             webhook = await (
                 channel.parent_channel if thread_id else channel
             ).create_webhook(name="Link Webhook")
 
             try:
+                logger.debug(f"Sending webhook message with cleaned content")
                 await webhook.send(
                     content=new_content,
                     username=message.author.display_name,
@@ -6730,11 +6221,14 @@ class Threads(interactions.Extension):
                     thread=thread_id,
                 )
                 try:
+                    logger.debug(f"Deleting original message {message.id}")
                     await message.delete()
                 except NotFound:
+                    logger.debug(f"Message {message.id} already deleted")
                     pass
             finally:
                 with contextlib.suppress(Exception):
+                    logger.debug(f"Cleaning up webhook")
                     await webhook.delete()
 
         except Exception as e:
@@ -6743,26 +6237,35 @@ class Threads(interactions.Extension):
     async def clean_any_url(
         self, url: str, rules: dict, loop: bool = True
     ) -> Optional[str]:
-        for provider in rules.get("providers", {}).values():
+        logger.debug(f"clean_any_url: Processing {url}, loop={loop}")
+        for provider_name, provider in rules.get("providers", {}).items():
             if not re.match(provider["urlPattern"], url, re.IGNORECASE):
                 continue
 
+            logger.debug(f"URL matches provider: {provider_name}")
+            
             if provider.get("completeProvider"):
+                logger.debug(f"Provider {provider_name} is marked as complete provider, skipping")
                 return None
 
             if any(
                 re.match(exc, url, re.IGNORECASE)
                 for exc in provider.get("exceptions", [])
             ):
+                logger.debug(f"URL matches exception pattern for provider {provider_name}")
                 continue
 
             if cleaned_url := await self.handle_redirections(url, provider, loop):
+                logger.debug(f"URL after redirection handling: {url} -> {cleaned_url}")
                 url = cleaned_url
             else:
+                logger.debug(f"Redirection handling returned None for {url}")
                 return None
 
             parsed_url = urlparse(url)
+            logger.debug(f"Parsed URL: {parsed_url}")
             query_params = await self.clean_query_params(parsed_url.query, provider)
+            logger.debug(f"Cleaned query params: {query_params}")
             url = urlunparse(
                 (
                     parsed_url.scheme,
@@ -6773,64 +6276,84 @@ class Threads(interactions.Extension):
                     parsed_url.fragment,
                 )
             )
+            logger.debug(f"URL after query cleaning: {url}")
 
             for rule in provider.get("rawRules", []):
+                old_url = url
                 url = re.sub(rule, "", url)
+                if old_url != url:
+                    logger.debug(f"Applied raw rule: {rule}, result: {url}")
 
+        logger.debug(f"Final cleaned URL: {url}")
         return url
 
     async def handle_redirections(
         self, url: str, provider: dict, loop: bool
     ) -> Optional[str]:
+        logger.debug(f"handle_redirections: Processing {url}, loop={loop}")
         if not self.rules:
             try:
+                logger.debug("Loading rules from file")
                 async with aiofiles.open(
                     os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
                 ) as f:
                     self.rules = orjson.loads(await f.read())
+                    logger.debug(f"Loaded rules with {len(self.rules.get('providers', {}))} providers")
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.error(f"Failed to load rules.json: {e}")
                 return url
 
         for redir in provider.get("redirections", []):
             try:
+                logger.debug(f"Checking redirection pattern: {redir}")
                 if match := re.match(redir, url, re.IGNORECASE | re.MULTILINE):
+                    logger.debug(f"URL matches redirection pattern: {redir}")
                     if group := match.group(1):
                         unquoted = unquote(group)
-                        return (
-                            await self.clean_any_url(unquoted, self.rules, False)
-                            if loop
-                            else unquoted
-                        )
-            except (IndexError, AttributeError):
+                        logger.debug(f"Extracted and unquoted redirect target: {unquoted}")
+                        if loop:
+                            logger.debug(f"Recursively cleaning redirect target")
+                            return await self.clean_any_url(unquoted, self.rules, False)
+                        else:
+                            return unquoted
+            except (IndexError, AttributeError) as e:
                 logger.warning(
-                    f"Redirect target match failed: {redir}",
+                    f"Redirect target match failed: {redir}, error: {e}",
                     extra={"url": url, "pattern": redir},
                 )
 
+        logger.debug(f"No redirections applied, returning original URL: {url}")
         return url
 
     @staticmethod
     async def clean_query_params(query: str, provider: dict) -> List[Tuple[str, str]]:
         params = parse_qsl(query)
+        logger.debug(f"Original query params: {params}")
         rules = [*provider.get("rules", []), *provider.get("referralMarketing", [])]
-        return [
+        logger.debug(f"Applying {len(rules)} query param rules")
+        
+        result = [
             (k, v)
             for k, v in params
             if not any(re.match(rule, k, re.IGNORECASE) for rule in rules)
         ]
+        
+        logger.debug(f"Cleaned query params: {result}")
+        return result
 
     def should_process_any_link(self, event: MessageCreate) -> bool:
-        return (
+        result = (
             event.message.guild
             and event.message.guild.id == self.GUILD_ID
             and not event.message.author.bot
             and isinstance(event.message.channel, interactions.ThreadChannel)
             and bool(event.message.content)
         )
+        logger.debug(f"should_process_any_link for message {event.message.id}: {result}")
+        return result
 
     def should_process_bilibili_link(self, event: MessageCreate) -> bool:
-        return bool(
+        result = bool(
             (guild := event.message.guild)
             and (member := guild.get_member(event.message.author.id))
             and guild.id == self.GUILD_ID
@@ -6839,17 +6362,26 @@ class Threads(interactions.Extension):
                 (True for role in member.roles if role.id == self.TAIWAN_ROLE_ID), False
             )
         )
+        logger.debug(f"should_process_bilibili_link for message {event.message.id}: {result}")
+        return result
 
     @functools.lru_cache(maxsize=1024)
     async def bilibili_link(self, content: str) -> str:
+        logger.debug(f"Processing bilibili links in content: {content[:50]}...")
+        
         def sanitize_url(
             url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
         ) -> str:
+            logger.debug(f"Sanitizing URL: {url_str}, preserving params: {preserve_params}")
             u = URL(url_str)
             query_params = frozenset(u.query.keys())
-            return str(
-                u.with_query({k: u.query[k] for k in preserve_params & query_params})
+            preserved = preserve_params & query_params
+            logger.debug(f"Preserving query params: {preserved}")
+            result = str(
+                u.with_query({k: u.query[k] for k in preserved})
             )
+            logger.debug(f"Sanitized URL: {result}")
+            return result
 
         patterns = [
             (
@@ -6864,8 +6396,10 @@ class Threads(interactions.Extension):
                 ),
             )
         ]
+        
+        logger.debug(f"Using {len(patterns)} patterns for bilibili link processing")
 
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             lambda: re.sub(
                 r"https?://\S+",
                 lambda m: next(
@@ -6880,6 +6414,13 @@ class Threads(interactions.Extension):
                 flags=re.IGNORECASE,
             )
         )
+        
+        if result != content:
+            logger.debug(f"Bilibili link processing changed content")
+        else:
+            logger.debug(f"No bilibili links modified")
+            
+        return result
 
     module_group_scrub: interactions.SlashCommand = module_base.group(
         name="scrub",
