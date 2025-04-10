@@ -6133,21 +6133,7 @@ class Threads(interactions.Extension):
         for url in urls:
             logger.debug(f"Found URL in message {event.message.id}: {url}")
             try:
-                if "youtube.com/shorts" in url:
-                    logger.debug(f"YouTube Shorts URL detected: {url}")
-                    try:
-                        if unshortened := unalix.unshort_url(url=str(url)):
-                            if unshortened != url:
-                                logger.debug(
-                                    f"YouTube Shorts URL unshortened: {url} -> {unshortened}"
-                                )
-                                content = content.replace(url, unshortened)
-                                modified = True
-                    except Exception as yt_error:
-                        logger.debug(
-                            f"Failed to process YouTube Shorts URL {url}: {yt_error}"
-                        )
-                elif not url.startswith("https://discord.com"):
+                if not url.startswith("https://discord.com"):
                     try:
                         if unshortened := unalix.unshort_url(url=str(url)):
                             if unshortened != url:
@@ -6166,33 +6152,33 @@ class Threads(interactions.Extension):
             except Exception as e:
                 logger.exception(f"Failed to process URL {url}: {e}")
 
-        unique_links = {*self.URL_PATTERN.findall(content)}
-        if unique_links:
-            logger.debug(
-                f"Found {len(unique_links)} unique links in message {event.message.id}"
-            )
+        # unique_links = {*self.URL_PATTERN.findall(content)}
+        # if unique_links:
+        #     logger.debug(
+        #         f"Found {len(unique_links)} unique links in message {event.message.id}"
+        #     )
 
-            try:
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                rules_path = os.path.join(script_dir, "scrub_rules.json")
+        #     try:
+        #         script_dir = os.path.dirname(os.path.abspath(__file__))
+        #         rules_path = os.path.join(script_dir, "scrub_rules.json")
 
-                async with aiofiles.open(rules_path, "rb") as f:
-                    rules = orjson.loads(await f.read())
-                    logger.debug(
-                        f"Loaded rules with {len(rules.get('providers', {}))} providers"
-                    )
-            except (FileNotFoundError, orjson.JSONDecodeError) as e:
-                logger.debug(f"Using default rules: {e}")
-                rules = self.rules
+        #         async with aiofiles.open(rules_path, "rb") as f:
+        #             rules = orjson.loads(await f.read())
+        #             logger.debug(
+        #                 f"Loaded rules with {len(rules.get('providers', {}))} providers"
+        #             )
+        #     except (FileNotFoundError, orjson.JSONDecodeError) as e:
+        #         logger.debug(f"Using default rules: {e}")
+        #         rules = self.rules
 
-            for link in unique_links:
-                if "youtube.com/shorts" in link:
-                    continue
+        #     for link in unique_links:
+        #         if "youtube.com/shorts" in link:
+        #             continue
 
-                if clean_link := await self.clean_any_url(link, rules):
-                    if await self.should_replace_link(link, clean_link):
-                        content = content.replace(link, clean_link)
-                        modified = True
+        #         if clean_link := await self.clean_any_url(link, rules):
+        #             if await self.should_replace_link(link, clean_link):
+        #                 content = content.replace(link, clean_link)
+        #                 modified = True
 
         if modified:
             logger.info(
@@ -6327,18 +6313,18 @@ class Threads(interactions.Extension):
     ) -> Optional[str]:
         logger.debug(f"handle_redirections: Processing {url}, loop={loop}")
         if not self.rules:
-            try:
-                logger.debug("Loading rules from file")
-                async with aiofiles.open(
-                    os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
-                ) as f:
-                    self.rules = orjson.loads(await f.read())
-                    logger.debug(
-                        f"Loaded rules with {len(self.rules.get('providers', {}))} providers"
-                    )
-            except (FileNotFoundError, orjson.JSONDecodeError) as e:
-                logger.error(f"Failed to load rules.json: {e}")
-                return url
+            # try:
+            #     logger.debug("Loading rules from file")
+            #     async with aiofiles.open(
+            #         os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
+            #     ) as f:
+            #         self.rules = orjson.loads(await f.read())
+            #         logger.debug(
+            #             f"Loaded rules with {len(self.rules.get('providers', {}))} providers"
+            #         )
+            # except (FileNotFoundError, orjson.JSONDecodeError) as e:
+            #     logger.error(f"Failed to load rules.json: {e}")
+            return url
 
         for redir in provider.get("redirections", []):
             try:
