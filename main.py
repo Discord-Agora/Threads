@@ -7,10 +7,10 @@ import hashlib
 import io
 import logging
 import os
-import time
 import random
 import re
 import secrets
+import time
 import traceback
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -53,11 +53,11 @@ from interactions.api.events import (
     ExtensionLoad,
     ExtensionUnload,
     MessageCreate,
+    MessageDelete,
     MessageReactionAdd,
     MessageReactionRemove,
     NewThreadCreate,
     ThreadUpdate,
-    MessageDelete,
 )
 from interactions.client.errors import (
     Forbidden,
@@ -2163,7 +2163,7 @@ class Threads(interactions.Extension):
                 if last_message.timestamp:
                     last_active_time = last_message.timestamp.timestamp()
                     if (
-                            time.time() - last_active_time
+                        time.time() - last_active_time
                     ) >= INACTIVITY_THRESHOLD.total_seconds():
                         await thread.edit(archived=True, reason="Inactivity")
                         logger.info(
@@ -6094,11 +6094,17 @@ class Threads(interactions.Extension):
                 await asyncio.shield(msg.delete())
 
                 if content == "del":
-                    await self.delete_message_action(msg, msg.channel, referenced_message)
+                    await self.delete_message_action(
+                        msg, msg.channel, referenced_message
+                    )
                 elif content == "pin":
-                    await self.pin_message_action(msg, msg.channel, referenced_message, True)
+                    await self.pin_message_action(
+                        msg, msg.channel, referenced_message, True
+                    )
                 elif content == "unpin":
-                    await self.pin_message_action(msg, msg.channel, referenced_message, False)
+                    await self.pin_message_action(
+                        msg, msg.channel, referenced_message, False
+                    )
 
             except Exception as e:
                 logger.error("Error processing message action: %s", e, exc_info=True)
@@ -6118,60 +6124,81 @@ class Threads(interactions.Extension):
             logger.debug(f"Processing bilibili link for message: {event.message.id}")
             if new_content := await self.bilibili_link(content):
                 if new_content != content:
-                    logger.debug(f"Bilibili link modified in message: {event.message.id}")
+                    logger.debug(
+                        f"Bilibili link modified in message: {event.message.id}"
+                    )
                     content, modified = new_content, True
 
-        for url in self.URL_PATTERN.findall(content):
+        urls = self.URL_PATTERN.findall(content)
+        for url in urls:
             logger.debug(f"Found URL in message {event.message.id}: {url}")
             try:
-                if not url.startswith("https://discord.com"):
+                if "youtube.com/shorts" in url:
+                    logger.debug(f"YouTube Shorts URL detected: {url}")
                     try:
-                        logger.debug(f"Attempting to unshorten URL: {url}")
-                        unshortened = unalix.unshort_url(url=str(url))
-                        if unshortened and unshortened != url:
-                            logger.debug(f"URL unshortened: {url} -> {unshortened}")
-                            content = content.replace(url, unshortened)
-                            modified = True
-                    except Exception as unshort_error:
-                        logger.debug(f"Failed to unshorten URL {url}: {unshort_error}")
-                        logger.debug(f"Attempting to clear URL: {url}")
-                        cleared = unalix.clear_url(url=str(url))
-                        if cleared and cleared != url:
-                            logger.debug(f"URL cleared: {url} -> {cleared}")
-                            content = content.replace(url, cleared)
-                            modified = True
+                        if unshortened := unalix.unshort_url(url=str(url)):
+                            if unshortened != url:
+                                logger.debug(
+                                    f"YouTube Shorts URL unshortened: {url} -> {unshortened}"
+                                )
+                                content = content.replace(url, unshortened)
+                                modified = True
+                    except Exception as yt_error:
+                        logger.debug(
+                            f"Failed to process YouTube Shorts URL {url}: {yt_error}"
+                        )
+                elif not url.startswith("https://discord.com"):
+                    try:
+                        if unshortened := unalix.unshort_url(url=str(url)):
+                            if unshortened != url:
+                                logger.debug(f"URL unshortened: {url} -> {unshortened}")
+                                content = content.replace(url, unshortened)
+                                modified = True
+                    except Exception:
+                        try:
+                            if cleared := unalix.clear_url(url=str(url)):
+                                if cleared != url:
+                                    logger.debug(f"URL cleared: {url} -> {cleared}")
+                                    content = content.replace(url, cleared)
+                                    modified = True
+                        except Exception as e:
+                            logger.debug(f"Failed to clear URL {url}: {e}")
             except Exception as e:
                 logger.exception(f"Failed to process URL {url}: {e}")
 
-        if links := {*self.URL_PATTERN.findall(content)}:
-            logger.debug(f"Found {len(links)} unique links in message {event.message.id}")
-            rules = self.rules
+        unique_links = {*self.URL_PATTERN.findall(content)}
+        if unique_links:
+            logger.debug(
+                f"Found {len(unique_links)} unique links in message {event.message.id}"
+            )
+
             try:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 rules_path = os.path.join(script_dir, "scrub_rules.json")
-                logger.debug(f"Loading rules from {rules_path}")
+
                 async with aiofiles.open(rules_path, "rb") as f:
                     rules = orjson.loads(await f.read())
-                    logger.debug(f"Loaded rules with {len(rules.get('providers', {}))} providers")
+                    logger.debug(
+                        f"Loaded rules with {len(rules.get('providers', {}))} providers"
+                    )
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.debug(f"Using default rules: {e}")
+                rules = self.rules
 
-            for link in links:
-                logger.debug(f"Cleaning URL: {link}")
+            for link in unique_links:
+                if "youtube.com/shorts" in link:
+                    continue
+
                 if clean_link := await self.clean_any_url(link, rules):
-                    logger.debug(f"URL cleaned: {link} -> {clean_link}")
                     if await self.should_replace_link(link, clean_link):
-                        logger.debug(f"Replacing URL in content: {link} -> {clean_link}")
                         content = content.replace(link, clean_link)
                         modified = True
-                else:
-                    logger.debug(f"URL not cleaned: {link}")
 
         if modified:
-            logger.info(f"Content modified for message {event.message.id}, handling modified content")
+            logger.info(
+                f"Content modified for message {event.message.id}, handling modified content"
+            )
             await self.handle_modified_content(event.message, content)
-        else:
-            logger.debug(f"No modifications needed for message {event.message.id}")
 
     @staticmethod
     async def should_replace_link(
@@ -6184,7 +6211,9 @@ class Threads(interactions.Extension):
             cleaned.lower(),
             unquote(cleaned).lower(),
         )
-        logger.debug(f"should_replace_link: {original} -> {cleaned}, diff={length_diff}, result={result}")
+        logger.debug(
+            f"should_replace_link: {original} -> {cleaned}, diff={length_diff}, result={result}"
+        )
         return result
 
     async def handle_modified_content(
@@ -6207,7 +6236,9 @@ class Threads(interactions.Extension):
             thread_id = (
                 channel.id if isinstance(channel, interactions.ThreadChannel) else None
             )
-            logger.debug(f"Creating webhook in channel {channel.id}, thread_id={thread_id}")
+            logger.debug(
+                f"Creating webhook in channel {channel.id}, thread_id={thread_id}"
+            )
             webhook = await (
                 channel.parent_channel if thread_id else channel
             ).create_webhook(name="Link Webhook")
@@ -6243,16 +6274,20 @@ class Threads(interactions.Extension):
                 continue
 
             logger.debug(f"URL matches provider: {provider_name}")
-            
+
             if provider.get("completeProvider"):
-                logger.debug(f"Provider {provider_name} is marked as complete provider, skipping")
+                logger.debug(
+                    f"Provider {provider_name} is marked as complete provider, skipping"
+                )
                 return None
 
             if any(
                 re.match(exc, url, re.IGNORECASE)
                 for exc in provider.get("exceptions", [])
             ):
-                logger.debug(f"URL matches exception pattern for provider {provider_name}")
+                logger.debug(
+                    f"URL matches exception pattern for provider {provider_name}"
+                )
                 continue
 
             if cleaned_url := await self.handle_redirections(url, provider, loop):
@@ -6298,7 +6333,9 @@ class Threads(interactions.Extension):
                     os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
                 ) as f:
                     self.rules = orjson.loads(await f.read())
-                    logger.debug(f"Loaded rules with {len(self.rules.get('providers', {}))} providers")
+                    logger.debug(
+                        f"Loaded rules with {len(self.rules.get('providers', {}))} providers"
+                    )
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.error(f"Failed to load rules.json: {e}")
                 return url
@@ -6310,7 +6347,9 @@ class Threads(interactions.Extension):
                     logger.debug(f"URL matches redirection pattern: {redir}")
                     if group := match.group(1):
                         unquoted = unquote(group)
-                        logger.debug(f"Extracted and unquoted redirect target: {unquoted}")
+                        logger.debug(
+                            f"Extracted and unquoted redirect target: {unquoted}"
+                        )
                         if loop:
                             logger.debug(f"Recursively cleaning redirect target")
                             return await self.clean_any_url(unquoted, self.rules, False)
@@ -6331,13 +6370,13 @@ class Threads(interactions.Extension):
         logger.debug(f"Original query params: {params}")
         rules = [*provider.get("rules", []), *provider.get("referralMarketing", [])]
         logger.debug(f"Applying {len(rules)} query param rules")
-        
+
         result = [
             (k, v)
             for k, v in params
             if not any(re.match(rule, k, re.IGNORECASE) for rule in rules)
         ]
-        
+
         logger.debug(f"Cleaned query params: {result}")
         return result
 
@@ -6349,7 +6388,9 @@ class Threads(interactions.Extension):
             and isinstance(event.message.channel, interactions.ThreadChannel)
             and bool(event.message.content)
         )
-        logger.debug(f"should_process_any_link for message {event.message.id}: {result}")
+        logger.debug(
+            f"should_process_any_link for message {event.message.id}: {result}"
+        )
         return result
 
     def should_process_bilibili_link(self, event: MessageCreate) -> bool:
@@ -6362,24 +6403,26 @@ class Threads(interactions.Extension):
                 (True for role in member.roles if role.id == self.TAIWAN_ROLE_ID), False
             )
         )
-        logger.debug(f"should_process_bilibili_link for message {event.message.id}: {result}")
+        logger.debug(
+            f"should_process_bilibili_link for message {event.message.id}: {result}"
+        )
         return result
 
     @functools.lru_cache(maxsize=1024)
     async def bilibili_link(self, content: str) -> str:
         logger.debug(f"Processing bilibili links in content: {content[:50]}...")
-        
+
         def sanitize_url(
             url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
         ) -> str:
-            logger.debug(f"Sanitizing URL: {url_str}, preserving params: {preserve_params}")
+            logger.debug(
+                f"Sanitizing URL: {url_str}, preserving params: {preserve_params}"
+            )
             u = URL(url_str)
             query_params = frozenset(u.query.keys())
             preserved = preserve_params & query_params
             logger.debug(f"Preserving query params: {preserved}")
-            result = str(
-                u.with_query({k: u.query[k] for k in preserved})
-            )
+            result = str(u.with_query({k: u.query[k] for k in preserved}))
             logger.debug(f"Sanitized URL: {result}")
             return result
 
@@ -6396,7 +6439,7 @@ class Threads(interactions.Extension):
                 ),
             )
         ]
-        
+
         logger.debug(f"Using {len(patterns)} patterns for bilibili link processing")
 
         result = await asyncio.to_thread(
@@ -6414,12 +6457,12 @@ class Threads(interactions.Extension):
                 flags=re.IGNORECASE,
             )
         )
-        
+
         if result != content:
             logger.debug(f"Bilibili link processing changed content")
         else:
             logger.debug(f"No bilibili links modified")
-            
+
         return result
 
     module_group_scrub: interactions.SlashCommand = module_base.group(
