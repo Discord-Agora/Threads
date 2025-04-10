@@ -2130,7 +2130,12 @@ class Threads(interactions.Extension):
             if thread.last_message_id:
                 try:
                     last_message = await thread.fetch_message(thread.last_message_id)
-                    if (current_time - last_message.created_at) >= INACTIVITY_THRESHOLD:
+                    if (
+                        last_message
+                        and last_message.created_at
+                        and (current_time - last_message.created_at)
+                        >= INACTIVITY_THRESHOLD
+                    ):
                         await thread.edit(archived=True, reason="Inactivity")
                         logger.info(
                             f"Thread {thread.id} archived due to inactivity (last_message_id)"
@@ -2153,22 +2158,16 @@ class Threads(interactions.Extension):
 
                 last_message = messages[0]
 
-                if (current_time - last_message.created_at) >= INACTIVITY_THRESHOLD:
+                if (
+                    last_message
+                    and last_message.created_at
+                    and (current_time - last_message.created_at) >= INACTIVITY_THRESHOLD
+                ):
                     await thread.edit(archived=True, reason="Inactivity")
                     logger.info(
                         f"Thread {thread.id} archived due to inactivity (history timestamp)"
                     )
                     return
-
-                if last_message.timestamp:
-                    last_active_time = last_message.timestamp.timestamp()
-                    if (
-                        time.time() - last_active_time
-                    ) >= INACTIVITY_THRESHOLD.total_seconds():
-                        await thread.edit(archived=True, reason="Inactivity")
-                        logger.info(
-                            f"Thread {thread.id} archived due to inactivity (raw timestamp)"
-                        )
             except asyncio.TimeoutError:
                 logger.debug(f"Timeout fetching history for thread {thread.id}")
             except Exception as e:
@@ -6362,7 +6361,7 @@ class Threads(interactions.Extension):
                     )
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.error(f"Failed to load rules.json: {e}")
-                return url
+            return url
 
         for redir in provider.get("redirections", []):
             try:
