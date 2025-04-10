@@ -6114,91 +6114,116 @@ class Threads(interactions.Extension):
     @interactions.listen(MessageCreate)
     async def on_message_create_for_link(self, event: MessageCreate) -> None:
         if not self.should_process_any_link(event):
+            logger.debug(
+                f"Skipping message {event.message.id} - doesn't meet link processing criteria"
+            )
             return
 
         content = event.message.content
         modified = False
-        logger.debug(f"Processing links in message: {event.message.id}")
+        logger.debug(
+            f"Processing links in message: {event.message.id}, content length: {len(content)}"
+        )
 
         if self.should_process_bilibili_link(event):
             logger.debug(f"Processing bilibili link for message: {event.message.id}")
             if new_content := await self.bilibili_link(content):
                 if new_content != content:
                     logger.debug(
-                        f"Bilibili link modified in message: {event.message.id}"
+                        f"Bilibili link modified in message: {event.message.id}, original length: {len(content)}, new length: {len(new_content)}"
                     )
                     content, modified = new_content, True
 
         urls = self.URL_PATTERN.findall(content)
+        logger.debug(f"Found {len(urls)} URLs in message {event.message.id}")
         for url in urls:
-            logger.debug(f"Found URL in message {event.message.id}: {url}")
+            logger.debug(f"Processing URL in message {event.message.id}: {url}")
             try:
                 if not url.startswith("https://discord.com"):
-                    try:
-                        if unshortened := unalix.unshort_url(url=str(url)):
-                            if unshortened != url:
-                                logger.debug(f"URL unshortened: {url} -> {unshortened}")
-                                content = content.replace(url, unshortened)
-                                modified = True
-                    except Exception:
-                        try:
-                            if cleared := unalix.clear_url(url=str(url)):
-                                if cleared != url:
-                                    logger.debug(f"URL cleared: {url} -> {cleared}")
-                                    content = content.replace(url, cleared)
-                                    modified = True
-                        except Exception as e:
-                            logger.debug(f"Failed to clear URL {url}: {e}")
+                    # try:
+                    #     if unshortened := unalix.unshort_url(url=str(url)):
+                    #         if unshortened != url:
+                    #             logger.debug(f"URL unshortened: {url} -> {unshortened}")
+                    #             content = content.replace(url, unshortened)
+                    #             modified = True
+                    # except Exception:
+                    #     try:
+                    #         if cleared := unalix.clear_url(url=str(url)):
+                    #             if cleared != url:
+                    #                 logger.debug(f"URL cleared: {url} -> {cleared}")
+                    #                 content = content.replace(url, cleared)
+                    #                 modified = True
+                    #     except Exception as e:
+                    #         logger.debug(f"Failed to clear URL {url}: {e}")
+                    logger.debug(f"Skipping URL shortener processing for {url}")
+                    pass
             except Exception as e:
                 logger.exception(f"Failed to process URL {url}: {e}")
 
-        # unique_links = {*self.URL_PATTERN.findall(content)}
-        # if unique_links:
-        #     logger.debug(
-        #         f"Found {len(unique_links)} unique links in message {event.message.id}"
-        #     )
+        unique_links = {*self.URL_PATTERN.findall(content)}
+        if unique_links:
+            logger.debug(
+                f"Found {len(unique_links)} unique links in message {event.message.id}"
+            )
 
-        #     try:
-        #         script_dir = os.path.dirname(os.path.abspath(__file__))
-        #         rules_path = os.path.join(script_dir, "scrub_rules.json")
+            try:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                rules_path = os.path.join(script_dir, "scrub_rules.json")
+                logger.debug(f"Loading rules from {rules_path}")
 
-        #         async with aiofiles.open(rules_path, "rb") as f:
-        #             rules = orjson.loads(await f.read())
-        #             logger.debug(
-        #                 f"Loaded rules with {len(rules.get('providers', {}))} providers"
-        #             )
-        #     except (FileNotFoundError, orjson.JSONDecodeError) as e:
-        #         logger.debug(f"Using default rules: {e}")
-        #         rules = self.rules
+                async with aiofiles.open(rules_path, "rb") as f:
+                    file_content = await f.read()
+                    logger.debug(f"Read {len(file_content)} bytes from rules file")
+                    rules = orjson.loads(file_content)
+                    logger.debug(
+                        f"Loaded rules with {len(rules.get('providers', {}))} providers"
+                    )
+            except (FileNotFoundError, orjson.JSONDecodeError) as e:
+                logger.debug(f"Using default rules due to error: {e}")
+                rules = self.rules
+                logger.debug(
+                    f"Default rules have {len(rules.get('providers', {}))} providers"
+                )
 
-        #     for link in unique_links:
-        #         if "youtube.com/shorts" in link:
-        #             continue
-
-        #         if clean_link := await self.clean_any_url(link, rules):
-        #             if await self.should_replace_link(link, clean_link):
-        #                 content = content.replace(link, clean_link)
-        #                 modified = True
+            for link in unique_links:
+                logger.debug(f"Cleaning link: {link}")
+                if clean_link := await self.clean_any_url(link, rules):
+                    logger.debug(f"Link cleaned: {link} -> {clean_link}")
+                    if await self.should_replace_link(link, clean_link):
+                        logger.debug(
+                            f"Replacing link in content: {link} -> {clean_link}"
+                        )
+                        content = content.replace(link, clean_link)
+                        modified = True
+                else:
+                    logger.debug(f"No cleaning needed for link: {link}")
 
         if modified:
             logger.info(
-                f"Content modified for message {event.message.id}, handling modified content"
+                f"Content modified for message {event.message.id}, original length: {len(event.message.content)}, new length: {len(content)}"
             )
             await self.handle_modified_content(event.message, content)
+        else:
+            logger.debug(f"No modifications needed for message {event.message.id}")
 
     @staticmethod
     async def should_replace_link(
         original: str, cleaned: str, threshold: int = 2
     ) -> bool:
         if not cleaned:
+            logger.debug(f"should_replace_link: cleaned link is empty, not replacing")
             return False
         length_diff = abs(len(original) - len(cleaned))
-        result = length_diff >= threshold and original.lower() not in (
-            cleaned.lower(),
-            unquote(cleaned).lower(),
+        original_lower = original.lower()
+        cleaned_lower = cleaned.lower()
+        unquoted_cleaned_lower = unquote(cleaned).lower()
+
+        result = length_diff >= threshold and original_lower not in (
+            cleaned_lower,
+            unquoted_cleaned_lower,
         )
         logger.debug(
-            f"should_replace_link: {original} -> {cleaned}, diff={length_diff}, result={result}"
+            f"should_replace_link: original={original}, cleaned={cleaned}, diff={length_diff}, result={result}"
         )
         return result
 
@@ -6215,6 +6240,7 @@ class Threads(interactions.Extension):
             try:
                 logger.debug(f"Sending DM to user {message.author.id}")
                 await message.author.send(embeds=[embed])
+                logger.debug(f"Successfully sent DM to user {message.author.id}")
             except Exception as e:
                 logger.exception(f"Failed to DM {message.author.mention}: {e}")
 
@@ -6228,18 +6254,23 @@ class Threads(interactions.Extension):
             webhook = await (
                 channel.parent_channel if thread_id else channel
             ).create_webhook(name="Link Webhook")
+            logger.debug(f"Successfully created webhook in channel {channel.id}")
 
             try:
-                logger.debug(f"Sending webhook message with cleaned content")
+                logger.debug(
+                    f"Sending webhook message with cleaned content of length {len(new_content)}"
+                )
                 await webhook.send(
                     content=new_content,
                     username=message.author.display_name,
                     avatar_url=message.author.avatar_url,
                     thread=thread_id,
                 )
+                logger.debug(f"Successfully sent webhook message")
                 try:
                     logger.debug(f"Deleting original message {message.id}")
                     await message.delete()
+                    logger.debug(f"Successfully deleted original message {message.id}")
                 except NotFound:
                     logger.debug(f"Message {message.id} already deleted")
                     pass
@@ -6247,6 +6278,7 @@ class Threads(interactions.Extension):
                 with contextlib.suppress(Exception):
                     logger.debug(f"Cleaning up webhook")
                     await webhook.delete()
+                    logger.debug(f"Successfully deleted webhook")
 
         except Exception as e:
             logger.exception(f"Failed to handle modified content: {e}")
@@ -6284,9 +6316,13 @@ class Threads(interactions.Extension):
                 return None
 
             parsed_url = urlparse(url)
-            logger.debug(f"Parsed URL: {parsed_url}")
+            logger.debug(
+                f"Parsed URL: scheme={parsed_url.scheme}, netloc={parsed_url.netloc}, path={parsed_url.path[:20]}..."
+            )
             query_params = await self.clean_query_params(parsed_url.query, provider)
-            logger.debug(f"Cleaned query params: {query_params}")
+            logger.debug(
+                f"Cleaned query params: {len(query_params)} parameters remaining"
+            )
             url = urlunparse(
                 (
                     parsed_url.scheme,
@@ -6313,18 +6349,20 @@ class Threads(interactions.Extension):
     ) -> Optional[str]:
         logger.debug(f"handle_redirections: Processing {url}, loop={loop}")
         if not self.rules:
-            # try:
-            #     logger.debug("Loading rules from file")
-            #     async with aiofiles.open(
-            #         os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
-            #     ) as f:
-            #         self.rules = orjson.loads(await f.read())
-            #         logger.debug(
-            #             f"Loaded rules with {len(self.rules.get('providers', {}))} providers"
-            #         )
-            # except (FileNotFoundError, orjson.JSONDecodeError) as e:
-            #     logger.error(f"Failed to load rules.json: {e}")
-            return url
+            try:
+                logger.debug("Loading rules from file")
+                async with aiofiles.open(
+                    os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
+                ) as f:
+                    file_content = await f.read()
+                    logger.debug(f"Read {len(file_content)} bytes from rules file")
+                    self.rules = orjson.loads(file_content)
+                    logger.debug(
+                        f"Loaded rules with {len(self.rules.get('providers', {}))} providers"
+                    )
+            except (FileNotFoundError, orjson.JSONDecodeError) as e:
+                logger.error(f"Failed to load rules.json: {e}")
+                return url
 
         for redir in provider.get("redirections", []):
             try:
@@ -6353,7 +6391,7 @@ class Threads(interactions.Extension):
     @staticmethod
     async def clean_query_params(query: str, provider: dict) -> List[Tuple[str, str]]:
         params = parse_qsl(query)
-        logger.debug(f"Original query params: {params}")
+        logger.debug(f"Original query params: {len(params)} parameters")
         rules = [*provider.get("rules", []), *provider.get("referralMarketing", [])]
         logger.debug(f"Applying {len(rules)} query param rules")
 
@@ -6363,7 +6401,9 @@ class Threads(interactions.Extension):
             if not any(re.match(rule, k, re.IGNORECASE) for rule in rules)
         ]
 
-        logger.debug(f"Cleaned query params: {result}")
+        logger.debug(
+            f"Cleaned query params: {len(result)} parameters remaining out of {len(params)}"
+        )
         return result
 
     def should_process_any_link(self, event: MessageCreate) -> bool:
@@ -6375,28 +6415,36 @@ class Threads(interactions.Extension):
             and bool(event.message.content)
         )
         logger.debug(
-            f"should_process_any_link for message {event.message.id}: {result}"
+            f"should_process_any_link for message {event.message.id}: {result}, guild_id={event.message.guild.id if event.message.guild else None}, is_bot={event.message.author.bot}, channel_type={type(event.message.channel).__name__}, has_content={bool(event.message.content)}"
         )
         return result
 
     def should_process_bilibili_link(self, event: MessageCreate) -> bool:
-        result = bool(
-            (guild := event.message.guild)
-            and (member := guild.get_member(event.message.author.id))
-            and guild.id == self.GUILD_ID
-            and event.message.content
-            and not next(
+        guild = event.message.guild
+        member = guild.get_member(event.message.author.id) if guild else None
+        has_taiwan_role = (
+            next(
                 (True for role in member.roles if role.id == self.TAIWAN_ROLE_ID), False
             )
+            if member
+            else False
+        )
+
+        result = bool(
+            guild
+            and member
+            and guild.id == self.GUILD_ID
+            and event.message.content
+            and not has_taiwan_role
         )
         logger.debug(
-            f"should_process_bilibili_link for message {event.message.id}: {result}"
+            f"should_process_bilibili_link for message {event.message.id}: {result}, guild_id={guild.id if guild else None}, has_member={bool(member)}, has_taiwan_role={has_taiwan_role}, has_content={bool(event.message.content)}"
         )
         return result
 
     @functools.lru_cache(maxsize=1024)
     async def bilibili_link(self, content: str) -> str:
-        logger.debug(f"Processing bilibili links in content: {content[:50]}...")
+        logger.debug(f"Processing bilibili links in content: {content}")
 
         def sanitize_url(
             url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
@@ -6445,9 +6493,11 @@ class Threads(interactions.Extension):
         )
 
         if result != content:
-            logger.debug(f"Bilibili link processing changed content")
+            logger.debug(
+                f"Bilibili link processing changed content: {content} -> {result}"
+            )
         else:
-            logger.debug(f"No bilibili links modified")
+            logger.debug(f"No bilibili links modified in content: {content}")
 
         return result
 
@@ -6469,6 +6519,7 @@ class Threads(interactions.Extension):
                 "https://rules2.clearurls.xyz/data.minify.json",
                 "https://rules1.clearurls.xyz/data.minify.json",
             ]
+            logger.info(f"Attempting to update rules from {len(urls)} sources")
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=10),
                 headers={
@@ -6478,39 +6529,53 @@ class Threads(interactions.Extension):
                 rules = None
                 for url in urls:
                     try:
+                        logger.debug(f"Fetching rules from {url}")
                         async with session.get(url, ssl=False) as response:
                             if response.status == 200:
+                                response_text = await response.text()
+                                logger.debug(
+                                    f"Received {len(response_text)} bytes from {url}"
+                                )
                                 rules = await response.json()
-                                logger.info(f"Successfully updated rules from {url}")
+                                logger.info(
+                                    f"Successfully updated rules from {url} with {len(rules.get('providers', {}))} providers"
+                                )
                                 break
                             else:
                                 logger.warning(
-                                    f"Failed to fetch rules from {url}: {response.status}"
+                                    f"Failed to fetch rules from {url}: HTTP {response.status}"
                                 )
                     except Exception as e:
                         logger.warning(f"Error fetching rules from {url}: {e}")
                         continue
 
                 if not rules:
+                    logger.error("Failed to fetch rules from all sources")
                     await self.send_error(ctx, "Failed to fetch rules from all sources")
                     return
 
                 scrub_rules_path = os.path.join(BASE_DIR, "scrub_rules.json")
+                logger.debug(f"Saving rules to {scrub_rules_path}")
                 async with aiofiles.open(scrub_rules_path, mode="wb") as f:
-                    await f.write(
-                        orjson.dumps(
-                            rules,
-                            option=orjson.OPT_SERIALIZE_NUMPY
-                            | orjson.OPT_SERIALIZE_DATACLASS,
-                        )
+                    serialized = orjson.dumps(
+                        rules,
+                        option=orjson.OPT_SERIALIZE_NUMPY
+                        | orjson.OPT_SERIALIZE_DATACLASS,
                     )
+                    await f.write(serialized)
+                    logger.debug(f"Wrote {len(serialized)} bytes to rules file")
 
                 self.rules = rules
+                logger.info(
+                    f"Rules updated with {len(rules.get('providers', {}))} providers"
+                )
                 await self.send_success(ctx, "Rules updated and saved locally.")
 
         except (aiohttp.ClientError, orjson.JSONDecodeError, IOError, Exception) as e:
             logger.exception(f"Rules update failed: {str(e)}")
-            await self.send_error(ctx, f"Rules update failed: {type(e).__name__}")
+            await self.send_error(
+                ctx, f"Rules update failed: {type(e).__name__}: {str(e)}"
+            )
 
     # Poll methods
 
