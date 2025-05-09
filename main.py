@@ -7724,3 +7724,189 @@ class Threads(interactions.Extension):
     def sim(q1: str, q2: str) -> float:
         s1, s2 = set(q1), set(q2)
         return len(s1 & s2) / len(s1 | s2)
+
+    # Sticker commands
+
+    module_group_sticker: interactions.SlashCommand = module_base.group(
+        name="sticker",
+        description="Sticker commands",
+    )
+
+    @module_group_sticker.subcommand(
+        "v2",
+        sub_cmd_description="Search for stickers/emojis using keywords via vvAPI.",
+    )
+    @interactions.slash_option(
+        name="query",
+        description="The keyword to search for stickers.",
+        required=True,
+        opt_type=interactions.OptionType.STRING,
+    )
+    @interactions.slash_option(
+        name="ratio",
+        description="Minimum keyword match ratio in sentence (e.g., 50 for 50%).",
+        opt_type=interactions.OptionType.INTEGER,
+        min_value=0,
+        max_value=100,
+        argument_name="min_ratio",
+    )
+    @interactions.slash_option(
+        name="similarity",
+        description="Minimum face recognition similarity (e.g., 0.5).",
+        opt_type=interactions.OptionType.NUMBER,
+        min_value=0.0,
+        max_value=1.0,
+        argument_name="min_similarity",
+    )
+    @interactions.slash_option(
+        name="results",
+        description="Maximum number of results to return.",
+        opt_type=interactions.OptionType.INTEGER,
+        min_value=1,
+        max_value=10,
+        argument_name="max_results",
+    )
+    async def sticker_search(
+        self,
+        ctx: interactions.SlashContext,
+        query: str,
+        min_ratio: Optional[int] = 50,
+        min_similarity: Optional[float] = 0.5,
+        max_results: Optional[int] = 1,
+    ) -> None:
+        await ctx.defer()
+
+        api_url = "https://vvapi.cicada000.work/search"
+        params = {
+            k: v
+            for k, v in {
+                "query": query,
+                "min_ratio": str(min_ratio) if min_ratio is not None else None,
+                "min_similarity": min_similarity,
+                "max_results": max_results,
+            }.items()
+            if v is not None
+        }
+
+        num_to_send_directly = min(max_results or 1, 10)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                encoded_params = urlencode(params)
+                full_url = f"{api_url}?{encoded_params}"
+                logger.info(f"Requesting sticker API: {full_url}")
+
+                async with session.get(full_url) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(
+                            f"Sticker API request failed with status {response.status}: {error_text}"
+                        )
+                        await self.send_error(
+                            ctx,
+                            f"Failed to fetch stickers. API returned status {response.status}.",
+                        )
+                        return
+
+                    content = await response.text()
+                    logger.debug(f"Sticker API raw response: {content}")
+
+                    api_results = [
+                        orjson.loads(line)
+                        for line in content.strip().split("\\n")
+                        if line and "\\n" not in line and line.strip()
+                        or logger.warning(f"Failed to decode JSON line: {line}")
+                    ]
+
+                    logger.debug(f"Parsed Sticker API results: {api_results}")
+
+                    if not api_results:
+                        if content.strip():
+                            await self.send_error(
+                                ctx,
+                                "Error processing sticker data from API. See logs for details.",
+                            )
+                            logger.warning(
+                                f"Sticker API for '{query}' returned data but resulted in empty api_results. Raw content: {content}"
+                            )
+                        else:
+                            await ctx.send(f"No stickers found for '{query}'.")
+                        return
+
+                    sticker_files_to_send = []
+                    sticker_fetch_tasks = []
+
+                    for idx, item in enumerate(api_results[:num_to_send_directly]):
+                        filename = item.get("filename")
+                        timestamp_str = item.get("timestamp")
+
+                        if not (filename and timestamp_str):
+                            continue
+
+                        episode_match = re.search(r"\\[P(\\d+)\\]", filename)
+                        time_match = re.search(r"^(\\d+)m(\\d+)s$", timestamp_str)
+
+                        if not (episode_match and time_match):
+                            logger.warning(
+                                f"Could not match filename/timestamp format: {filename}, {timestamp_str}"
+                            )
+                            continue
+
+                        try:
+                            folder_id_str = episode_match.group(1)
+                            total_seconds = int(time_match.group(1)) * 60 + int(
+                                time_match.group(2)
+                            )
+                            sticker_url = f"https://vv-indol.vercel.app/api/preview/{folder_id_str}/{total_seconds}"
+
+                            sticker_fetch_tasks.append(
+                                (idx, sticker_url, session.get(sticker_url))
+                            )
+                        except ValueError:
+                            logger.warning(
+                                f"Could not parse folder_id/timestamp: {filename}, {timestamp_str}"
+                            )
+
+                    for idx, sticker_url, fetch_task in sticker_fetch_tasks:
+                        try:
+                            async with fetch_task as image_response:
+                                if image_response.status == 200:
+                                    image_bytes = await image_response.read()
+                                    file_name = f"sticker_{idx + 1}.webp"
+                                    sticker_files_to_send.append(
+                                        interactions.File(
+                                            file_name=file_name,
+                                            file=io.BytesIO(image_bytes),
+                                        )
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Failed to fetch sticker image from {sticker_url}, status: {image_response.status}"
+                                    )
+                        except Exception as e_fetch:
+                            logger.error(
+                                f"Error fetching/processing sticker image from {sticker_url}: {e_fetch!r}"
+                            )
+
+                    if sticker_files_to_send:
+                        await ctx.send(files=sticker_files_to_send)
+                    else:
+                        await ctx.send(
+                            f"Found results for '{query}', but could not prepare any sticker images. Please check logs."
+                        )
+                        logger.warning(
+                            f"API returned data for '{query}', but no sticker files could be prepared/sent. API Data: {api_results}"
+                        )
+
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error while fetching stickers: {e}", exc_info=True)
+            await self.send_error(
+                ctx, "A network error occurred while trying to fetch stickers."
+            )
+        except Exception as e:
+            logger.error(
+                f"An unexpected error occurred in sticker_search: {e}", exc_info=True
+            )
+            await self.send_error(
+                ctx, "An unexpected error occurred while searching for stickers."
+            )
