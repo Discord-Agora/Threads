@@ -154,10 +154,10 @@ Inspired by a bot from Discord server (ID: 1284782072484986993).
   - Threshold history
   - Anti-abuse measures
 
-## Acknowledgements
-
-This module incorporates code and ideas from:
+## Credits
 
 - [metabismuth/tarot-json](https://github.com/metabismuth/tarot-json.git) (MIT)
 - [penut85420/FriesMeowDiscordBot](https://github.com/penut85420/FriesMeowDiscordBot.git)
 - [ajzeigert/tarot.json](https://gist.github.com/32461d73c17cfd8fd475c0049db451f5.git)
+- [Cicada000/VV](https://github.com/Cicada000/VV.git) (GPL-3.0)
+
