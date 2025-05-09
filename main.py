@@ -7813,8 +7813,8 @@ class Threads(interactions.Extension):
 
                     api_results = [
                         orjson.loads(line)
-                        for line in content.strip().split("\\n")
-                        if line and "\\n" not in line and line.strip()
+                        for line in content.strip().split("\n")
+                        if line and "\n" not in line and line.strip()
                         or logger.warning(f"Failed to decode JSON line: {line}")
                     ]
 
@@ -7843,8 +7843,8 @@ class Threads(interactions.Extension):
                         if not (filename and timestamp_str):
                             continue
 
-                        episode_match = re.search(r"\\[P(\\d+)\\]", filename)
-                        time_match = re.search(r"^(\\d+)m(\\d+)s$", timestamp_str)
+                        episode_match = re.search(r"\[P(\d+)\]", filename)
+                        time_match = re.search(r"^(\d+)m(\d+)s$", timestamp_str)
 
                         if not (episode_match and time_match):
                             logger.warning(
