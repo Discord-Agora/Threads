@@ -10,9 +10,9 @@ import os
 import random
 import re
 import secrets
-import time
 import traceback
 from collections import Counter, defaultdict
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
@@ -21,20 +21,7 @@ from logging.handlers import RotatingFileHandler
 from math import sqrt
 from operator import mul
 from pathlib import Path
-from typing import (
-    Any,
-    DefaultDict,
-    Dict,
-    Generator,
-    List,
-    Literal,
-    Mapping,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Literal, Optional, Union
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 import aiofiles
@@ -47,7 +34,6 @@ import interactions
 import jieba
 import orjson
 import StarCC
-import unalix
 from cachetools import TTLCache
 from interactions.api.events import (
     ExtensionLoad,
@@ -82,7 +68,10 @@ formatter = logging.Formatter(
     "%Y-%m-%d %H:%M:%S.%f %z",
 )
 file_handler = RotatingFileHandler(
-    LOG_FILE, maxBytes=1024 * 1024, backupCount=1, encoding="utf-8"
+    LOG_FILE,
+    maxBytes=1024 * 1024,
+    backupCount=1,
+    encoding="utf-8",
 )
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
@@ -127,13 +116,9 @@ class ActionDetails:
     reason: str
     post_name: str
     actor: Union[interactions.Member, interactions.User, interactions.ClientUser]
-    target: Optional[
-        Union[interactions.Member, interactions.User, interactions.ClientUser]
-    ] = None
+    target: Optional[Union[interactions.Member, interactions.User, interactions.ClientUser]] = None
     result: str = "successful"
-    channel: Optional[Union[interactions.ThreadChannel, interactions.GuildChannel]] = (
-        None
-    )
+    channel: Optional[Union[interactions.ThreadChannel, interactions.GuildChannel]] = None
     additional_info: Optional[Mapping[str, Any]] = None
 
 
@@ -149,14 +134,14 @@ class PostStats:
         if isinstance(self.last_activity, str):
             self.last_activity = datetime.fromisoformat(self.last_activity)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "message_count": self.message_count,
             "last_activity": self.last_activity.isoformat(),
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PostStats":
+    def from_dict(cls, data: dict[str, Any]) -> PostStats:
         return cls(
             message_count=int(data.get("message_count", 0)),
             last_activity=(
@@ -198,42 +183,42 @@ class SpamThresholds:
     max_emojis: int = 10
     history_window: int = 30
     warning_cooldown: int = 60
-    similarity_thresholds: Dict[str, float] = field(
-        default_factory=lambda: {"jaccard": 0.95, "levenshtein": 0.95, "cosine": 0.98}
+    similarity_thresholds: dict[str, float] = field(
+        default_factory=lambda: {"jaccard": 0.95, "levenshtein": 0.95, "cosine": 0.98},
     )
-    exempt_roles: Set[int] = field(
+    exempt_roles: set[int] = field(
         default_factory=lambda: {
             1243261836187664545,
             1275980805273026571,
             1292065942544711781,
             1200052609487208488,
             1200042960969019473,
-        }
+        },
     )
 
 
 @dataclass
 class SpamDetection:
-    message_history: DefaultDict[str, List[MessageRecord]] = field(
-        default_factory=lambda: defaultdict(list)
+    message_history: defaultdict[str, list[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list),
     )
-    content_history: DefaultDict[str, List[MessageRecord]] = field(
-        default_factory=lambda: defaultdict(list)
+    content_history: defaultdict[str, list[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list),
     )
-    mention_history: DefaultDict[str, List[MessageRecord]] = field(
-        default_factory=lambda: defaultdict(list)
+    mention_history: defaultdict[str, list[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list),
     )
-    emoji_history: DefaultDict[str, List[MessageRecord]] = field(
-        default_factory=lambda: defaultdict(list)
+    emoji_history: defaultdict[str, list[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list),
     )
-    cross_channel_history: DefaultDict[str, List[MessageRecord]] = field(
-        default_factory=lambda: defaultdict(list)
+    cross_channel_history: defaultdict[str, list[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list),
     )
-    guild_wide_history: DefaultDict[str, List[MessageRecord]] = field(
-        default_factory=lambda: defaultdict(list)
+    guild_wide_history: defaultdict[str, list[MessageRecord]] = field(
+        default_factory=lambda: defaultdict(list),
     )
-    cooldowns: DefaultDict[str, float] = field(
-        default_factory=lambda: defaultdict(float)
+    cooldowns: defaultdict[str, float] = field(
+        default_factory=lambda: defaultdict(float),
     )
     thresholds: SpamThresholds = field(default_factory=SpamThresholds)
 
@@ -241,38 +226,38 @@ class SpamDetection:
 class Model:
     def __init__(self) -> None:
         self.timeout_config = TimeoutConfig()
-        self.banned_users: DefaultDict[str, DefaultDict[str, Set[str]]] = defaultdict(
-            lambda: defaultdict(set)
+        self.banned_users: defaultdict[str, defaultdict[str, set[str]]] = defaultdict(
+            lambda: defaultdict(set),
         )
-        self.thread_permissions: DefaultDict[str, Set[str]] = defaultdict(set)
-        self.ban_cache: Dict[Tuple[str, str, str], Tuple[bool, datetime]] = {}
+        self.thread_permissions: defaultdict[str, set[str]] = defaultdict(set)
+        self.ban_cache: dict[tuple[str, str, str], tuple[bool, datetime]] = {}
         self.CACHE_DURATION: timedelta = timedelta(minutes=5)
-        self.post_stats: Dict[str, PostStats] = {}
-        self.featured_posts: Dict[str, List[str]] = {}
-        self.current_pinned_post: Optional[str] = None
-        self.converters: Dict[str, StarCC.PresetConversion] = {}
-        self.message_history: DefaultDict[int, List[datetime]] = defaultdict(list)
-        self.timeout_history: Dict[str, Dict[str, Any]] = {}
-        self.violation_history: DefaultDict[int, List[datetime]] = defaultdict(list)
+        self.post_stats: dict[str, PostStats] = {}
+        self.featured_posts: dict[str, list[str]] = {}
+        self.current_pinned_post: str | None = None
+        self.converters: dict[str, StarCC.PresetConversion] = {}
+        self.message_history: defaultdict[int, list[datetime]] = defaultdict(list)
+        self.timeout_history: dict[str, dict[str, Any]] = {}
+        self.violation_history: defaultdict[int, list[datetime]] = defaultdict(list)
         self.last_timeout_adjustment = datetime.now(timezone.utc)
         self.timeout_adjustment_interval = timedelta(hours=1)
-        self.groq_api_key: Optional[str] = None
-        self.tarot: Dict[str, Any] = {}
-        self.query: Dict[str, int] = {}
+        self.groq_api_key: str | None = None
+        self.tarot: dict[str, Any] = {}
+        self.query: dict[str, int] = {}
         self.query_pattern = re.compile(r".*")
-        self.starred_messages: Dict[str, int] = {}
-        self.starboard_messages: Dict[str, str] = {}
+        self.starred_messages: dict[str, int] = {}
+        self.starboard_messages: dict[str, str] = {}
         self.star_threshold: int = 3
-        self.debates: Dict[str, Dict[str, Any]] = {}
-        self.debate_votes: Dict[str, Dict[str, List[str]]] = {}
-        self.star_stats: Dict[str, Dict[str, Any]] = {
+        self.debates: dict[str, dict[str, Any]] = {}
+        self.debate_votes: dict[str, dict[str, list[str]]] = {}
+        self.star_stats: dict[str, dict[str, Any]] = {
             "hourly": {"stats": defaultdict(int)},
             "daily": {"stats": defaultdict(int)},
             "weekly": {"stats": defaultdict(int)},
             "last_adjustment": {"timestamp": datetime.now(timezone.utc)},
             "threshold_history": {"history": []},
         }
-        self.star_config: Dict[str, Union[int, float]] = {
+        self.star_config: dict[str, int | float] = {
             "min_threshold": 3,
             "max_threshold": 10,
             "adjustment_interval": 3600,
@@ -294,14 +279,12 @@ class Model:
         logger.debug(f"Last adjustment: {last_adjustment}")
         logger.debug(f"Current time: {current_time}")
         logger.debug(
-            f"Time difference: {(current_time - last_adjustment).total_seconds()}"
+            f"Time difference: {(current_time - last_adjustment).total_seconds()}",
         )
 
-        if (current_time - last_adjustment).total_seconds() < self.star_config[
-            "adjustment_interval"
-        ]:
+        if (current_time - last_adjustment).total_seconds() < self.star_config["adjustment_interval"]:
             logger.debug(
-                "Skipping star threshold adjustment - too soon since last adjustment"
+                "Skipping star threshold adjustment - too soon since last adjustment",
             )
             return
 
@@ -310,23 +293,15 @@ class Model:
             daily_stars = sum(self.star_stats["daily"]["stats"].values())
             weekly_stars = sum(self.star_stats["weekly"]["stats"].values())
 
-            activity_score = (
-                sum((hourly_stars / 10, daily_stars / 200, weekly_stars / 1000)) / 3
-            )
+            activity_score = sum((hourly_stars / 10, daily_stars / 200, weekly_stars / 1000)) / 3
 
-            time_factors = {range(0, 6): 0.8, range(6, 12): 1.1, range(12, 18): 1.2}
+            time_factors = {range(6): 0.8, range(6, 12): 1.1, range(12, 18): 1.2}
             time_factor = next(
-                (
-                    factor
-                    for hours, factor in time_factors.items()
-                    if current_time.hour in hours
-                ),
+                (factor for hours, factor in time_factors.items() if current_time.hour in hours),
                 1.0,
             )
 
-            quality_score = len(self.starboard_messages) / (
-                len(self.starred_messages) or 1
-            )
+            quality_score = len(self.starboard_messages) / (len(self.starred_messages) or 1)
 
             weights = (
                 (activity_score, self.star_config["activity_weight"]),
@@ -358,7 +333,7 @@ class Model:
                         "time_factor": time_factor,
                         "quality_score": quality_score,
                         "final_score": final_score,
-                    }
+                    },
                 )
 
                 if len(history) > 100:
@@ -366,7 +341,10 @@ class Model:
 
             current_hour = current_time.replace(minute=0, second=0, microsecond=0)
             current_day = current_time.replace(
-                hour=0, minute=0, second=0, microsecond=0
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
             )
             current_week = current_day - timedelta(days=current_day.weekday())
 
@@ -378,15 +356,13 @@ class Model:
 
             for period, (cutoff, stat_key) in time_ranges.items():
                 self.star_stats[period]["stats"] = {
-                    k: v
-                    for k, v in self.star_stats[stat_key]["stats"].items()
-                    if k >= cutoff.isoformat()
+                    k: v for k, v in self.star_stats[stat_key]["stats"].items() if k >= cutoff.isoformat()
                 }
 
             self.star_stats["last_adjustment"]["timestamp"] = current_time
 
             logger.info(
-                f"Star threshold adjusted to {self.star_threshold} (Activity: {activity_score:.2f}, Time: {time_factor:.2f}, Quality: {quality_score:.2f}, Final: {final_score:.2f})"
+                f"Star threshold adjusted to {self.star_threshold} (Activity: {activity_score:.2f}, Time: {time_factor:.2f}, Quality: {quality_score:.2f}, Final: {final_score:.2f})",
             )
 
         except Exception as e:
@@ -394,10 +370,7 @@ class Model:
 
     async def adjust_timeout_cfg(self) -> None:
         current_time = datetime.now(timezone.utc)
-        if (
-            current_time - self.last_timeout_adjustment
-            < self.timeout_adjustment_interval
-        ):
+        if current_time - self.last_timeout_adjustment < self.timeout_adjustment_interval:
             return
 
         one_hour_ago = current_time - timedelta(hours=1)
@@ -407,36 +380,33 @@ class Model:
 
         total_messages = sum(len(msgs) for msgs in self.message_history.values())
         total_violations = sum(len(viols) for viols in self.violation_history.values())
-        violation_rate = (
-            total_violations * 100 / total_messages if total_messages else 0
-        )
+        violation_rate = total_violations * 100 / total_messages if total_messages else 0
 
         cfg = self.timeout_config
-        activity_factor = (total_messages > cfg.high_activity_threshold) - (
-            total_messages < cfg.low_activity_threshold
-        )
-        violation_factor = (violation_rate > cfg.high_violation_rate) - (
-            violation_rate < cfg.low_violation_rate
-        )
+        activity_factor = (total_messages > cfg.high_activity_threshold) - (total_messages < cfg.low_activity_threshold)
+        violation_factor = (violation_rate > cfg.high_violation_rate) - (violation_rate < cfg.low_violation_rate)
         total_factor = activity_factor + violation_factor
 
         cfg.base_duration = max(
-            60, min(600, cfg.base_duration + total_factor * cfg.base_duration_step)
+            60,
+            min(600, cfg.base_duration + total_factor * cfg.base_duration_step),
         )
 
         cfg.multiplier = max(
-            1.2, min(2.0, cfg.multiplier + total_factor * cfg.multiplier_step)
+            1.2,
+            min(2.0, cfg.multiplier + total_factor * cfg.multiplier_step),
         )
 
         cfg.decay_hours = max(
-            12, min(48, cfg.decay_hours - activity_factor * cfg.decay_hours_step)
+            12,
+            min(48, cfg.decay_hours - activity_factor * cfg.decay_hours_step),
         )
 
         cfg.max_duration = 3600
 
         self.last_timeout_adjustment = current_time
         logger.info(
-            f"Timeout config adjusted - base_duration: {cfg.base_duration}, multiplier: {cfg.multiplier}, decay_hours: {cfg.decay_hours}, max_duration: {cfg.max_duration}"
+            f"Timeout config adjusted - base_duration: {cfg.base_duration}, multiplier: {cfg.multiplier}, decay_hours: {cfg.decay_hours}, max_duration: {cfg.max_duration}",
         )
 
     def record_message(self, channel_id: int) -> None:
@@ -448,24 +418,24 @@ class Model:
     def calculate_timeout_duration(self, user_id: str) -> int:
         current_ts: float = datetime.now(timezone.utc).timestamp()
         user_data: dict = self.timeout_history.setdefault(
-            user_id, {"violation_count": 0, "last_timeout": current_ts}
+            user_id,
+            {"violation_count": 0, "last_timeout": current_ts},
         )
 
         decay_periods: int = int(
-            (current_ts - user_data["last_timeout"])
-            / (self.timeout_config.decay_hours * 3600)
+            (current_ts - user_data["last_timeout"]) / (self.timeout_config.decay_hours * 3600),
         )
 
         user_data["violation_count"] = max(
-            1, user_data["violation_count"] - decay_periods + 1
+            1,
+            user_data["violation_count"] - decay_periods + 1,
         )
         violations = user_data["violation_count"]
         user_data["last_timeout"] = current_ts
 
         return min(
             int(
-                self.timeout_config.base_duration
-                * self.timeout_config.multiplier ** (violations - 1)
+                self.timeout_config.base_duration * self.timeout_config.multiplier ** (violations - 1),
             ),
             3600,
         )
@@ -516,7 +486,8 @@ class Model:
             await self.save_starred_messages(file_path)
         except orjson.JSONDecodeError as e:
             logger.error(
-                f"Error decoding starred messages JSON data: {e}", exc_info=True
+                f"Error decoding starred messages JSON data: {e}",
+                exc_info=True,
             )
         except Exception as e:
             logger.error(f"Error loading starred messages: {e}", exc_info=True)
@@ -539,32 +510,33 @@ class Model:
             logger.info("Successfully saved starred messages and related data")
         except Exception as e:
             logger.error(
-                f"Error saving starred messages and related data: {e}", exc_info=True
+                f"Error saving starred messages and related data: {e}",
+                exc_info=True,
             )
 
     async def load_timeout_history(self, file_path: str) -> None:
         try:
             async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
-                loaded_data: Dict[str, Dict[str, Any]] = (
-                    orjson.loads(content) if content.strip() else {}
-                )
+                loaded_data: dict[str, dict[str, Any]] = orjson.loads(content) if content.strip() else {}
 
             self.timeout_history.clear()
             self.timeout_history.update(loaded_data)
             logger.info(f"Successfully loaded timeout history from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Timeout history file not found: {file_path}. Creating a new one"
+                f"Timeout history file not found: {file_path}. Creating a new one",
             )
             await self.save_timeout_history(file_path)
         except orjson.JSONDecodeError as e:
             logger.error(
-                f"Error decoding timeout history JSON data: {e}", exc_info=True
+                f"Error decoding timeout history JSON data: {e}",
+                exc_info=True,
             )
         except Exception as e:
             logger.error(
-                f"Unexpected error loading timeout history: {e}", exc_info=True
+                f"Unexpected error loading timeout history: {e}",
+                exc_info=True,
             )
 
     async def save_timeout_history(self, file_path: str) -> None:
@@ -605,11 +577,10 @@ class Model:
         try:
             async with aiofiles.open(file_path) as file:
                 self.tarot: dict = orjson.loads(await file.read())
-                self.query: dict[str, int] = {
-                    card["name"]: int(idx) for idx, card in self.tarot.items()
-                }
+                self.query: dict[str, int] = {card["name"]: int(idx) for idx, card in self.tarot.items()}
                 self.query_pattern = re.compile(
-                    f"({'|'.join(map(re.escape, self.query))})", re.I | re.M
+                    f"({'|'.join(map(re.escape, self.query))})",
+                    re.IGNORECASE | re.MULTILINE,
                 )
                 logger.info("Successfully loaded tarot data")
 
@@ -630,10 +601,7 @@ class Model:
                 orientations: tuple[str, ...] = ("upright", "reversed")
 
                 missing_fields = (
-                    (idx, field)
-                    for idx, card in self.tarot.items()
-                    for field in required_fields
-                    if field not in card
+                    (idx, field) for idx, card in self.tarot.items() for field in required_fields if field not in card
                 )
                 missing_subfields = (
                     (idx, orientation, field)
@@ -647,7 +615,7 @@ class Model:
                     logger.warning(f"Card {idx} missing required field: {field}")
                 for idx, orientation, field in missing_subfields:
                     logger.warning(
-                        f"Card {idx} missing required {orientation} sub-field: {field}"
+                        f"Card {idx} missing required {orientation} sub-field: {field}",
                     )
 
         except FileNotFoundError:
@@ -665,18 +633,20 @@ class Model:
                 logger.info(f"Loaded {len(self.phishing_domains)} phishing domains")
         except FileNotFoundError:
             logger.warning(
-                f"Phishing database file not found: {file_path}. Creating a new one"
+                f"Phishing database file not found: {file_path}. Creating a new one",
             )
             self.phishing_domains = {}
             await self.save_phishing_db(file_path)
         except orjson.JSONDecodeError as e:
             logger.error(
-                f"Error decoding phishing database JSON data: {e}", exc_info=True
+                f"Error decoding phishing database JSON data: {e}",
+                exc_info=True,
             )
             self.phishing_domains = {}
         except Exception as e:
             logger.error(
-                f"Unexpected error loading phishing database: {e}", exc_info=True
+                f"Unexpected error loading phishing database: {e}",
+                exc_info=True,
             )
             self.phishing_domains = {}
 
@@ -684,9 +654,7 @@ class Model:
         try:
             json_data = orjson.dumps(
                 self.phishing_domains,
-                option=orjson.OPT_INDENT_2
-                | orjson.OPT_SORT_KEYS
-                | orjson.OPT_SERIALIZE_NUMPY,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_NUMPY,
             )
             async with aiofiles.open(file_path, mode="wb") as f:
                 await f.write(json_data)
@@ -698,50 +666,41 @@ class Model:
         try:
             async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
-                loaded_data: Dict[str, Dict[str, list]] = (
-                    orjson.loads(content) if content.strip() else {}
-                )
+                loaded_data: dict[str, dict[str, list]] = orjson.loads(content) if content.strip() else {}
 
             self.banned_users.clear()
             self.banned_users.update(
                 {
                     channel_id: defaultdict(
                         set,
-                        {
-                            post_id: set(user_list)
-                            for post_id, user_list in channel_data.items()
-                        },
+                        {post_id: set(user_list) for post_id, user_list in channel_data.items()},
                     )
                     for channel_id, channel_data in loaded_data.items()
-                }
+                },
             )
         except FileNotFoundError:
             logger.warning(
-                f"Banned users file not found: {file_path}. Creating a new one"
+                f"Banned users file not found: {file_path}. Creating a new one",
             )
             await self.save_banned_users(file_path)
         except orjson.JSONDecodeError as e:
             logger.error(f"Error decoding JSON data: {e}", exc_info=True)
         except Exception as e:
             logger.error(
-                f"Unexpected error loading banned users data: {e}", exc_info=True
+                f"Unexpected error loading banned users data: {e}",
+                exc_info=True,
             )
 
     async def save_banned_users(self, file_path: str) -> None:
         try:
-            serializable_banned_users: Dict[str, Dict[str, List[str]]] = {
-                channel_id: {
-                    post_id: list(user_set)
-                    for post_id, user_set in channel_data.items()
-                }
+            serializable_banned_users: dict[str, dict[str, list[str]]] = {
+                channel_id: {post_id: list(user_set) for post_id, user_set in channel_data.items()}
                 for channel_id, channel_data in self.banned_users.items()
             }
 
             json_data: bytes = orjson.dumps(
                 serializable_banned_users,
-                option=orjson.OPT_INDENT_2
-                | orjson.OPT_SORT_KEYS
-                | orjson.OPT_SERIALIZE_NUMPY,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_NUMPY,
             )
 
             async with aiofiles.open(file_path, mode="wb") as file:
@@ -753,11 +712,10 @@ class Model:
 
     async def save_thread_permissions(self, file_path: str) -> None:
         try:
-            serializable_permissions: Dict[str, List[str]] = {
-                k: list(v) for k, v in self.thread_permissions.items()
-            }
+            serializable_permissions: dict[str, list[str]] = {k: list(v) for k, v in self.thread_permissions.items()}
             json_data: bytes = orjson.dumps(
-                serializable_permissions, option=orjson.OPT_INDENT_2
+                serializable_permissions,
+                option=orjson.OPT_INDENT_2,
             )
 
             async with aiofiles.open(file_path, mode="wb") as file:
@@ -771,7 +729,7 @@ class Model:
         try:
             async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
-                loaded_data: Dict[str, List[str]] = orjson.loads(content)
+                loaded_data: dict[str, list[str]] = orjson.loads(content)
 
             self.thread_permissions.clear()
             self.thread_permissions.update({k: set(v) for k, v in loaded_data.items()})
@@ -779,7 +737,7 @@ class Model:
             logger.info(f"Successfully loaded thread permissions from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Thread permissions file not found: {file_path}. Creating a new one"
+                f"Thread permissions file not found: {file_path}. Creating a new one",
             )
             await self.save_thread_permissions(file_path)
         except Exception as e:
@@ -789,32 +747,26 @@ class Model:
         try:
             async with aiofiles.open(file_path, mode="rb") as file:
                 content: bytes = await file.read()
-                loaded_data: Dict[str, Dict[str, Any]] = (
-                    {} if not content.strip() else orjson.loads(content)
-                )
+                loaded_data: dict[str, dict[str, Any]] = {} if not content.strip() else orjson.loads(content)
 
-                self.post_stats = {
-                    post_id: PostStats.from_dict(data)
-                    for post_id, data in loaded_data.items()
-                }
+                self.post_stats = {post_id: PostStats.from_dict(data) for post_id, data in loaded_data.items()}
                 logger.info(f"Successfully loaded post stats from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Thread stats file not found: {file_path}. Creating a new one"
+                f"Thread stats file not found: {file_path}. Creating a new one",
             )
             await self.save_post_stats(file_path)
         except orjson.JSONDecodeError as e:
             logger.error(f"Error decoding JSON data: {e}", exc_info=True)
         except Exception as e:
             logger.error(
-                f"Unexpected error loading post stats data: {e}", exc_info=True
+                f"Unexpected error loading post stats data: {e}",
+                exc_info=True,
             )
 
     async def save_post_stats(self, file_path: str) -> None:
         try:
-            serializable_stats = {
-                post_id: stats.to_dict() for post_id, stats in self.post_stats.items()
-            }
+            serializable_stats = {post_id: stats.to_dict() for post_id, stats in self.post_stats.items()}
             json_data: bytes = orjson.dumps(
                 serializable_stats,
                 option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
@@ -828,7 +780,8 @@ class Model:
     async def save_featured_posts(self, file_path: str) -> None:
         try:
             json_data = orjson.dumps(
-                self.featured_posts, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+                self.featured_posts,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
             )
             async with aiofiles.open(file_path, mode="wb") as file:
                 await file.write(json_data)
@@ -844,7 +797,7 @@ class Model:
             logger.info(f"Successfully loaded selected posts from {file_path}")
         except FileNotFoundError:
             logger.warning(
-                f"Selected posts file not found: {file_path}. Creating a new one"
+                f"Selected posts file not found: {file_path}. Creating a new one",
             )
             await self.save_featured_posts(file_path)
         except orjson.JSONDecodeError as json_err:
@@ -853,7 +806,7 @@ class Model:
             logger.exception(f"Unexpected error while loading selected posts: {e}")
 
     def is_user_banned(self, channel_id: str, post_id: str, user_id: str) -> bool:
-        ban_cache_key: Tuple[str, str, str] = (channel_id, post_id, user_id)
+        ban_cache_key: tuple[str, str, str] = (channel_id, post_id, user_id)
         current_time: datetime = datetime.now(timezone.utc)
 
         if ban_cache_key in self.ban_cache:
@@ -866,14 +819,17 @@ class Model:
         return result
 
     async def invalidate_ban_cache(
-        self, channel_id: str, post_id: str, user_id: str
+        self,
+        channel_id: str,
+        post_id: str,
+        user_id: str,
     ) -> None:
         self.ban_cache.pop((channel_id, post_id, user_id), None)
 
     def has_thread_permissions(self, post_id: str, user_id: str) -> bool:
         return user_id in self.thread_permissions[post_id]
 
-    def get_banned_users(self) -> Generator[Tuple[str, str, str], None, None]:
+    def get_banned_users(self) -> Generator[tuple[str, str, str], None, None]:
         return (
             (channel_id, post_id, user_id)
             for channel_id, channel_data in self.banned_users.items()
@@ -881,12 +837,8 @@ class Model:
             for user_id in user_set
         )
 
-    def get_thread_permissions(self) -> Generator[Tuple[str, str], None, None]:
-        return (
-            (post_id, user_id)
-            for post_id, user_set in self.thread_permissions.items()
-            for user_id in user_set
-        )
+    def get_thread_permissions(self) -> Generator[tuple[str, str], None, None]:
+        return ((post_id, user_id) for post_id, user_set in self.thread_permissions.items() for user_id in user_set)
 
 
 # Decorator
@@ -980,20 +932,20 @@ class MessageHistoryIterator:
                 if code in self._error_codes:
                     msg, should_stop = self._error_codes[code]
                     logger.error(
-                        f"Channel {self.history.channel.name} ({self.history.channel.id}): {msg}"
+                        f"Channel {self.history.channel.name} ({self.history.channel.id}): {msg}",
                     )
                     if should_stop:
                         raise StopAsyncIteration
                 else:
                     logger.warning(
-                        f"Channel {self.history.channel.name} ({self.history.channel.id}) has unknown code {code}"
+                        f"Channel {self.history.channel.name} ({self.history.channel.id}) has unknown code {code}",
                     )
                     raise StopAsyncIteration
             except (OSError, RuntimeError, TypeError) as e:
                 self._retries += 1
                 if self._retries >= self.MAX_RETRIES:
                     logger.error(
-                        f"Failed after {self.MAX_RETRIES} retries: {e.__class__.__name__}: {str(e)}"
+                        f"Failed after {self.MAX_RETRIES} retries: {e.__class__.__name__}: {e!s}",
                     )
                     raise StopAsyncIteration
                 await asyncio.sleep(self.BASE_DELAY * (1 << (self._retries - 1)))
@@ -1009,25 +961,25 @@ class Threads(interactions.Extension):
         self.spam_detection: SpamDetection = SpamDetection()
         self.spam_thresholds: SpamThresholds = SpamThresholds()
         self.message_record: MessageRecord = MessageRecord(
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(timezone.utc),
         )
         self.ban_lock: asyncio.Lock = asyncio.Lock()
         self.groq_client: Optional[groq.AsyncGroq] = None
         self.conversion_task: Optional[asyncio.Task] = None
-        self.active_timeout_polls: Dict[int, asyncio.Task] = {}
-        self.phishing_domains: Dict[str, Dict[str, Any]] = {}
-        self.rules: Dict[str, Any] = {}
+        self.active_timeout_polls: dict[int, asyncio.Task] = {}
+        self.phishing_domains: dict[str, dict[str, Any]] = {}
+        self.rules: dict[str, Any] = {}
         self.phishing_cache_duration = timedelta(hours=24)
         self.message_count_threshold: int = 200
         self.star_threshold: int = 3
-        self.tarot: Dict[str, Any] = {}
-        self.query: Dict[str, int] = {}
+        self.tarot: dict[str, Any] = {}
+        self.query: dict[str, int] = {}
         self.query_pattern = re.compile(r".*")
         self.rotation_interval: timedelta = timedelta(hours=23)
         self.url_cache: TTLCache = TTLCache(maxsize=1024, ttl=3600)
         self.last_log_key: Optional[str] = None
         self.last_threshold_adjustment: datetime = datetime.now(
-            timezone.utc
+            timezone.utc,
         ) - timedelta(days=8)
         self.GROQ_KEY_FILE: str = os.path.join(BASE_DIR, ".groq_key")
         self.DEBATES_FILE: str = os.path.join(BASE_DIR, "debates.json")
@@ -1035,20 +987,22 @@ class Threads(interactions.Extension):
         self.PHISHING_DB_FILE: str = os.path.join(BASE_DIR, "phishing_domains.json")
         self.BANNED_USERS_FILE: str = os.path.join(BASE_DIR, "banned_users.json")
         self.THREAD_PERMISSIONS_FILE: str = os.path.join(
-            BASE_DIR, "thread_permissions.json"
+            BASE_DIR,
+            "thread_permissions.json",
         )
         self.POST_STATS_FILE: str = os.path.join(BASE_DIR, "post_stats.json")
         self.FEATURED_POSTS_FILE: str = os.path.join(BASE_DIR, "featured_posts.json")
         self.TIMEOUT_HISTORY_FILE: str = os.path.join(BASE_DIR, "timeout_history.json")
         self.STARRED_MESSAGES_FILE: str = os.path.join(
-            BASE_DIR, "starred_messages.json"
+            BASE_DIR,
+            "starred_messages.json",
         )
         self.LOG_CHANNEL_ID: int = 1166627731916734504
         self.LOG_FORUM_ID: int = 1159097493875871784
         self.STARBOARD_FORUM_ID: int = 1168209956802142360
         self.STARBOARD_POST_ID: int = 1312109214533025904
         self.LOG_POST_ID: int = 1325393614343376916
-        self.POLL_FORUM_ID: Tuple[int, ...] = (1155914521907568740,)
+        self.POLL_FORUM_ID: tuple[int, ...] = (1155914521907568740,)
         self.TAIWAN_ROLE_ID: int = 1261328929013108778
         self.THREADS_ROLE_ID: int = 1223635198327914639
         self.GUILD_ID: int = 1150630510696075404
@@ -1060,7 +1014,7 @@ class Threads(interactions.Extension):
         self.CONGRESS_MEMBER_ROLE: int = 1200254783110525010
         self.FEATURED_TAG_ID: int = 1275098388718813215
         self.CONGRESS_MOD_ROLE: int = 1300132191883235368
-        self.ROLE_CHANNEL_PERMISSIONS: Dict[int, Tuple[int, ...]] = {
+        self.ROLE_CHANNEL_PERMISSIONS: dict[int, tuple[int, ...]] = {
             1223635198327914639: (
                 1152311220557320202,
                 1168209956802142360,
@@ -1075,7 +1029,7 @@ class Threads(interactions.Extension):
             1213490790341279754: (1185259262654562355, 1151389184779636766),
             1251935385521750116: (1151389184779636766,),
         }
-        self.ALLOWED_CHANNELS: Tuple[int, ...] = (
+        self.ALLOWED_CHANNELS: tuple[int, ...] = (
             1152311220557320202,
             1168209956802142360,
             1230197011761074340,
@@ -1089,8 +1043,8 @@ class Threads(interactions.Extension):
             1196707789859459132,
             1250396377540853801,
         )
-        self.FEATURED_CHANNELS: Tuple[int, ...] = (1152311220557320202,)
-        self.TIMEOUT_CHANNEL_IDS: Tuple[int, ...] = (
+        self.FEATURED_CHANNELS: tuple[int, ...] = (1152311220557320202,)
+        self.TIMEOUT_CHANNEL_IDS: tuple[int, ...] = (
             1299458193507881051,
             1150630511136481322,
         )
@@ -1198,7 +1152,7 @@ class Threads(interactions.Extension):
                 }
 
                 Keep responses factual and calculation-based. Show all work.""",
-            }
+            },
         ]
 
         self.AI_TAROT_PROMPT = """You are a Rider–Waite Tarot card reader providing readings for questions. Follow these steps to give an insightful reading:
@@ -1240,7 +1194,7 @@ class Threads(interactions.Extension):
                         "guidance": "Step 3: Provide reasoned spiritual advice"
                     },
                     "action_steps": [
-                        "Step 4: List 3-5 concrete actions based on reading"
+                        "Step 4: list 3-5 concrete actions based on reading"
                     ],
                 }
 
@@ -1420,7 +1374,7 @@ class Threads(interactions.Extension):
         title: Optional[str] = None,
         description: Optional[str] = None,
         color: Union[EmbedColor, int] = EmbedColor.INFO,
-        fields: Optional[List[Dict[str, str]]] = None,
+        fields: Optional[list[dict[str, str]]] = None,
         timestamp: Optional[datetime] = None,
     ) -> interactions.Embed:
         if timestamp is None:
@@ -1428,7 +1382,10 @@ class Threads(interactions.Extension):
         color_value: int = color.value if isinstance(color, EmbedColor) else color
 
         embed: interactions.Embed = interactions.Embed(
-            title=title, description=description, color=color_value, timestamp=timestamp
+            title=title,
+            description=description,
+            color=color_value,
+            timestamp=timestamp,
         )
 
         if fields:
@@ -1441,7 +1398,7 @@ class Threads(interactions.Extension):
 
         try:
             guild: Optional[interactions.Guild] = await self.bot.fetch_guild(
-                self.GUILD_ID
+                self.GUILD_ID,
             )
             if guild and guild.icon:
                 embed.set_footer(text=guild.name, icon_url=guild.icon.url)
@@ -1491,9 +1448,7 @@ class Threads(interactions.Extension):
             channel = await self.bot.fetch_channel(channel_id)
 
             if not isinstance(
-                channel := (
-                    channel if isinstance(channel, interactions.GuildText) else None
-                ),
+                channel := (channel if isinstance(channel, interactions.GuildText) else None),
                 interactions.GuildText,
             ):
                 logger.error(f"Channel ID {channel_id} is not a valid text channel.")
@@ -1507,11 +1462,15 @@ class Threads(interactions.Extension):
             logger.error(f"Error sending message to channel {channel_id}: {e!r}")
 
     async def send_to_forum_post(
-        self, forum_id: int, post_id: int, embed: interactions.Embed
+        self,
+        forum_id: int,
+        post_id: int,
+        embed: interactions.Embed,
     ) -> None:
         try:
             if not isinstance(
-                forum := await self.bot.fetch_channel(forum_id), interactions.GuildForum
+                forum := await self.bot.fetch_channel(forum_id),
+                interactions.GuildForum,
             ):
                 logger.error(f"Channel ID {forum_id} is not a valid forum channel.")
                 return
@@ -1545,7 +1504,12 @@ class Threads(interactions.Extension):
         ephemeral: bool = True,
     ) -> None:
         await self.send_response(
-            ctx, title, message, EmbedColor.ERROR, log_to_channel, ephemeral
+            ctx,
+            title,
+            message,
+            EmbedColor.ERROR,
+            log_to_channel,
+            ephemeral,
         )
 
     async def send_success(
@@ -1563,7 +1527,12 @@ class Threads(interactions.Extension):
         ephemeral: bool = True,
     ) -> None:
         await self.send_response(
-            ctx, title, message, EmbedColor.INFO, log_to_channel, ephemeral
+            ctx,
+            title,
+            message,
+            EmbedColor.INFO,
+            log_to_channel,
+            ephemeral,
         )
 
     async def log_action_internal(self, details: ActionDetails) -> None:
@@ -1591,7 +1560,7 @@ class Threads(interactions.Extension):
                         "Target",
                         details.target.mention if details.target else "Unknown",
                         True,
-                    )
+                    ),
                 ]
                 if details.target
                 else []
@@ -1604,7 +1573,7 @@ class Threads(interactions.Extension):
                     "Additional Info",
                     self.format_additional_info(details.additional_info),
                     False,
-                )
+                ),
             ]
             if details.additional_info
             else []
@@ -1614,11 +1583,10 @@ class Threads(interactions.Extension):
             if len(value) > 1024:
                 chunks = [value[i : i + 1024] for i in range(0, len(value), 1024)]
                 for i, chunk in enumerate(chunks):
-                    field_name = f"{name} (Part {i+1}/{len(chunks)})"
+                    field_name = f"{name} (Part {i + 1}/{len(chunks)})"
                     if (
                         len(current_embed.fields) >= 25
-                        or sum(len(f.value) for f in current_embed.fields) + len(chunk)
-                        > 6000
+                        or sum(len(f.value) for f in current_embed.fields) + len(chunk) > 6000
                     ):
                         embeds.append(current_embed)
                         current_embed = await self.create_embed(
@@ -1629,8 +1597,7 @@ class Threads(interactions.Extension):
             else:
                 if (
                     len(current_embed.fields) >= 25
-                    or sum(len(f.value) for f in current_embed.fields) + len(value)
-                    > 6000
+                    or sum(len(f.value) for f in current_embed.fields) + len(value) > 6000
                 ):
                     embeds.append(current_embed)
                     current_embed = await self.create_embed(
@@ -1670,7 +1637,7 @@ class Threads(interactions.Extension):
                             style=interactions.ButtonStyle.URL,
                             label="Appeal",
                             url="https://discord.com/channels/1150630510696075404/1230132503273013358",
-                        )
+                        ),
                     ]
                     if details.action == ActionType.LOCK
                     else []
@@ -1692,7 +1659,7 @@ class Threads(interactions.Extension):
 
     @staticmethod
     def get_action_color(action: ActionType) -> int:
-        color_mapping: Dict[ActionType, EmbedColor] = {
+        color_mapping: dict[ActionType, EmbedColor] = {
             ActionType.CHECK: EmbedColor.INFO,
             ActionType.LOCK: EmbedColor.WARN,
             ActionType.BAN: EmbedColor.ERROR,
@@ -1709,7 +1676,7 @@ class Threads(interactions.Extension):
     async def send_dm(
         target: interactions.Member,
         embed: interactions.Embed,
-        components: List[interactions.Button],
+        components: list[interactions.Button],
     ) -> None:
         try:
             await target.send(embeds=[embed], components=components)
@@ -1735,14 +1702,13 @@ class Threads(interactions.Extension):
         if a == ActionType.EDIT:
             if details.additional_info and "tag_updates" in details.additional_info:
                 updates = details.additional_info["tag_updates"]
-                actions = [
-                    f"{update['Action']}ed tag `{update['Tag']}`" for update in updates
-                ]
+                actions = [f"{update['Action']}ed tag `{update['Tag']}`" for update in updates]
                 return f"Tags have been modified in {cm}: {', '.join(actions)}."
             return f"Changes have been made to {cm}."
 
         m = base_messages.get(
-            a, f"An action ({a.name.lower()}) has been performed in {cm}."
+            a,
+            f"An action ({a.name.lower()}) has been performed in {cm}.",
         )
 
         if a not in {
@@ -1759,8 +1725,7 @@ class Threads(interactions.Extension):
     def format_additional_info(info: Mapping[str, Any]) -> str:
         return "\n".join(
             (
-                f"**{k.replace('_', ' ').title()}**:\n"
-                + "\n".join(f"- {ik}: {iv}" for d in v for ik, iv in d.items())
+                f"**{k.replace('_', ' ').title()}**:\n" + "\n".join(f"- {ik}: {iv}" for d in v for ik, iv in d.items())
                 if isinstance(v, list) and v and isinstance(v[0], dict)
                 else f"**{k.replace('_', ' ').title()}**: {v}"
             )
@@ -1802,7 +1767,6 @@ class Threads(interactions.Extension):
 
     @staticmethod
     def calculate_cosine_similarity(str1: str, str2: str) -> float:
-
         words1: Counter[str] = Counter(jieba.cut(str1))
         words2: Counter[str] = Counter(jieba.cut(str2))
         common_words = set(words1) & set(words2)
@@ -1817,8 +1781,11 @@ class Threads(interactions.Extension):
         return dot_product / (norm1 * norm2) if norm1 and norm2 else 0.0
 
     def check_text_similarity(
-        self, new_text: str, old_text: Optional[str], channel_id: Optional[str] = None
-    ) -> Tuple[bool, Dict[str, float]]:
+        self,
+        new_text: str,
+        old_text: Optional[str],
+        channel_id: Optional[str] = None,
+    ) -> tuple[bool, dict[str, float]]:
         if old_text is None:
             return False, {}
 
@@ -1835,7 +1802,7 @@ class Threads(interactions.Extension):
                         self.calculate_cosine_similarity,
                     ),
                 ),
-            )
+            ),
         )
 
         return (
@@ -1844,19 +1811,20 @@ class Threads(interactions.Extension):
         )
 
     async def check_message_spam(
-        self, message: interactions.Message
-    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        self,
+        message: interactions.Message,
+    ) -> Optional[tuple[str, dict[str, Any]]]:
         try:
             user_id, channel_id = map(str, (message.author.id, message.channel.id))
             guild_id = str(message.guild.id) if message.guild.id else None
             current_time = datetime.now(timezone.utc)
 
             logger.debug(
-                f"Checking spam for user {user_id} in channel {channel_id} at {current_time}"
+                f"Checking spam for user {user_id} in channel {channel_id} at {current_time}",
             )
 
             cutoff = current_time - timedelta(
-                seconds=self.spam_thresholds.history_window
+                seconds=self.spam_thresholds.history_window,
             )
             logger.debug(f"Cleaning up message history before {cutoff}")
 
@@ -1880,10 +1848,7 @@ class Threads(interactions.Extension):
                         for msg in history[key]
                         if (
                             isinstance(msg, (MessageRecord, datetime))
-                            and (
-                                msg.timestamp if isinstance(msg, MessageRecord) else msg
-                            )
-                            > cutoff
+                            and (msg.timestamp if isinstance(msg, MessageRecord) else msg) > cutoff
                         )
                     ]
                     if cleaned:
@@ -1899,22 +1864,18 @@ class Threads(interactions.Extension):
             global_msgs.append(msg_record)
 
             if len(recent_msgs) >= max(self.spam_thresholds.rate_limit, 5):
-                time_diff = (
-                    recent_msgs[-1].timestamp - recent_msgs[-5].timestamp
-                ).total_seconds()
+                time_diff = (recent_msgs[-1].timestamp - recent_msgs[-5].timestamp).total_seconds()
                 if time_diff < 5:
                     return (
-                        f"The message was sent too quickly. Please wait at least {5-time_diff:.1f} more seconds before sending another message in this channel.",
+                        f"The message was sent too quickly. Please wait at least {5 - time_diff:.1f} more seconds before sending another message in this channel.",
                         {"rate": time_diff, "channel_specific": True},
                     )
 
             if len(global_msgs) >= max(self.spam_thresholds.global_rate_limit, 10):
-                time_diff = (
-                    global_msgs[-1].timestamp - global_msgs[-10].timestamp
-                ).total_seconds()
+                time_diff = (global_msgs[-1].timestamp - global_msgs[-10].timestamp).total_seconds()
                 if time_diff < 10:
                     return (
-                        f"The message was sent too quickly. Please wait at least {10-time_diff:.1f} more seconds before sending another message in this channel.",
+                        f"The message was sent too quickly. Please wait at least {10 - time_diff:.1f} more seconds before sending another message in this channel.",
                         {"rate": time_diff, "global": True},
                     )
 
@@ -1929,7 +1890,9 @@ class Threads(interactions.Extension):
             for msg in channel_history:
                 if (
                     is_similar := self.check_text_similarity(
-                        content, msg.content, channel_id
+                        content,
+                        msg.content,
+                        channel_id,
                     )
                 )[0]:
                     similarity_percentage = int(max(is_similar[1].values()) * 100)
@@ -1943,13 +1906,9 @@ class Threads(interactions.Extension):
                     )
 
             if guild_id:
-                guild_history = self.spam_detection.guild_wide_history[
-                    f"{user_id}:{guild_id}"
-                ]
+                guild_history = self.spam_detection.guild_wide_history[f"{user_id}:{guild_id}"]
                 for msg in (m for m in guild_history if m.channel_id != channel_id):
-                    if (is_similar := self.check_text_similarity(content, msg.content))[
-                        0
-                    ]:
+                    if (is_similar := self.check_text_similarity(content, msg.content))[0]:
                         similarity_percentage = int(max(is_similar[1].values()) * 100)
                         return (
                             f"The message is {similarity_percentage}% similar to a recent message in this guild. Please avoid repeating similar content.",
@@ -1962,7 +1921,9 @@ class Threads(interactions.Extension):
                         )
 
             msg_record = MessageRecord(
-                timestamp=current_time, content=content, channel_id=channel_id
+                timestamp=current_time,
+                content=content,
+                channel_id=channel_id,
             )
             channel_history.append(msg_record)
             if guild_id:
@@ -1974,7 +1935,7 @@ class Threads(interactions.Extension):
                     len(message._mention_roles),
                     len(message.mention_channels),
                     message.mention_everyone,
-                )
+                ),
             )
 
             if mention_count > self.spam_thresholds.max_mentions:
@@ -1986,9 +1947,7 @@ class Threads(interactions.Extension):
                     )
 
             emoji_pattern = r"[\U0001F300-\U0001F9FF]|[\u2600-\u26FF\u2700-\u27BF]|<a?:[a-zA-Z0-9_]+:[0-9]+>"
-            if (
-                emoji_count := sum(1 for _ in re.finditer(emoji_pattern, content))
-            ) > self.spam_thresholds.max_emojis:
+            if (emoji_count := sum(1 for _ in re.finditer(emoji_pattern, content))) > self.spam_thresholds.max_emojis:
                 return (
                     f"Your message contains {emoji_count} emojis, which exceeds our limit of {self.spam_thresholds.max_emojis}. While emojis can be fun, too many can make messages hard to read. Please reduce the number of emojis and try again.",
                     {"emoji_count": emoji_count},
@@ -1999,7 +1958,8 @@ class Threads(interactions.Extension):
 
         except Exception as e:
             logger.error(
-                f"Error in spam detection for user {user_id}: {e}", exc_info=True
+                f"Error in spam detection for user {user_id}: {e}",
+                exc_info=True,
             )
             return None
 
@@ -2008,23 +1968,21 @@ class Threads(interactions.Extension):
         message = event.message
 
         if message.author.bot or not isinstance(
-            message.channel, (interactions.GuildChannel, interactions.ThreadChannel)
+            message.channel,
+            (interactions.GuildChannel, interactions.ThreadChannel),
         ):
             return
 
         user_id = str(message.author.id)
         current_time = datetime.now(timezone.utc).timestamp()
         logger.debug(
-            f"Processing message from user {user_id} in channel {message.channel.name}"
+            f"Processing message from user {user_id} in channel {message.channel.name}",
         )
 
         cooldown_key = f"{user_id}:{message.channel.id}"
-        if (
-            current_time - self.spam_detection.cooldowns.get(cooldown_key, 0)
-            < self.spam_thresholds.warning_cooldown
-        ):
+        if current_time - self.spam_detection.cooldowns.get(cooldown_key, 0) < self.spam_thresholds.warning_cooldown:
             logger.debug(
-                f"User {user_id} is in cooldown period in channel {message.channel.id}"
+                f"User {user_id} is in cooldown period in channel {message.channel.id}",
             )
             return
 
@@ -2042,9 +2000,7 @@ class Threads(interactions.Extension):
             )
 
             content = message.content or "[No text content]"
-            content_chunks = [
-                content[i : i + 1024] for i in range(0, len(content), 1024)
-            ]
+            content_chunks = [content[i : i + 1024] for i in range(0, len(content), 1024)]
             logger.debug(f"Created {len(content_chunks)} content chunks for backup")
 
             for i, chunk in enumerate(content_chunks, 1):
@@ -2055,12 +2011,13 @@ class Threads(interactions.Extension):
 
             if attachments := message.attachments:
                 backup_embed.add_field(
-                    name="Attachment Links", value="\n".join(a.url for a in attachments)
+                    name="Attachment Links",
+                    value="\n".join(a.url for a in attachments),
                 )
                 logger.debug(f"Added {len(attachments)} attachments to backup")
 
             logger.info(
-                f"Sending moderation notice and deleting message for user {user_id}"
+                f"Sending moderation notice and deleting message for user {user_id}",
             )
             await asyncio.gather(
                 message.author.send(embed=backup_embed),
@@ -2075,19 +2032,18 @@ class Threads(interactions.Extension):
                         channel=message.channel,
                         additional_info={
                             "original_content": message.content,
-                            "attachments": (
-                                [a.url for a in attachments] if attachments else []
-                            ),
+                            "attachments": ([a.url for a in attachments] if attachments else []),
                             **additional_info,
                         },
-                    )
+                    ),
                 ),
             )
             logger.info(f"Successfully completed moderation actions for user {user_id}")
 
         except Exception as e:
             logger.error(
-                f"Error handling spam message from user {user_id}: {e}", exc_info=True
+                f"Error handling spam message from user {user_id}: {e}",
+                exc_info=True,
             )
 
     # Archive thread
@@ -2111,7 +2067,8 @@ class Threads(interactions.Extension):
         await self.check_and_archive_thread(event.message.channel)
 
     async def check_and_archive_thread(
-        self, thread: interactions.GuildForumPost
+        self,
+        thread: interactions.GuildForumPost,
     ) -> None:
         try:
             INACTIVITY_THRESHOLD = timedelta(days=7)
@@ -2123,7 +2080,7 @@ class Threads(interactions.Extension):
             ) >= INACTIVITY_THRESHOLD:
                 await thread.edit(archived=True, reason="Inactivity")
                 logger.info(
-                    f"Thread {thread.id} archived due to inactivity (last_activity)"
+                    f"Thread {thread.id} archived due to inactivity (last_activity)",
                 )
                 return
 
@@ -2133,17 +2090,16 @@ class Threads(interactions.Extension):
                     if (
                         last_message
                         and last_message.created_at
-                        and (current_time - last_message.created_at)
-                        >= INACTIVITY_THRESHOLD
+                        and (current_time - last_message.created_at) >= INACTIVITY_THRESHOLD
                     ):
                         await thread.edit(archived=True, reason="Inactivity")
                         logger.info(
-                            f"Thread {thread.id} archived due to inactivity (last_message_id)"
+                            f"Thread {thread.id} archived due to inactivity (last_message_id)",
                         )
                         return
                 except Exception as e:
                     logger.debug(
-                        f"Could not fetch last message for thread {thread.id}: {e}"
+                        f"Could not fetch last message for thread {thread.id}: {e}",
                     )
 
             try:
@@ -2152,7 +2108,7 @@ class Threads(interactions.Extension):
                 if not messages:
                     await thread.edit(archived=True, reason="Inactivity")
                     logger.info(
-                        f"Thread {thread.id} archived due to inactivity (empty history)"
+                        f"Thread {thread.id} archived due to inactivity (empty history)",
                     )
                     return
 
@@ -2165,7 +2121,7 @@ class Threads(interactions.Extension):
                 ):
                     await thread.edit(archived=True, reason="Inactivity")
                     logger.info(
-                        f"Thread {thread.id} archived due to inactivity (history timestamp)"
+                        f"Thread {thread.id} archived due to inactivity (history timestamp)",
                     )
                     return
             except asyncio.TimeoutError:
@@ -2175,7 +2131,8 @@ class Threads(interactions.Extension):
 
         except Exception as e:
             logger.exception(
-                f"Error checking thread {thread.id} for archival: {e}", exc_info=True
+                f"Error checking thread {thread.id} for archival: {e}",
+                exc_info=True,
             )
 
     # Tag operations
@@ -2189,7 +2146,8 @@ class Threads(interactions.Extension):
                     await self.update_posts_rotation()
                 except Exception as e:
                     logger.error(
-                        f"Error in rotating selected posts: {e}", exc_info=True
+                        f"Error in rotating selected posts: {e}",
+                        exc_info=True,
                     )
                 await asyncio.sleep(self.rotation_interval.total_seconds())
         except asyncio.CancelledError:
@@ -2197,7 +2155,8 @@ class Threads(interactions.Extension):
             raise
         except Exception as e:
             logger.error(
-                f"Fatal error in featured posts rotation task: {e}", exc_info=True
+                f"Fatal error in featured posts rotation task: {e}",
+                exc_info=True,
             )
             raise
 
@@ -2343,7 +2302,7 @@ class Threads(interactions.Extension):
                 (
                     isinstance(channel, interactions.GuildForumPost),
                     isinstance(forum, interactions.GuildForum),
-                )
+                ),
             ):
                 return
 
@@ -2361,7 +2320,8 @@ class Threads(interactions.Extension):
 
         except (ValueError, NotFound) as e:
             logger.error(
-                f"Error adding featured tag to post {post_id}: {e}", exc_info=True
+                f"Error adding featured tag to post {post_id}: {e}",
+                exc_info=True,
             )
         except Exception as e:
             logger.error(
@@ -2453,14 +2413,12 @@ class Threads(interactions.Extension):
         for forum_id in forum_ids:
             try:
                 forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
-                    forum_id
+                    forum_id,
                 )
                 if not isinstance(forum_channel, interactions.GuildForum):
                     continue
 
-                posts: List[interactions.GuildForumPost] = (
-                    await forum_channel.fetch_posts()
-                )
+                posts: list[interactions.GuildForumPost] = await forum_channel.fetch_posts()
                 for post in posts:
                     if (
                         self.FEATURED_TAG_ID in {tag.id for tag in post.applied_tags}
@@ -2469,17 +2427,13 @@ class Threads(interactions.Extension):
                         featured_tagged_posts.append((forum_id, str(post.id)))
             except Exception as e:
                 logger.error(
-                    f"Error fetching posts with featured tag from forum {forum_id}: {e}"
+                    f"Error fetching posts with featured tag from forum {forum_id}: {e}",
                 )
                 continue
 
         updates: list[tuple[int, str]] = []
 
-        updates.extend(
-            (forum_id, new_post_id)
-            for forum_id, new_post_id in zip(forum_ids, top_posts)
-            if new_post_id
-        )
+        updates.extend((forum_id, new_post_id) for forum_id, new_post_id in zip(forum_ids, top_posts) if new_post_id)
 
         updates.extend(featured_tagged_posts)
 
@@ -2489,14 +2443,15 @@ class Threads(interactions.Extension):
         for forum_id, new_post_id in updates:
             forum_id_str = str(forum_id)
             if forum_id_str not in self.model.featured_posts or isinstance(
-                self.model.featured_posts[forum_id_str], str
+                self.model.featured_posts[forum_id_str],
+                str,
             ):
                 self.model.featured_posts[forum_id_str] = []
 
             if new_post_id not in self.model.featured_posts[forum_id_str]:
                 self.model.featured_posts[forum_id_str].append(new_post_id)
                 logger.info(
-                    f"Added new featured post {new_post_id} to forum {forum_id}"
+                    f"Added new featured post {new_post_id} to forum {forum_id}",
                 )
 
         try:
@@ -2506,31 +2461,31 @@ class Threads(interactions.Extension):
             logger.info("Completed featured posts rotation successfully")
         except Exception as e:
             logger.error(
-                f"Failed to complete featured posts rotation: {e}", exc_info=True
+                f"Failed to complete featured posts rotation: {e}",
+                exc_info=True,
             )
             raise
 
     async def get_top_post_id(self, forum_id: int) -> Optional[str]:
         try:
             forum_channel: interactions.GuildChannel = await self.bot.fetch_channel(
-                forum_id
+                forum_id,
             )
             if not isinstance(forum_channel, interactions.GuildForum):
                 logger.warning(f"Channel ID {forum_id} is not a forum channel")
                 return None
 
-            posts: List[interactions.GuildForumPost] = await forum_channel.fetch_posts()
-            stats_dict: Dict[str, PostStats] = self.model.post_stats
+            posts: list[interactions.GuildForumPost] = await forum_channel.fetch_posts()
+            stats_dict: dict[str, PostStats] = self.model.post_stats
 
-            valid_posts: List[interactions.GuildForumPost] = [
-                post for post in posts if str(post.id) in stats_dict
-            ]
+            valid_posts: list[interactions.GuildForumPost] = [post for post in posts if str(post.id) in stats_dict]
 
             if not valid_posts:
                 return None
 
             top_post: interactions.GuildForumPost = max(
-                valid_posts, key=(lambda p: stats_dict[str(p.id)].message_count)
+                valid_posts,
+                key=(lambda p: stats_dict[str(p.id)].message_count),
             )
 
             return str(top_post.id)
@@ -2557,14 +2512,14 @@ class Threads(interactions.Extension):
         self.message_count_threshold = int(average_messages)
 
         one_day_ago: datetime = current_time - timedelta(days=1)
-        recent_activity: int = sum(
-            1 for stat in post_stats if stat.last_activity >= one_day_ago
-        )
+        recent_activity: int = sum(1 for stat in post_stats if stat.last_activity >= one_day_ago)
 
         self.rotation_interval = (
             timedelta(hours=12)
             if recent_activity > 100
-            else timedelta(hours=48) if recent_activity < 10 else timedelta(hours=24)
+            else timedelta(hours=48)
+            if recent_activity < 10
+            else timedelta(hours=24)
         )
 
         activity_threshold: int = 50
@@ -2577,16 +2532,17 @@ class Threads(interactions.Extension):
         ):
             self.rotation_interval = timedelta(hours=12)
             self.message_count_threshold = max(
-                minimum_threshold, self.message_count_threshold >> 1
+                minimum_threshold,
+                self.message_count_threshold >> 1,
             )
             self.last_threshold_adjustment = current_time
 
             logger.info(
-                f"Standards not met for over a week. Adjusted thresholds: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
+                f"Standards not met for over a week. Adjusted thresholds: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}",
             )
 
         logger.info(
-            f"Threshold adjustment complete: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}"
+            f"Threshold adjustment complete: message_count_threshold={self.message_count_threshold}, rotation_interval={self.rotation_interval}",
         )
 
     # Base commands
@@ -2626,10 +2582,12 @@ class Threads(interactions.Extension):
         description: str,
     ) -> None:
         if not next(
-            (r for r in ctx.author.roles if r.id == self.DEBATE_ADMIN_ROLE_ID), None
+            (r for r in ctx.author.roles if r.id == self.DEBATE_ADMIN_ROLE_ID),
+            None,
         ):
             await self.send_error(
-                ctx, "Only debate administrators can propose debates."
+                ctx,
+                "Only debate administrators can propose debates.",
             )
             return
 
@@ -2652,7 +2610,8 @@ class Threads(interactions.Extension):
         )
 
     @module_group_debate.subcommand(
-        "sides", sub_cmd_description="Set the sides for a debate"
+        "sides",
+        sub_cmd_description="set the sides for a debate",
     )
     @interactions.slash_option(
         name="debate",
@@ -2688,7 +2647,8 @@ class Threads(interactions.Extension):
     ) -> None:
         if not {r.id for r in ctx.author.roles} & {self.DEBATE_ADMIN_ROLE_ID}:
             await self.send_error(
-                ctx, "Only debate administrators can set debate sides."
+                ctx,
+                "Only debate administrators can set debate sides.",
             )
             return
 
@@ -2706,7 +2666,8 @@ class Threads(interactions.Extension):
 
         if member_id in debate["sides"][side_name]:
             await self.send_error(
-                ctx, f"{members.mention} is already on side '{side_name}'."
+                ctx,
+                f"{members.mention} is already on side '{side_name}'.",
             )
             return
 
@@ -2721,18 +2682,16 @@ class Threads(interactions.Extension):
 
     @debate_set_sides.autocomplete("debate")
     async def autocomplete_debate_id(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         try:
             proposed_debates = {
-                id: debate
-                for id, debate in self.model.debates.items()
-                if debate["status"] == "proposed"
+                id: debate for id, debate in self.model.debates.items() if debate["status"] == "proposed"
             }
 
             choices = [
-                {"name": f"#{id}: {debate['topic'][:50]}", "value": id}
-                for id, debate in proposed_debates.items()
+                {"name": f"#{id}: {debate['topic'][:50]}", "value": id} for id, debate in proposed_debates.items()
             ][:25]
 
             await ctx.send(choices)
@@ -2754,7 +2713,6 @@ class Threads(interactions.Extension):
         ctx: interactions.SlashContext,
         debate_id: str,
     ) -> None:
-
         if not any(r.id == self.DEBATE_ADMIN_ROLE_ID for r in ctx.author.roles):
             await self.send_error(ctx, "Only debate administrators can start debates.")
             return
@@ -2767,12 +2725,8 @@ class Threads(interactions.Extension):
                     msg
                     for cond, msg in {
                         not debate: "Invalid debate ID.",
-                        debate
-                        and debate["status"]
-                        != "proposed": "This debate cannot be started.",
-                        debate
-                        and len(debate["sides"])
-                        < 2: "At least two sides must be set before starting.",
+                        debate and debate["status"] != "proposed": "This debate cannot be started.",
+                        debate and len(debate["sides"]) < 2: "At least two sides must be set before starting.",
                     }.items()
                     if cond
                 ),
@@ -2786,8 +2740,7 @@ class Threads(interactions.Extension):
                 return
 
             sides_text = "\n".join(
-                f"**{side}**: {', '.join(f'<@{mid}>' for mid in members)}"
-                for side, members in debate["sides"].items()
+                f"**{side}**: {', '.join(f'<@{mid}>' for mid in members)}" for side, members in debate["sides"].items()
             )
 
             post = await forum.create_post(
@@ -2798,7 +2751,7 @@ class Threads(interactions.Extension):
                         f"- **Description**: {debate['description']}",
                         f"- **Sides**:\n{sides_text}",
                         "The debate has begun! Only debate participants and administrators can speak now.",
-                    ]
+                    ],
                 ),
                 applied_tags=[1275098388718813217],
             )
@@ -2811,7 +2764,7 @@ class Threads(interactions.Extension):
                     await channel.send(
                         f"<@&{self.DEBATE_ROLE_ID}> A new debate has started!\n"
                         f"**Topic**: {debate['topic']}\n"
-                        f"Head over to {post.mention} to watch the debate!"
+                        f"Head over to {post.mention} to watch the debate!",
                     )
 
             await self.send_success(
@@ -2822,11 +2775,12 @@ class Threads(interactions.Extension):
 
         except Exception as e:
             logger.error(f"Error starting debate: {e}", exc_info=True)
-            await self.send_error(ctx, f"Error starting debate: {str(e)}")
+            await self.send_error(ctx, f"Error starting debate: {e!s}")
 
     @debate_start.autocomplete("debate")
     async def autocomplete_start_debate_id(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         try:
             ready_debates = {
@@ -2835,10 +2789,9 @@ class Threads(interactions.Extension):
                 if debate["status"] == "proposed" and len(debate["sides"]) >= 2
             }
 
-            choices = [
-                {"name": f"#{id}: {debate['topic'][:50]}", "value": id}
-                for id, debate in ready_debates.items()
-            ][:25]
+            choices = [{"name": f"#{id}: {debate['topic'][:50]}", "value": id} for id, debate in ready_debates.items()][
+                :25
+            ]
 
             await ctx.send(choices)
         except Exception as e:
@@ -2846,7 +2799,8 @@ class Threads(interactions.Extension):
             await ctx.send([])
 
     @module_group_debate.subcommand(
-        "end", sub_cmd_description="End a debate and start voting"
+        "end",
+        sub_cmd_description="End a debate and start voting",
     )
     @interactions.slash_option(
         name="debate",
@@ -2881,7 +2835,9 @@ class Threads(interactions.Extension):
                 return
 
             poll = interactions.Poll.create(
-                question="Who won the debate?", duration=24, answers=debate["sides"]
+                question="Who won the debate?",
+                duration=24,
+                answers=debate["sides"],
             )
 
             await post.send(
@@ -2897,7 +2853,7 @@ class Threads(interactions.Extension):
                 if isinstance(channel, interactions.GuildText):
                     await channel.send(
                         f"<@&{self.DEBATE_ROLE_ID}> The debate on '{debate['topic']}' has ended! "
-                        f"Head over to {post.mention} to discuss and vote for the winning side!"
+                        f"Head over to {post.mention} to discuss and vote for the winning side!",
                     )
 
             await self.send_success(
@@ -2908,22 +2864,18 @@ class Threads(interactions.Extension):
 
         except Exception as e:
             logger.error(f"Error ending debate: {e}", exc_info=True)
-            await self.send_error(ctx, f"Error ending debate: {str(e)}")
+            await self.send_error(ctx, f"Error ending debate: {e!s}")
 
     @debate_end.autocomplete("debate")
     async def autocomplete_end_debate_id(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         try:
-            active_debates = {
-                id: debate
-                for id, debate in self.model.debates.items()
-                if debate["status"] == "active"
-            }
+            active_debates = {id: debate for id, debate in self.model.debates.items() if debate["status"] == "active"}
 
             choices = [
-                {"name": f"#{id}: {debate['topic'][:50]}", "value": id}
-                for id, debate in active_debates.items()
+                {"name": f"#{id}: {debate['topic'][:50]}", "value": id} for id, debate in active_debates.items()
             ][:25]
 
             await ctx.send(choices)
@@ -2938,7 +2890,7 @@ class Threads(interactions.Extension):
             return
 
         debate = {d.get("post_id"): d for d in self.model.debates.values()}.get(
-            str(message.channel.id)
+            str(message.channel.id),
         )
         if not debate or debate["status"] != "active":
             return
@@ -2951,7 +2903,7 @@ class Threads(interactions.Extension):
             try:
                 delete_task = message.delete()
                 notify_task = message.author.send(
-                    "Only debate participants can speak during an active debate."
+                    "Only debate participants can speak during an active debate.",
                 )
                 await delete_task
                 await notify_task
@@ -2966,7 +2918,8 @@ class Threads(interactions.Extension):
     )
 
     @module_group_debug.subcommand(
-        "delete", sub_cmd_description="Delete files from the extension directory"
+        "delete",
+        sub_cmd_description="Delete files from the extension directory",
     )
     @interactions.slash_option(
         name="type",
@@ -2978,7 +2931,9 @@ class Threads(interactions.Extension):
     )
     @interactions.check(interactions.has_id(1268909926458064991))
     async def command_delete(
-        self, ctx: interactions.SlashContext, file_type: str
+        self,
+        ctx: interactions.SlashContext,
+        file_type: str,
     ) -> None:
         await ctx.defer(ephemeral=True)
 
@@ -2987,13 +2942,15 @@ class Threads(interactions.Extension):
 
         if file_type == "all":
             return await self.send_error(
-                ctx, "Cannot delete all files at once for safety reasons."
+                ctx,
+                "Cannot delete all files at once for safety reasons.",
             )
 
         file_path = os.path.join(BASE_DIR, file_type)
         if not os.path.isfile(file_path):
             return await self.send_error(
-                ctx, f"File `{file_type}` does not exist in the extension directory."
+                ctx,
+                f"File `{file_type}` does not exist in the extension directory.",
             )
 
         try:
@@ -3007,12 +2964,14 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error deleting {file_type}: {e}", exc_info=True)
             await self.send_error(
-                ctx, f"An error occurred while deleting {file_type}: {str(e)}"
+                ctx,
+                f"An error occurred while deleting {file_type}: {e!s}",
             )
 
     @command_delete.autocomplete("type")
     async def delete_type_autocomplete(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         choices: list[dict[str, str]] = []
 
@@ -3021,8 +2980,7 @@ class Threads(interactions.Extension):
                 files = [
                     f
                     for f in os.listdir(BASE_DIR)
-                    if os.path.isfile(os.path.join(BASE_DIR, f))
-                    and not f.startswith(".")
+                    if os.path.isfile(os.path.join(BASE_DIR, f)) and not f.startswith(".")
                 ]
 
                 choices.extend({"name": file, "value": file} for file in sorted(files))
@@ -3031,12 +2989,13 @@ class Threads(interactions.Extension):
             choices = [{"name": "Error: Permission denied", "value": "error"}]
         except Exception as e:
             logger.error(f"Error listing files: {e}", exc_info=True)
-            choices = [{"name": f"Error: {str(e)}", "value": "error"}]
+            choices = [{"name": f"Error: {e!s}", "value": "error"}]
 
         await ctx.send(choices[:25])
 
     @module_group_debug.subcommand(
-        "exclude", sub_cmd_description="Exclude posts from featured rotation"
+        "exclude",
+        sub_cmd_description="Exclude posts from featured rotation",
     )
     @interactions.slash_option(
         name="action",
@@ -3046,7 +3005,7 @@ class Threads(interactions.Extension):
         choices=[
             interactions.SlashCommandChoice(name="Add", value="add"),
             interactions.SlashCommandChoice(name="Remove", value="remove"),
-            interactions.SlashCommandChoice(name="List", value="list"),
+            interactions.SlashCommandChoice(name="list", value="list"),
         ],
     )
     @interactions.slash_option(
@@ -3056,7 +3015,7 @@ class Threads(interactions.Extension):
         argument_name="post_id",
     )
     @interactions.slash_default_member_permission(
-        interactions.Permissions.ADMINISTRATOR
+        interactions.Permissions.ADMINISTRATOR,
     )
     async def debug_exclude(
         self,
@@ -3066,7 +3025,8 @@ class Threads(interactions.Extension):
     ) -> None:
         if not any(r.id == self.THREADS_ROLE_ID for r in ctx.author.roles):
             await self.send_error(
-                ctx, "You do not have permission to use this command."
+                ctx,
+                "You do not have permission to use this command.",
             )
             return
 
@@ -3084,19 +3044,23 @@ class Threads(interactions.Extension):
 
             for i, post_info in enumerate(excluded_list):
                 current_embed.add_field(
-                    name=f"Post {i+1}", value=post_info, inline=True
+                    name=f"Post {i + 1}",
+                    value=post_info,
+                    inline=True,
                 )
                 if len(current_embed.fields) >= 10:
                     embeds.append(current_embed)
                     current_embed = await self.create_embed(
-                        title="Currently Excluded Posts"
+                        title="Currently Excluded Posts",
                     )
 
             if current_embed.fields:
                 embeds.append(current_embed)
 
             await self.send_paginated_response(
-                ctx, embeds, "No posts are currently excluded."
+                ctx,
+                embeds,
+                "No posts are currently excluded.",
             )
             return
 
@@ -3132,13 +3096,14 @@ class Threads(interactions.Extension):
                     )
                 except ValueError:
                     await self.send_error(
-                        ctx, f"Post {post_id} was not in the exclusion list."
+                        ctx,
+                        f"Post {post_id} was not in the exclusion list.",
                     )
 
         except ValueError:
             await self.send_error(ctx, "Invalid post ID format.")
         except Exception as e:
-            await self.send_error(ctx, f"Error processing request: {str(e)}")
+            await self.send_error(ctx, f"Error processing request: {e!s}")
 
     @module_group_debug.subcommand(
         "config",
@@ -3170,7 +3135,7 @@ class Threads(interactions.Extension):
         opt_type=interactions.OptionType.STRING,
     )
     @interactions.slash_default_member_permission(
-        interactions.Permissions.ADMINISTRATOR
+        interactions.Permissions.ADMINISTRATOR,
     )
     async def debug_config(
         self,
@@ -3181,10 +3146,12 @@ class Threads(interactions.Extension):
         value: Optional[str] = None,
     ) -> None:
         if not next(
-            (True for r in ctx.author.roles if r.id == self.THREADS_ROLE_ID), False
+            (True for r in ctx.author.roles if r.id == self.THREADS_ROLE_ID),
+            False,
         ):
             await self.send_error(
-                ctx, "You do not have permission to use this command."
+                ctx,
+                "You do not have permission to use this command.",
             )
             return
 
@@ -3214,7 +3181,8 @@ class Threads(interactions.Extension):
                 if value is None:
                     if major_str not in data:
                         await self.send_error(
-                            ctx, f"Major section `{major}` not found in {file}"
+                            ctx,
+                            f"Major section `{major}` not found in {file}",
                         )
                         return
                     del data[major_str]
@@ -3222,9 +3190,7 @@ class Threads(interactions.Extension):
                 else:
                     try:
                         parsed_value = orjson.loads(value)
-                        data[major_str] = (
-                            {} if is_nested else [] if is_list_values else parsed_value
-                        )
+                        data[major_str] = {} if is_nested else [] if is_list_values else parsed_value
                     except orjson.JSONDecodeError:
                         data[major_str] = value
                     action = f"Created major section `{major}`"
@@ -3241,14 +3207,16 @@ class Threads(interactions.Extension):
                 major_data = data[major_str]
                 if not isinstance(major_data, dict):
                     await self.send_error(
-                        ctx, f"Major section `{major}` does not support minor sections"
+                        ctx,
+                        f"Major section `{major}` does not support minor sections",
                     )
                     return
 
                 if value is None:
                     if minor not in major_data:
                         await self.send_error(
-                            ctx, f"Minor section `{minor}` not found in `{major}`"
+                            ctx,
+                            f"Minor section `{minor}` not found in `{major}`",
                         )
                         return
                     del major_data[minor]
@@ -3259,9 +3227,7 @@ class Threads(interactions.Extension):
                         major_data[minor] = parsed
                     except orjson.JSONDecodeError:
                         major_data[minor] = value
-                    action = (
-                        f"Updated minor section `{minor}` in `{major}` to `{value}`"
-                    )
+                    action = f"Updated minor section `{minor}` in `{major}` to `{value}`"
 
             await getattr(self.model, f"save_{file}")(file_path, data)
             await self.send_success(
@@ -3272,18 +3238,17 @@ class Threads(interactions.Extension):
 
         except Exception as e:
             logger.error(f"Error managing config file: {e}", exc_info=True)
-            await self.send_error(ctx, f"Error managing config file: {str(e)}")
+            await self.send_error(ctx, f"Error managing config file: {e!s}")
 
     @debug_config.autocomplete("file")
     async def autocomplete_debug_config_file(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         try:
             files = {
                 entry.name.split(".")[0].lower(): (
-                    entry.name.translate(str.maketrans("_", " "))
-                    .title()
-                    .replace(".Json", ""),
+                    entry.name.translate(str.maketrans("_", " ")).title().replace(".Json", ""),
                     entry.path,
                 )
                 for entry in os.scandir(BASE_DIR)
@@ -3304,7 +3269,8 @@ class Threads(interactions.Extension):
 
     @debug_config.autocomplete("major")
     async def autocomplete_debug_config_major(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         if not (file := ctx.kwargs.get("file")):
             await ctx.send([])
@@ -3313,9 +3279,8 @@ class Threads(interactions.Extension):
         try:
             file_path = os.path.join(BASE_DIR, f"{file}.json")
             data = orjson.loads(
-                await aiofiles.os.path.exists(file_path)
-                and await (await aiofiles.open(file_path, mode="rb")).read()
-                or b"{}"
+                (await aiofiles.os.path.exists(file_path) and await (await aiofiles.open(file_path, mode="rb")).read())
+                or b"{}",
             )
 
             await ctx.send([{"name": k, "value": k} for k in data][:25])
@@ -3326,7 +3291,8 @@ class Threads(interactions.Extension):
 
     @debug_config.autocomplete("minor")
     async def autocomplete_debug_config_minor(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         if not all(ctx.kwargs.get(k) for k in ("file", "major")):
             await ctx.send([])
@@ -3343,7 +3309,7 @@ class Threads(interactions.Extension):
                 return
 
             await ctx.send(
-                [dict(name=str(k), value=str(k)) for k in major_section][:25]
+                [dict(name=str(k), value=str(k)) for k in major_section][:25],
             )
 
         except Exception as e:
@@ -3363,10 +3329,12 @@ class Threads(interactions.Extension):
         argument_name="file_type",
     )
     @interactions.slash_default_member_permission(
-        interactions.Permissions.ADMINISTRATOR
+        interactions.Permissions.ADMINISTRATOR,
     )
     async def debug_export(
-        self, ctx: interactions.SlashContext, file_type: str
+        self,
+        ctx: interactions.SlashContext,
+        file_type: str,
     ) -> None:
         await ctx.defer(ephemeral=True)
         filename: str = ""
@@ -3376,12 +3344,15 @@ class Threads(interactions.Extension):
 
         if file_type != "all" and not os.path.isfile(os.path.join(BASE_DIR, file_type)):
             return await self.send_error(
-                ctx, f"File `{file_type}` does not exist in the extension directory."
+                ctx,
+                f"File `{file_type}` does not exist in the extension directory.",
             )
 
         try:
             async with aiofiles.tempfile.NamedTemporaryFile(
-                prefix="export_", suffix=".tar.gz", delete=False
+                prefix="export_",
+                suffix=".tar.gz",
+                delete=False,
             ) as afp:
                 filename = afp.name
                 base_name = filename[:-7]
@@ -3399,15 +3370,12 @@ class Threads(interactions.Extension):
             file_size = os.path.getsize(filename)
             if file_size > 8_388_608:
                 return await self.send_error(
-                    ctx, "Archive file is too large to send (>8MB)."
+                    ctx,
+                    "Archive file is too large to send (>8MB).",
                 )
 
             await ctx.send(
-                (
-                    "All extension files attached."
-                    if file_type == "all"
-                    else f"File `{file_type}` attached."
-                ),
+                ("All extension files attached." if file_type == "all" else f"File `{file_type}` attached."),
                 files=[interactions.File(filename)],
             )
 
@@ -3417,7 +3385,8 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error exporting {file_type}: {e}", exc_info=True)
             await self.send_error(
-                ctx, f"An error occurred while exporting {file_type}: {str(e)}"
+                ctx,
+                f"An error occurred while exporting {file_type}: {e!s}",
             )
         finally:
             if filename and os.path.exists(filename):
@@ -3428,7 +3397,8 @@ class Threads(interactions.Extension):
 
     @debug_export.autocomplete("type")
     async def autocomplete_debug_export_type(
-        self, ctx: interactions.AutocompleteContext
+        self,
+        ctx: interactions.AutocompleteContext,
     ) -> None:
         choices: list[dict[str, str]] = [{"name": "All Files", "value": "all"}]
 
@@ -3437,8 +3407,7 @@ class Threads(interactions.Extension):
                 files = [
                     f
                     for f in os.listdir(BASE_DIR)
-                    if os.path.isfile(os.path.join(BASE_DIR, f))
-                    and not f.startswith(".")
+                    if os.path.isfile(os.path.join(BASE_DIR, f)) and not f.startswith(".")
                 ]
 
                 choices.extend({"name": file, "value": file} for file in sorted(files))
@@ -3447,33 +3416,36 @@ class Threads(interactions.Extension):
             choices = [{"name": "Error: Permission denied", "value": "error"}]
         except Exception as e:
             logger.error(f"Error listing files: {e}", exc_info=True)
-            choices = [{"name": f"Error: {str(e)}", "value": "error"}]
+            choices = [{"name": f"Error: {e!s}", "value": "error"}]
 
         await ctx.send(choices[:25])
 
     # Timeout commands
 
     module_group_timeout: interactions.SlashCommand = module_base.group(
-        name="timeout", description="Timeout management"
+        name="timeout",
+        description="Timeout management",
     )
 
     @module_group_timeout.subcommand(
-        "set", sub_cmd_description="Set bot configurations"
+        "set",
+        sub_cmd_description="set bot configurations",
     )
     @interactions.slash_option(
         name="key",
-        description="Set the GROQ API key",
+        description="set the GROQ API key",
         required=True,
         opt_type=interactions.OptionType.STRING,
         argument_name="groq_key",
     )
     @interactions.slash_default_member_permission(
-        interactions.Permissions.ADMINISTRATOR
+        interactions.Permissions.ADMINISTRATOR,
     )
     async def set_groq_key(self, ctx: interactions.SlashContext, groq_key: str) -> None:
         if not (ctx.author.guild_permissions & interactions.Permissions.ADMINISTRATOR):
             return await self.send_error(
-                ctx, "Only administrators can set the GROQ API key."
+                ctx,
+                "Only administrators can set the GROQ API key.",
             )
 
         try:
@@ -3501,13 +3473,15 @@ class Threads(interactions.Extension):
             self.groq_client = client
 
             return await self.send_success(
-                ctx, "GROQ API key has been successfully set and validated."
+                ctx,
+                "GROQ API key has been successfully set and validated.",
             )
         except Exception as e:
-            return await self.send_error(ctx, f"Failed to set GROQ API key: {repr(e)}")
+            return await self.send_error(ctx, f"Failed to set GROQ API key: {e!r}")
 
     @module_group_timeout.subcommand(
-        "check", sub_cmd_description="Check message content with AI"
+        "check",
+        sub_cmd_description="Check message content with AI",
     )
     @interactions.slash_option(
         name="message",
@@ -3518,22 +3492,23 @@ class Threads(interactions.Extension):
     )
     @interactions.max_concurrency(interactions.Buckets.MEMBER, 1)
     async def check_message(
-        self, ctx: interactions.SlashContext, message_id: str
+        self,
+        ctx: interactions.SlashContext,
+        message_id: str,
     ) -> None:
         try:
             if message_id.startswith("https://discord.com/channels/"):
                 *_, guild_str, channel_str, msg_str = message_id.split("/")[:7]
                 guild_id, channel_id, msg_id = map(
-                    int, (guild_str, channel_str, msg_str)
+                    int,
+                    (guild_str, channel_str, msg_str),
                 )
 
                 if guild_id != ctx.guild_id:
                     await self.send_error(ctx, "The message must be from this server.")
                     return
 
-                message = await (
-                    await ctx.guild.fetch_channel(channel_id)
-                ).fetch_message(msg_id)
+                message = await (await ctx.guild.fetch_channel(channel_id)).fetch_message(msg_id)
             else:
                 message = await ctx.channel.fetch_message(int(message_id))
 
@@ -3565,13 +3540,12 @@ class Threads(interactions.Extension):
         await ctx.defer(ephemeral=True)
 
         channel_id = (
-            message.channel.parent_id
-            if isinstance(message.channel, interactions.ThreadChannel)
-            else message.channel.id
+            message.channel.parent_id if isinstance(message.channel, interactions.ThreadChannel) else message.channel.id
         )
         if channel_id == 1151301324143603712:
             await self.send_error(
-                ctx, "AI content check is not available in the vituperation channel."
+                ctx,
+                "AI content check is not available in the vituperation channel.",
             )
             return None
 
@@ -3584,13 +3558,15 @@ class Threads(interactions.Extension):
             message_author = await ctx.guild.fetch_member(message.author.id)
         except NotFound:
             await self.send_error(
-                ctx, "The message has been deleted and cannot be checked."
+                ctx,
+                "The message has been deleted and cannot be checked.",
             )
             return None
         except Exception as e:
             logger.error(f"Error fetching message or member: {e}", exc_info=True)
             await self.send_error(
-                ctx, "An error occurred while fetching the message information."
+                ctx,
+                "An error occurred while fetching the message information.",
             )
             return None
 
@@ -3618,7 +3594,8 @@ class Threads(interactions.Extension):
 
         if isinstance(post, interactions.ThreadChannel):
             if message_author.id == post.owner_id or await self.can_manage_post(
-                post, message_author
+                post,
+                message_author,
             ):
                 await self.send_error(
                     ctx,
@@ -3648,27 +3625,22 @@ class Threads(interactions.Extension):
             history_messages.append(msg)
 
         caller_found = next(
-            (True for msg in history_messages if msg.author.id == ctx.author.id), False
+            (True for msg in history_messages if msg.author.id == ctx.author.id),
+            False,
         )
         messages.append(
             "Note: "
-            + (
-                "No direct interaction history found"
-                if not caller_found
-                else "Direct interaction history present"
-            )
+            + ("No direct interaction history found" if not caller_found else "Direct interaction history present"),
         )
 
         messages.append("History:")
         for msg in reversed(history_messages):
             messages.append(
-                f"<@{msg.author.id}>{next(('<<<', '***', '|||', '+++')[i] for i, cond in enumerate([msg.author.id == ctx.author.id, msg.author.id == message_author.id, msg.id == message.id, True]) if cond)}{msg.content}{next(('>>>', '***', '|||', '+++')[i] for i, cond in enumerate([msg.author.id == ctx.author.id, msg.author.id == message_author.id, msg.id == message.id, True]) if cond)}"
+                f"<@{msg.author.id}>{next(('<<<', '***', '|||', '+++')[i] for i, cond in enumerate([msg.author.id == ctx.author.id, msg.author.id == message_author.id, msg.id == message.id, True]) if cond)}{msg.content}{next(('>>>', '***', '|||', '+++')[i] for i, cond in enumerate([msg.author.id == ctx.author.id, msg.author.id == message_author.id, msg.id == message.id, True]) if cond)}",
             )
 
         image_attachments = [
-            att
-            for att in message.attachments
-            if att.content_type and att.content_type.startswith("image/")
+            att for att in message.attachments if att.content_type and att.content_type.startswith("image/")
         ]
 
         if not (message.content or image_attachments):
@@ -3695,7 +3667,7 @@ class Threads(interactions.Extension):
                         "tpm": 6000,
                         "tpd": 500000,
                     },
-                ]
+                ],
             )
 
         models.extend(
@@ -3714,7 +3686,7 @@ class Threads(interactions.Extension):
                     "tpm": 7000,
                     "tpd": 500000,
                 },
-            ]
+            ],
         )
 
         completion = None
@@ -3740,10 +3712,13 @@ class Threads(interactions.Extension):
             now = datetime.now(timezone.utc)
             for bucket_key in [user_bucket_key, guild_bucket_key]:
                 bucket = self.url_cache[bucket_key]
-                if (now - bucket["last_reset"]).total_seconds() >= 60:
+                if "last_reset" not in bucket:
+                    bucket["last_reset"] = now
                     bucket["requests"] = 0
                     bucket["tokens"] = 0
-                    bucket["last_reset"] = now
+                elif (now - bucket["last_reset"]).total_seconds() >= 60:
+                    logger.debug(f"Resetting bucket {bucket}")
+                    bucket.update({"requests": 0, "tokens": 0, "last_reset": now})
 
             if (
                 self.url_cache[user_bucket_key]["requests"] >= model_config["rpm"]
@@ -3782,11 +3757,11 @@ class Threads(interactions.Extension):
                                         {
                                             "type": "image_url",
                                             "image_url": {
-                                                "url": image_attachments[0].url
+                                                "url": image_attachments[0].url,
                                             },
                                         },
                                     ],
-                                }
+                                },
                             ],
                             **self.model_params,
                         )
@@ -3798,22 +3773,16 @@ class Threads(interactions.Extension):
                                 {
                                     "role": "user",
                                     "content": (
-                                        user_message
-                                        if isinstance(user_message, str)
-                                        else orjson.dumps(user_message)
+                                        user_message if isinstance(user_message, str) else orjson.dumps(user_message)
                                     ),
-                                }
+                                },
                             ],
                             **self.model_params,
                         )
 
                     for bucket_key in [user_bucket_key, guild_bucket_key]:
-                        self.url_cache[bucket_key]["requests"] += (
-                            1 if not image_attachments else 2
-                        )
-                        self.url_cache[bucket_key][
-                            "tokens"
-                        ] += completion.usage.total_tokens
+                        self.url_cache[bucket_key]["requests"] += 1 if not image_attachments else 2
+                        self.url_cache[bucket_key]["tokens"] += completion.usage.total_tokens
 
                     break
 
@@ -3825,7 +3794,8 @@ class Threads(interactions.Extension):
         else:
             logger.error(f"AI analysis failed for message {message.id}")
             await self.send_error(
-                ctx, "AI service request failed. Please try again later."
+                ctx,
+                "AI service request failed. Please try again later.",
             )
             return None
 
@@ -3842,12 +3812,13 @@ class Threads(interactions.Extension):
                         "evidence": "N/A",
                         "impact": "N/A",
                         "context": "N/A",
-                    }
+                    },
                 ]
             for concern in key_concerns:
                 concern["type"] = concern["type"].capitalize()
             pattern_analysis = response_json.get(
-                "pattern_analysis", "No pattern analysis provided"
+                "pattern_analysis",
+                "No pattern analysis provided",
             )
             reasoning = response_json.get("reasoning", "No reasoning provided")
             if isinstance(reasoning, list):
@@ -3861,17 +3832,17 @@ class Threads(interactions.Extension):
                     "evidence": "N/A",
                     "impact": "N/A",
                     "context": "N/A",
-                }
+                },
             ]
             pattern_analysis = "No pattern analysis provided"
             reasoning = "No reasoning provided"
 
         concerns_text = []
         for concern in key_concerns:
-            concerns_text.append(f'    - {concern["type"]}')
-            concerns_text.append(f'        - Evidence: {concern["evidence"]}')
-            concerns_text.append(f'        - Impact: {concern["impact"]}')
-            concerns_text.append(f'        - Context: {concern["context"]}')
+            concerns_text.append(f"    - {concern['type']}")
+            concerns_text.append(f"        - Evidence: {concern['evidence']}")
+            concerns_text.append(f"        - Impact: {concern['impact']}")
+            concerns_text.append(f"        - Context: {concern['context']}")
 
         formatted_response = f"""
 1. Severity Score: {severity_score}
@@ -3883,16 +3854,10 @@ class Threads(interactions.Extension):
 
 4. Reasoning: {reasoning}"""
 
-        ai_response = "\n".join(
-            line for line in formatted_response.splitlines() if line.strip()
-        )
+        ai_response = "\n".join(line for line in formatted_response.splitlines() if line.strip())
 
         score = next(
-            (
-                int(m.group(1))
-                for m in [re.search(r"Severity Score:\s*(\d+)", ai_response)]
-                if m
-            ),
+            (int(m.group(1)) for m in [re.search(r"Severity Score:\s*(\d+)", ai_response)] if m),
             0,
         )
 
@@ -3901,7 +3866,7 @@ class Threads(interactions.Extension):
             self.model.record_message(post.id)
 
             timeout_duration = self.model.calculate_timeout_duration(
-                str(message_author.id)
+                str(message_author.id),
             )
             await self.model.save_timeout_history(self.TIMEOUT_HISTORY_FILE)
             await self.model.adjust_timeout_cfg()
@@ -3934,9 +3899,7 @@ class Threads(interactions.Extension):
                         else:
                             perms = deny_perms
 
-                        severity = (
-                            "extreme violation" if score >= 10 else "critical violation"
-                        )
+                        severity = "extreme violation" if score >= 10 else "critical violation"
                         await target_channel.add_permission(
                             message_author,
                             deny=perms,
@@ -3945,16 +3908,18 @@ class Threads(interactions.Extension):
 
                         if score >= 10:
                             user_data = self.model.timeout_history.get(
-                                str(message_author.id), {}
+                                str(message_author.id),
+                                {},
                             )
                             violation_count = user_data.get("violation_count", 0)
 
                             if violation_count >= 3:
                                 global_timeout_duration = min(
-                                    timeout_duration * 2, 3600
+                                    timeout_duration * 2,
+                                    3600,
                                 )
                                 timeout_until = datetime.now(timezone.utc) + timedelta(
-                                    seconds=global_timeout_duration
+                                    seconds=global_timeout_duration,
                                 )
 
                                 try:
@@ -3969,12 +3934,12 @@ class Threads(interactions.Extension):
                                     )
 
                         logger.info(
-                            f"Successfully applied permissions for user {message_author.id}"
+                            f"Successfully applied permissions for user {message_author.id}",
                         )
 
                     except Forbidden:
                         logger.error(
-                            f"Permission denied when trying to timeout user {message_author.id}"
+                            f"Permission denied when trying to timeout user {message_author.id}",
                         )
                         await self.send_error(
                             ctx,
@@ -3984,8 +3949,10 @@ class Threads(interactions.Extension):
 
                     asyncio.create_task(
                         self.restore_permissions(
-                            target_channel, message_author.user, timeout_duration // 60
-                        )
+                            target_channel,
+                            message_author.user,
+                            timeout_duration // 60,
+                        ),
                     )
 
                 except Exception as e:
@@ -3994,7 +3961,8 @@ class Threads(interactions.Extension):
                         exc_info=True,
                     )
                     await self.send_error(
-                        ctx, f"Failed to apply timeout to {message_author.mention}"
+                        ctx,
+                        f"Failed to apply timeout to {message_author.mention}",
                     )
                     return None
             else:
@@ -4019,18 +3987,10 @@ class Threads(interactions.Extension):
                         else ""
                     )
                     if score >= 8
-                    else (
-                        "Content has been flagged for review."
-                        if score >= 5
-                        else "No serious violations detected."
-                    )
+                    else ("Content has been flagged for review." if score >= 5 else "No serious violations detected.")
                 )
             ),
-            color=(
-                EmbedColor.FATAL
-                if score >= 8
-                else EmbedColor.WARN if score >= 5 else EmbedColor.INFO
-            ),
+            color=(EmbedColor.FATAL if score >= 8 else EmbedColor.WARN if score >= 5 else EmbedColor.INFO),
         )
 
         if score >= 5:
@@ -4048,23 +4008,20 @@ class Threads(interactions.Extension):
             channel=(
                 post
                 if isinstance(
-                    post, (interactions.ThreadChannel, interactions.GuildChannel)
+                    post,
+                    (interactions.ThreadChannel, interactions.GuildChannel),
                 )
                 else None
             ),
             target=message_author,
             additional_info={
                 "checked_message_id": str(message.id),
-                "checked_message_content": (
-                    message.content[:1000] if message.content else "N/A"
-                ),
+                "checked_message_content": (message.content[:1000] if message.content else "N/A"),
                 "ai_result": f"\n{ai_response}",
                 "is_offensive": score >= 8,
                 "timeout_duration": timeout_duration if score >= 8 else "N/A",
                 "global_timeout_duration": (
-                    global_timeout_duration
-                    if "global_timeout_duration" in locals()
-                    else "N/A"
+                    global_timeout_duration if "global_timeout_duration" in locals() else "N/A"
                 ),
                 "model_used": f"`{completion.model}` ({completion.usage.total_tokens} tokens)",
                 "thinking": code_block(completion.choices[0].message.reasoning, "py"),
@@ -4073,13 +4030,11 @@ class Threads(interactions.Extension):
 
     @staticmethod
     async def has_admin_permissions(member: interactions.Member) -> bool:
-        return any(
-            role.permissions & interactions.Permissions.ADMINISTRATOR
-            for role in member.roles
-        )
+        return any(role.permissions & interactions.Permissions.ADMINISTRATOR for role in member.roles)
 
     @module_group_timeout.subcommand(
-        "poll", sub_cmd_description="Start a timeout poll for a user"
+        "poll",
+        sub_cmd_description="Start a timeout poll for a user",
     )
     @interactions.slash_option(
         name="user",
@@ -4105,7 +4060,9 @@ class Threads(interactions.Extension):
         self,
         ctx: interactions.SlashContext,
         user: Union[
-            interactions.PermissionOverwrite, interactions.Role, interactions.User
+            interactions.PermissionOverwrite,
+            interactions.Role,
+            interactions.User,
         ],
         reason: str,
         duration: int,
@@ -4119,7 +4076,7 @@ class Threads(interactions.Extension):
                 ctx.channel.id not in self.TIMEOUT_CHANNEL_IDS,
                 await self.has_admin_permissions(user),
                 user.id in self.active_timeout_polls,
-            ]
+            ],
         ):
             await self.send_error(
                 ctx,
@@ -4143,7 +4100,7 @@ class Threads(interactions.Extension):
                                 else None
                             ),
                         ],
-                    )
+                    ),
                 ),
             )
             return
@@ -4160,7 +4117,9 @@ class Threads(interactions.Extension):
 
         end_time = int((datetime.now(timezone.utc) + timedelta(minutes=1)).timestamp())
         embed.add_field(
-            name="Poll duration", value=f"Ends <t:{end_time}:R>", inline=True
+            name="Poll duration",
+            value=f"Ends <t:{end_time}:R>",
+            inline=True,
         )
 
         message = await ctx.send(embeds=[embed])
@@ -4168,7 +4127,7 @@ class Threads(interactions.Extension):
         await message.add_reaction("👎")
 
         task = asyncio.create_task(
-            self.handle_timeout_poll(ctx, message, user, reason, duration)
+            self.handle_timeout_poll(ctx, message, user, reason, duration),
         )
         self.active_timeout_polls[user.id] = task
 
@@ -4192,16 +4151,12 @@ class Threads(interactions.Extension):
             await asyncio.sleep(60)
             reactions = (await ctx.channel.fetch_message(message.id)).reactions
 
-            votes = {
-                r.emoji.name: r.count - 1
-                for r in reactions
-                if r.emoji.name in ("👍", "👎")
-            }
+            votes = {r.emoji.name: r.count - 1 for r in reactions if r.emoji.name in ("👍", "👎")}
             vote_diff = votes.get("👍", 0) - votes.get("👎", 0)
 
             channel = ctx.channel
             end_time = int(
-                (datetime.now(timezone.utc) + timedelta(minutes=duration)).timestamp()
+                (datetime.now(timezone.utc) + timedelta(minutes=duration)).timestamp(),
             )
 
             if vote_diff >= self.TIMEOUT_REQUIRED_DIFFERENCE:
@@ -4232,7 +4187,9 @@ class Threads(interactions.Extension):
 
                         reason_str = f"Member {target.display_name}({target.id}) timeout until <t:{end_time}:f> in Channel {target_channel.name} reason:{reason[:50] if len(reason) > 51 else reason}"
                         await target_channel.add_permission(
-                            target, deny=perms, reason=reason_str
+                            target,
+                            deny=perms,
+                            reason=reason_str,
                         )
 
                     except Forbidden:
@@ -4243,7 +4200,7 @@ class Threads(interactions.Extension):
                         return
 
                     asyncio.create_task(
-                        self.restore_permissions(target_channel, target, duration)
+                        self.restore_permissions(target_channel, target, duration),
                     )
 
                     result_embed = await self.create_embed(title="Timeout Poll Result")
@@ -4253,10 +4210,14 @@ class Threads(interactions.Extension):
                         inline=True,
                     )
                     result_embed.add_field(
-                        name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
+                        name="Yes Votes",
+                        value=str(votes.get("👍", 0)),
+                        inline=True,
                     )
                     result_embed.add_field(
-                        name="No Votes", value=str(votes.get("👎", 0)), inline=True
+                        name="No Votes",
+                        value=str(votes.get("👎", 0)),
+                        inline=True,
                     )
 
                     await self.send_success(
@@ -4271,7 +4232,8 @@ class Threads(interactions.Extension):
                 except Exception as e:
                     logger.error(f"Failed to apply timeout: {e}", exc_info=True)
                     await self.send_error(
-                        ctx, f"Failed to apply timeout to {target.mention}"
+                        ctx,
+                        f"Failed to apply timeout to {target.mention}",
                     )
             else:
                 result_embed = await self.create_embed(title="Timeout Poll Result")
@@ -4281,10 +4243,14 @@ class Threads(interactions.Extension):
                     inline=True,
                 )
                 result_embed.add_field(
-                    name="Yes Votes", value=str(votes.get("👍", 0)), inline=True
+                    name="Yes Votes",
+                    value=str(votes.get("👍", 0)),
+                    inline=True,
                 )
                 result_embed.add_field(
-                    name="No Votes", value=str(votes.get("👎", 0)), inline=True
+                    name="No Votes",
+                    value=str(votes.get("👎", 0)),
+                    inline=True,
                 )
                 result_embed.add_field(
                     name="Required difference",
@@ -4297,14 +4263,17 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error handling timeout poll: {e}", exc_info=True)
             await self.send_error(
-                ctx, "An error occurred while processing the timeout poll."
+                ctx,
+                "An error occurred while processing the timeout poll.",
             )
 
     async def restore_permissions(
         self,
         channel: Union[interactions.GuildChannel, interactions.ThreadChannel],
         member: Union[
-            interactions.PermissionOverwrite, interactions.Role, interactions.User
+            interactions.PermissionOverwrite,
+            interactions.Role,
+            interactions.User,
         ],
         duration: int,
     ) -> None:
@@ -4317,14 +4286,15 @@ class Threads(interactions.Extension):
                 try:
                     end_time = int(datetime.now(timezone.utc).timestamp())
                     await channel.delete_permission(
-                        member, reason=f"Timeout expired at <t:{end_time}:f>"
+                        member,
+                        reason=f"Timeout expired at <t:{end_time}:f>",
                     )
                     break
                 except Exception as e:
                     if attempt == max_retries - 1:
                         raise
                     logger.warning(
-                        f"Failed to restore permissions (attempt {attempt + 1}): {e}"
+                        f"Failed to restore permissions (attempt {attempt + 1}): {e}",
                     )
                     await asyncio.sleep(1)
 
@@ -4352,16 +4322,20 @@ class Threads(interactions.Extension):
         opt_type=interactions.OptionType.STRING,
         choices=[
             interactions.SlashCommandChoice(
-                name="Simplified Chinese (Mainland China)", value="cn"
+                name="Simplified Chinese (Mainland China)",
+                value="cn",
             ),
             interactions.SlashCommandChoice(
-                name="Traditional Chinese (Taiwan)", value="tw"
+                name="Traditional Chinese (Taiwan)",
+                value="tw",
             ),
             interactions.SlashCommandChoice(
-                name="Traditional Chinese (Hong Kong)", value="hk"
+                name="Traditional Chinese (Hong Kong)",
+                value="hk",
             ),
             interactions.SlashCommandChoice(
-                name="Traditional Chinese (Mainland China)", value="cnt"
+                name="Traditional Chinese (Mainland China)",
+                value="cnt",
             ),
             interactions.SlashCommandChoice(name="Japanese Shinjitai", value="jp"),
         ],
@@ -4373,16 +4347,20 @@ class Threads(interactions.Extension):
         opt_type=interactions.OptionType.STRING,
         choices=[
             interactions.SlashCommandChoice(
-                name="Simplified Chinese (Mainland China)", value="cn"
+                name="Simplified Chinese (Mainland China)",
+                value="cn",
             ),
             interactions.SlashCommandChoice(
-                name="Traditional Chinese (Taiwan)", value="tw"
+                name="Traditional Chinese (Taiwan)",
+                value="tw",
             ),
             interactions.SlashCommandChoice(
-                name="Traditional Chinese (Hong Kong)", value="hk"
+                name="Traditional Chinese (Hong Kong)",
+                value="hk",
             ),
             interactions.SlashCommandChoice(
-                name="Traditional Chinese (Mainland China)", value="cnt"
+                name="Traditional Chinese (Mainland China)",
+                value="cnt",
             ),
             interactions.SlashCommandChoice(name="Japanese Shinjitai", value="jp"),
         ],
@@ -4400,11 +4378,15 @@ class Threads(interactions.Extension):
         ],
     )
     @interactions.slash_default_member_permission(
-        interactions.Permissions.ADMINISTRATOR
+        interactions.Permissions.ADMINISTRATOR,
     )
     @interactions.max_concurrency(interactions.Buckets.GUILD, 1)
     async def convert_names(
-        self, ctx: interactions.SlashContext, source: str, target: str, scope: str
+        self,
+        ctx: interactions.SlashContext,
+        source: str,
+        target: str,
+        scope: str,
     ) -> None:
         if not ctx.author.guild_permissions & interactions.Permissions.ADMINISTRATOR:
             await self.send_error(ctx, "Only administrators can use this command.")
@@ -4412,7 +4394,8 @@ class Threads(interactions.Extension):
 
         if source == target:
             await self.send_error(
-                ctx, "Source and target languages cannot be the same."
+                ctx,
+                "Source and target languages cannot be the same.",
             )
             return
 
@@ -4440,7 +4423,9 @@ class Threads(interactions.Extension):
         if converter_key not in self.model.converters:
             with_phrase = {source, target} == {"cn", "tw"}
             self.model.converters[converter_key] = StarCC.PresetConversion(
-                src=source, dst=target, with_phrase=with_phrase
+                src=source,
+                dst=target,
+                with_phrase=with_phrase,
             )
 
         await self.send_success(
@@ -4449,7 +4434,7 @@ class Threads(interactions.Extension):
         )
 
         task = asyncio.create_task(
-            self.perform_conversion(ctx.guild, f"{source}2{target}", scope)
+            self.perform_conversion(ctx.guild, f"{source}2{target}", scope),
         )
         self.conversion_task = task
         await task
@@ -4470,10 +4455,7 @@ class Threads(interactions.Extension):
                     await guild.edit(name=new_name)
                     await asyncio.sleep(2)
 
-                if (
-                    guild.description
-                    and (new_desc := converter(guild.description)) != guild.description
-                ):
+                if guild.description and (new_desc := converter(guild.description)) != guild.description:
                     await guild.edit(description=new_desc)
                     await asyncio.sleep(2)
 
@@ -4493,11 +4475,7 @@ class Threads(interactions.Extension):
                     if channel.id not in channels:
                         channels.add(channel.id)
                         try:
-                            if (
-                                channel.name
-                                and (new_name := converter(channel.name))
-                                != channel.name
-                            ):
+                            if channel.name and (new_name := converter(channel.name)) != channel.name:
                                 await channel.edit(name=new_name)
                                 await asyncio.sleep(2)
 
@@ -4505,30 +4483,23 @@ class Threads(interactions.Extension):
                                 channel,
                                 (interactions.GuildText, interactions.GuildNews),
                             ):
-                                if (
-                                    channel.topic
-                                    and (new_topic := converter(channel.topic))
-                                    != channel.topic
-                                ):
+                                if channel.topic and (new_topic := converter(channel.topic)) != channel.topic:
                                     await channel.edit(topic=new_topic)
                                     await asyncio.sleep(2)
 
-                            if (
-                                isinstance(channel, interactions.GuildForum)
-                                and channel.available_tags
-                            ):
+                            if isinstance(channel, interactions.GuildForum) and channel.available_tags:
                                 for tag in channel.available_tags:
-                                    if (
-                                        new_tag_name := converter(tag.name)
-                                    ) != tag.name:
+                                    if (new_tag_name := converter(tag.name)) != tag.name:
                                         await channel.edit_tag(
-                                            tag.id, name=new_tag_name
+                                            tag.id,
+                                            name=new_tag_name,
                                         )
                                         await asyncio.sleep(2)
 
                         except Exception as e:
                             logger.error(
-                                f"Channel conversion failed: {e}", exc_info=True
+                                f"Channel conversion failed: {e}",
+                                exc_info=True,
                             )
 
                         if isinstance(channel, interactions.GuildCategory):
@@ -4536,11 +4507,7 @@ class Threads(interactions.Extension):
                                 if child.id not in channels:
                                     channels.add(child.id)
                                     try:
-                                        if (
-                                            child.name
-                                            and (new_name := converter(child.name))
-                                            != child.name
-                                        ):
+                                        if child.name and (new_name := converter(child.name)) != child.name:
                                             await child.edit(name=new_name)
                                             await asyncio.sleep(2)
 
@@ -4551,26 +4518,16 @@ class Threads(interactions.Extension):
                                                 interactions.GuildNews,
                                             ),
                                         ):
-                                            if (
-                                                child.topic
-                                                and (
-                                                    new_topic := converter(child.topic)
-                                                )
-                                                != child.topic
-                                            ):
+                                            if child.topic and (new_topic := converter(child.topic)) != child.topic:
                                                 await child.edit(topic=new_topic)
                                                 await asyncio.sleep(2)
 
-                                        if (
-                                            isinstance(child, interactions.GuildForum)
-                                            and child.available_tags
-                                        ):
+                                        if isinstance(child, interactions.GuildForum) and child.available_tags:
                                             for tag in child.available_tags:
-                                                if (
-                                                    new_tag_name := converter(tag.name)
-                                                ) != tag.name:
+                                                if (new_tag_name := converter(tag.name)) != tag.name:
                                                     await child.edit_tag(
-                                                        tag.id, name=new_tag_name
+                                                        tag.id,
+                                                        name=new_tag_name,
                                                     )
                                                     await asyncio.sleep(2)
 
@@ -4625,7 +4582,9 @@ class Threads(interactions.Extension):
     )
     @log_action
     async def lock_post(
-        self, ctx: interactions.SlashContext, reason: str
+        self,
+        ctx: interactions.SlashContext,
+        reason: str,
     ) -> ActionDetails:
         return await self.toggle_post_lock(ctx, ActionType.LOCK, reason)
 
@@ -4638,13 +4597,18 @@ class Threads(interactions.Extension):
     )
     @log_action
     async def unlock_post(
-        self, ctx: interactions.SlashContext, reason: str
+        self,
+        ctx: interactions.SlashContext,
+        reason: str,
     ) -> ActionDetails:
         return await self.toggle_post_lock(ctx, ActionType.UNLOCK, reason)
 
     @log_action
     async def toggle_post_lock(
-        self, ctx: interactions.SlashContext, action: ActionType, reason: str
+        self,
+        ctx: interactions.SlashContext,
+        action: ActionType,
+        reason: str,
     ) -> Optional[ActionDetails]:
         if not await self.validate_channel(ctx):
             await self.send_error(
@@ -4656,9 +4620,7 @@ class Threads(interactions.Extension):
         thread = ctx.channel
         desired_state = action == ActionType.LOCK
         action_name = action.name.lower()
-        action_past_tense: Literal["locked", "unlocked"] = (
-            "locked" if desired_state else "unlocked"
-        )
+        action_past_tense: Literal["locked", "unlocked"] = "locked" if desired_state else "unlocked"
 
         async def check_conditions() -> Optional[str]:
             if thread.archived:
@@ -4685,7 +4647,7 @@ class Threads(interactions.Extension):
             logger.exception(f"Failed to {action_name} thread {thread.id}")
             await self.send_error(
                 ctx,
-                f"Failed to {action_name} the thread due to an error: {str(e)}. Please try again or contact a moderator if the issue persists.",
+                f"Failed to {action_name} the thread due to an error: {e!s}. Please try again or contact a moderator if the issue persists.",
             )
             return None
 
@@ -4711,7 +4673,8 @@ class Threads(interactions.Extension):
     @interactions.message_context_menu(name="Message in Thread")
     @log_action
     async def message_actions(
-        self, ctx: interactions.ContextMenuContext
+        self,
+        ctx: interactions.ContextMenuContext,
     ) -> Optional[ActionDetails]:
         message = ctx.target
         options = [
@@ -4719,11 +4682,12 @@ class Threads(interactions.Extension):
                 label="Check with AI",
                 value="ai_check",
                 description="Use AI to check for offensive content",
-            )
+            ),
         ]
 
         if isinstance(
-            ctx.channel, interactions.ThreadChannel
+            ctx.channel,
+            interactions.ThreadChannel,
         ) and await self.can_manage_message(ctx.channel, ctx.author):
             options.extend(
                 [
@@ -4737,7 +4701,7 @@ class Threads(interactions.Extension):
                         value=f"{'unpin' if message.pinned else 'pin'}",
                         description=f"{'Unpin' if message.pinned else 'Pin'} this message",
                     ),
-                ]
+                ],
             )
 
         select_menu: interactions.StringSelectMenu = interactions.StringSelectMenu(
@@ -4759,7 +4723,8 @@ class Threads(interactions.Extension):
     @interactions.component_callback(message_action_regex_pattern)
     @log_action
     async def on_message_action(
-        self, ctx: interactions.ComponentContext
+        self,
+        ctx: interactions.ComponentContext,
     ) -> Optional[ActionDetails]:
         if not (match := self.message_action_regex_pattern.match(ctx.custom_id)):
             await self.send_error(
@@ -4802,7 +4767,10 @@ class Threads(interactions.Extension):
                     await self.delete_message_action(ctx, channel, message)
                     if action == "delete"
                     else await self.pin_message_action(
-                        ctx, channel, message, action == "pin"
+                        ctx,
+                        channel,
+                        message,
+                        action == "pin",
                     )
                 )
             case "ai_check":
@@ -4823,7 +4791,8 @@ class Threads(interactions.Extension):
         try:
             await message.delete()
             await self.send_success(
-                ctx, f"Message successfully deleted from thread `{post.name}`."
+                ctx,
+                f"Message successfully deleted from thread `{post.name}`.",
             )
 
             return ActionDetails(
@@ -4835,13 +4804,9 @@ class Threads(interactions.Extension):
                 target=message.author,
                 additional_info={
                     "deleted_message_id": str(message.id),
-                    "deleted_message_content": (
-                        message.content[:1000] if message.content else "N/A"
-                    ),
+                    "deleted_message_content": (message.content[:1000] if message.content else "N/A"),
                     "deleted_message_attachments": (
-                        [a.url for a in message.attachments]
-                        if message.attachments
-                        else []
+                        [a.url for a in message.attachments] if message.attachments else []
                     ),
                 },
             )
@@ -4858,13 +4823,12 @@ class Threads(interactions.Extension):
         pin: bool,
     ) -> Optional[ActionDetails]:
         try:
-            action_type, action_desc = (
-                (ActionType.PIN, "pinned") if pin else (ActionType.UNPIN, "unpinned")
-            )
+            action_type, action_desc = (ActionType.PIN, "pinned") if pin else (ActionType.UNPIN, "unpinned")
             await message.pin() if pin else await message.unpin()
 
             await self.send_success(
-                ctx, f"Message has been successfully {action_desc}."
+                ctx,
+                f"Message has been successfully {action_desc}.",
             )
 
             return ActionDetails(
@@ -4876,9 +4840,7 @@ class Threads(interactions.Extension):
                 target=message.author,
                 additional_info={
                     f"{action_desc}_message_id": str(message.id),
-                    f"{action_desc}_message_content": (
-                        message.content[:10] if message.content else "N/A"
-                    ),
+                    f"{action_desc}_message_content": (message.content[:10] if message.content else "N/A"),
                 },
             )
         except Exception as e:
@@ -4902,7 +4864,7 @@ class Threads(interactions.Extension):
             return
 
         has_perm, error_message = await self.check_permissions(
-            interactions.SlashContext(ctx)
+            interactions.SlashContext(ctx),
         )
         if not has_perm:
             logger.warning(f"Insufficient permissions for user {ctx.author.id}")
@@ -4911,9 +4873,10 @@ class Threads(interactions.Extension):
 
         post: interactions.GuildForumPost = ctx.channel
         try:
-            available_tags: Tuple[interactions.ThreadTag, ...] = (
-                await self.fetch_available_tags(post.parent_id)
-            )
+            available_tags: tuple[
+                interactions.ThreadTag,
+                ...,
+            ] = await self.fetch_available_tags(post.parent_id)
             if not available_tags:
                 logger.warning(f"No available tags found for forum {post.parent_id}")
                 await self.send_error(ctx, "No tags are available for this forum.")
@@ -4923,14 +4886,15 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error fetching available tags: {e}", exc_info=True)
             await self.send_error(
-                ctx, "An error occurred while fetching available tags."
+                ctx,
+                "An error occurred while fetching available tags.",
             )
             return
 
-        current_tag_ids: Set[int] = {tag.id for tag in post.applied_tags}
+        current_tag_ids: set[int] = {tag.id for tag in post.applied_tags}
         logger.info(f"Current tag IDs for post {post.id}: {current_tag_ids}")
 
-        options: Tuple[interactions.StringSelectOption, ...] = tuple(
+        options: tuple[interactions.StringSelectOption, ...] = tuple(
             interactions.StringSelectOption(
                 label=f"{'Remove' if tag.id in current_tag_ids else 'Add'}: {tag.name}",
                 value=f"{'remove' if tag.id in current_tag_ids else 'add'}:{tag.id}",
@@ -4963,11 +4927,13 @@ class Threads(interactions.Extension):
         except Exception as e:
             logger.error(f"Error sending tag management menu: {e}", exc_info=True)
             await self.send_error(
-                ctx, "An error occurred while creating the tag management menu."
+                ctx,
+                "An error occurred while creating the tag management menu.",
             )
 
     async def fetch_available_tags(
-        self, parent_id: int
+        self,
+        parent_id: int,
     ) -> tuple[interactions.ThreadTag, ...]:
         try:
             channel: interactions.GuildChannel = await self.bot.fetch_channel(parent_id)
@@ -4988,7 +4954,8 @@ class Threads(interactions.Extension):
     @interactions.component_callback(manage_tags_regex_pattern)
     @log_action
     async def on_manage_tags(
-        self, ctx: interactions.ComponentContext
+        self,
+        ctx: interactions.ComponentContext,
     ) -> Optional[ActionDetails]:
         logger.info(f"on_manage_tags invoked with custom_id: {ctx.custom_id}")
         if not (match := self.manage_tags_regex_pattern.match(ctx.custom_id)):
@@ -5001,7 +4968,8 @@ class Threads(interactions.Extension):
             parent_forum = await self.bot.fetch_channel(ctx.channel.parent_id)
         except Exception as e:
             logger.error(
-                f"Channel fetch error for post_id {post_id}: {e}", exc_info=True
+                f"Channel fetch error for post_id {post_id}: {e}",
+                exc_info=True,
             )
             await self.send_error(ctx, "Failed to retrieve necessary channels.")
             return None
@@ -5010,11 +4978,7 @@ class Threads(interactions.Extension):
             await self.send_error(ctx, "Invalid forum post.")
             return None
         tag_updates = {
-            action: frozenset(
-                int(value.split(":")[1])
-                for value in ctx.values
-                if value.startswith(f"{action}:")
-            )
+            action: frozenset(int(value.split(":")[1]) for value in ctx.values if value.startswith(f"{action}:"))
             for action in ("add", "remove")
         }
         logger.info(f"Processing tag updates for post {post_id}: {tag_updates}")
@@ -5061,7 +5025,7 @@ class Threads(interactions.Extension):
                     for action, tag_ids in tag_updates.items()
                     if tag_ids
                     for tag_id in tag_ids
-                ]
+                ],
             },
         )
 
@@ -5070,7 +5034,8 @@ class Threads(interactions.Extension):
     @interactions.user_context_menu(name="User in Thread")
     @log_action
     async def manage_user_in_forum_post(
-        self, ctx: interactions.ContextMenuContext
+        self,
+        ctx: interactions.ContextMenuContext,
     ) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(
@@ -5089,9 +5054,7 @@ class Threads(interactions.Extension):
             )
             return
 
-        if target_user.id == ctx.author.id and self.CONGRESS_MEMBER_ROLE not in {
-            role.id for role in ctx.author.roles
-        }:
+        if target_user.id == ctx.author.id and self.CONGRESS_MEMBER_ROLE not in {role.id for role in ctx.author.roles}:
             await self.send_error(
                 ctx,
                 f"Only <@&{self.CONGRESS_MEMBER_ROLE}> have permission to manage their own status in threads. Please contact a <@&{self.CONGRESS_MEMBER_ROLE}> for assistance.",
@@ -5106,7 +5069,8 @@ class Threads(interactions.Extension):
             return
 
         channel_id, thread_id, user_id = map(
-            str, (thread.parent_id, thread.id, target_user.id)
+            str,
+            (thread.parent_id, thread.id, target_user.id),
         )
         is_banned = await self.is_user_banned(channel_id, thread_id, user_id)
         has_permissions = self.model.has_thread_permissions(thread_id, user_id)
@@ -5144,7 +5108,8 @@ class Threads(interactions.Extension):
     @interactions.component_callback(manage_user_regex_pattern)
     @log_action
     async def on_manage_user(
-        self, ctx: Union[interactions.ComponentContext, interactions.ContextMenuContext]
+        self,
+        ctx: Union[interactions.ComponentContext, interactions.ContextMenuContext],
     ) -> Optional[ActionDetails]:
         logger.info(f"on_manage_user called with custom_id: {ctx.custom_id}")
 
@@ -5158,7 +5123,7 @@ class Threads(interactions.Extension):
 
         channel_id, post_id, user_id = match.groups()
         logger.info(
-            f"Parsed IDs - channel: {channel_id}, post: {post_id}, user: {user_id}"
+            f"Parsed IDs - channel: {channel_id}, post: {post_id}, user: {user_id}",
         )
 
         if not ctx.values:
@@ -5201,7 +5166,9 @@ class Threads(interactions.Extension):
                 return await self.ban_unban_user(ctx, member, ActionType(action))
             case ActionType.SHARE_PERMISSIONS | ActionType.REVOKE_PERMISSIONS:
                 return await self.share_revoke_permissions(
-                    ctx, member, ActionType(action)
+                    ctx,
+                    member,
+                    ActionType(action),
                 )
             case _:
                 await self.send_error(
@@ -5250,13 +5217,12 @@ class Threads(interactions.Extension):
                     f"You need the <@&{self.CONGRESS_MOD_ROLE}> role to manage thread permissions in this forum. Please contact a moderator for assistance.",
                 )
                 return None
-        else:
-            if not await self.can_manage_post(thread, author):
-                await self.send_error(
-                    ctx,
-                    f"You can only {action.name.lower()} permissions for threads you manage. Please ensure you have the correct permissions or contact a moderator.",
-                )
-                return None
+        elif not await self.can_manage_post(thread, author):
+            await self.send_error(
+                ctx,
+                f"You can only {action.name.lower()} permissions for threads you manage. Please ensure you have the correct permissions or contact a moderator.",
+            )
+            return None
 
         thread_id = str(thread.id)
         user_id = str(member.id)
@@ -5312,7 +5278,8 @@ class Threads(interactions.Extension):
 
         thread = ctx.channel
         author_roles, member_roles = map(
-            lambda x: {role.id for role in x.roles}, (ctx.author, member)
+            lambda x: {role.id for role in x.roles},
+            (ctx.author, member),
         )
         if any(
             role_id in member_roles and thread.parent_id in channels
@@ -5326,9 +5293,7 @@ class Threads(interactions.Extension):
 
         if thread.parent_id == self.CONGRESS_ID:
             if self.CONGRESS_MEMBER_ROLE in author_roles:
-                if action is ActionType.BAN or (
-                    action is ActionType.UNBAN and member.id != ctx.author.id
-                ):
+                if action is ActionType.BAN or (action is ActionType.UNBAN and member.id != ctx.author.id):
                     await self.send_error(
                         ctx,
                         f"<@&{self.CONGRESS_MEMBER_ROLE}> members can only unban themselves.",
@@ -5355,13 +5320,15 @@ class Threads(interactions.Extension):
             return None
 
         channel_id, thread_id, user_id = map(
-            str, (thread.parent_id, thread.id, member.id)
+            str,
+            (thread.parent_id, thread.id, member.id),
         )
 
         async with self.ban_lock:
             banned_users = self.model.banned_users
             thread_users = banned_users.setdefault(
-                channel_id, defaultdict(set)
+                channel_id,
+                defaultdict(set),
             ).setdefault(thread_id, set())
 
             match action:
@@ -5404,10 +5371,11 @@ class Threads(interactions.Extension):
             },
         )
 
-    # List commands
+    # list commands
 
     @module_base.subcommand(
-        "list", sub_cmd_description="List information for current thread"
+        "list",
+        sub_cmd_description="list information for current thread",
     )
     @interactions.slash_option(
         name="type",
@@ -5417,14 +5385,17 @@ class Threads(interactions.Extension):
         choices=[
             interactions.SlashCommandChoice(name="Banned Users", value="banned"),
             interactions.SlashCommandChoice(
-                name="Thread Permissions", value="permissions"
+                name="Thread Permissions",
+                value="permissions",
             ),
             interactions.SlashCommandChoice(name="Post Statistics", value="stats"),
         ],
         argument_name="list_type",
     )
     async def list_thread_info(
-        self, ctx: interactions.SlashContext, list_type: str
+        self,
+        ctx: interactions.SlashContext,
+        list_type: str,
     ) -> None:
         if not await self.validate_channel(ctx):
             await self.send_error(
@@ -5457,7 +5428,7 @@ class Threads(interactions.Extension):
 
                 embeds = []
                 current_embed = await self.create_embed(
-                    title=f"Banned Users in <#{post_id}>"
+                    title=f"Banned Users in <#{post_id}>",
                 )
 
                 for user_id in banned_users:
@@ -5472,11 +5443,12 @@ class Threads(interactions.Extension):
                         if len(current_embed.fields) >= 5:
                             embeds.append(current_embed)
                             current_embed = await self.create_embed(
-                                title=f"Banned Users in <#{post_id}>"
+                                title=f"Banned Users in <#{post_id}>",
                             )
                     except Exception as e:
                         logger.error(
-                            f"Error fetching user {user_id}: {e}", exc_info=True
+                            f"Error fetching user {user_id}: {e}",
+                            exc_info=True,
                         )
                         continue
 
@@ -5484,7 +5456,9 @@ class Threads(interactions.Extension):
                     embeds.append(current_embed)
 
                 await self.send_paginated_response(
-                    ctx, embeds, "No banned users were found in this thread."
+                    ctx,
+                    embeds,
+                    "No banned users were found in this thread.",
                 )
 
             case "permissions":
@@ -5499,7 +5473,7 @@ class Threads(interactions.Extension):
 
                 embeds = []
                 current_embed = await self.create_embed(
-                    title=f"Users with Permissions in <#{post_id}>"
+                    title=f"Users with Permissions in <#{post_id}>",
                 )
 
                 for user_id in users_with_permissions:
@@ -5514,11 +5488,12 @@ class Threads(interactions.Extension):
                         if len(current_embed.fields) >= 5:
                             embeds.append(current_embed)
                             current_embed = await self.create_embed(
-                                title=f"Users with Permissions in <#{post_id}>"
+                                title=f"Users with Permissions in <#{post_id}>",
                             )
                     except Exception as e:
                         logger.error(
-                            f"Error fetching user {user_id}: {e}", exc_info=True
+                            f"Error fetching user {user_id}: {e}",
+                            exc_info=True,
                         )
                         continue
 
@@ -5563,7 +5538,8 @@ class Threads(interactions.Extension):
         choices=[
             interactions.SlashCommandChoice(name="Banned Users", value="banned"),
             interactions.SlashCommandChoice(
-                name="Thread Permissions", value="permissions"
+                name="Thread Permissions",
+                value="permissions",
             ),
             interactions.SlashCommandChoice(name="Post Statistics", value="stats"),
             interactions.SlashCommandChoice(name="Featured Threads", value="featured"),
@@ -5571,11 +5547,14 @@ class Threads(interactions.Extension):
         argument_name="view_type",
     )
     async def list_debug_info(
-        self, ctx: interactions.SlashContext, view_type: str
+        self,
+        ctx: interactions.SlashContext,
+        view_type: str,
     ) -> None:
         if not any(role.id == self.THREADS_ROLE_ID for role in ctx.author.roles):
             await self.send_error(
-                ctx, "You do not have permission to use this command."
+                ctx,
+                "You do not have permission to use this command.",
             )
             return
 
@@ -5586,7 +5565,9 @@ class Threads(interactions.Extension):
                 banned_users = await self._get_merged_banned_users()
                 embeds = await self._create_banned_user_embeds(banned_users)
                 await self.send_paginated_response(
-                    ctx, embeds, "No banned users found."
+                    ctx,
+                    embeds,
+                    "No banned users found.",
                 )
             case "permissions":
                 permissions = await self._get_merged_permissions()
@@ -5595,13 +5576,17 @@ class Threads(interactions.Extension):
                     permissions_dict[thread_id].add(user_id)
                 embeds = await self._create_permission_embeds(permissions_dict)
                 await self.send_paginated_response(
-                    ctx, embeds, "No thread permissions found."
+                    ctx,
+                    embeds,
+                    "No thread permissions found.",
                 )
             case "stats":
                 stats = await self._get_merged_stats()
                 embeds = await self._create_stats_embeds(stats)
                 await self.send_paginated_response(
-                    ctx, embeds, "No post statistics found."
+                    ctx,
+                    embeds,
+                    "No post statistics found.",
                 )
             case "featured":
                 featured_posts = await self._get_merged_featured_posts()
@@ -5611,10 +5596,12 @@ class Threads(interactions.Extension):
                     featured_posts_dict[forum_id] = forum_posts
                 embeds = await self._create_featured_embeds(featured_posts_dict, stats)
                 await self.send_paginated_response(
-                    ctx, embeds, "No featured threads found."
+                    ctx,
+                    embeds,
+                    "No featured threads found.",
                 )
 
-    async def _get_merged_banned_users(self) -> Set[Tuple[str, str, str]]:
+    async def _get_merged_banned_users(self) -> set[tuple[str, str, str]]:
         try:
             await self.model.load_banned_users(self.BANNED_USERS_FILE)
             return {
@@ -5627,19 +5614,17 @@ class Threads(interactions.Extension):
             logger.error(f"Error loading banned users: {e}", exc_info=True)
             return set()
 
-    async def _get_merged_permissions(self) -> Set[Tuple[str, str]]:
+    async def _get_merged_permissions(self) -> set[tuple[str, str]]:
         try:
             await self.model.load_thread_permissions(self.THREAD_PERMISSIONS_FILE)
             return {
-                (thread_id, user_id)
-                for thread_id, users in self.model.thread_permissions.items()
-                for user_id in users
+                (thread_id, user_id) for thread_id, users in self.model.thread_permissions.items() for user_id in users
             }
         except Exception as e:
             logger.error(f"Error loading thread permissions: {e}", exc_info=True)
             return set()
 
-    async def _get_merged_stats(self) -> Dict[str, PostStats]:
+    async def _get_merged_stats(self) -> dict[str, PostStats]:
         try:
             await self.model.load_post_stats(self.POST_STATS_FILE)
             return self.model.post_stats
@@ -5647,7 +5632,7 @@ class Threads(interactions.Extension):
             logger.error(f"Error loading post stats: {e}", exc_info=True)
             return {}
 
-    async def _get_merged_featured_posts(self) -> Dict[str, List[str]]:
+    async def _get_merged_featured_posts(self) -> dict[str, list[str]]:
         try:
             await self.model.load_featured_posts(self.FEATURED_POSTS_FILE)
             return self.model.featured_posts
@@ -5656,10 +5641,11 @@ class Threads(interactions.Extension):
             return {}
 
     async def _create_banned_user_embeds(
-        self, banned_users: Set[Tuple[str, str, str]]
-    ) -> List[interactions.Embed]:
-        embeds: List[interactions.Embed] = []
-        current_embed = await self.create_embed(title="Banned Users List")
+        self,
+        banned_users: set[tuple[str, str, str]],
+    ) -> list[interactions.Embed]:
+        embeds: list[interactions.Embed] = []
+        current_embed = await self.create_embed(title="Banned Users list")
 
         for channel_id, post_id, user_id in banned_users:
             try:
@@ -5691,7 +5677,7 @@ class Threads(interactions.Extension):
 
                 if len(current_embed.fields) >= 5:
                     embeds.append(current_embed)
-                    current_embed = await self.create_embed(title="Banned Users List")
+                    current_embed = await self.create_embed(title="Banned Users list")
 
             except Exception as e:
                 logger.error(f"Error fetching ban info: {e}", exc_info=True)
@@ -5712,10 +5698,11 @@ class Threads(interactions.Extension):
         return embeds
 
     async def _create_permission_embeds(
-        self, permissions: DefaultDict[str, Set[str]]
-    ) -> List[interactions.Embed]:
-        embeds: List[interactions.Embed] = []
-        current_embed = await self.create_embed(title="Thread Permissions List")
+        self,
+        permissions: defaultdict[str, set[str]],
+    ) -> list[interactions.Embed]:
+        embeds: list[interactions.Embed] = []
+        current_embed = await self.create_embed(title="Thread Permissions list")
 
         for post_id, user_ids in permissions.items():
             try:
@@ -5732,20 +5719,19 @@ class Threads(interactions.Extension):
 
                         current_embed.add_field(
                             name="Permission Entry",
-                            value=(
-                                f"- Thread: <#{post_id}>\n" f"- User: {user.mention}"
-                            ),
+                            value=(f"- Thread: <#{post_id}>\n- User: {user.mention}"),
                             inline=True,
                         )
 
                         if len(current_embed.fields) >= 5:
                             embeds.append(current_embed)
                             current_embed = await self.create_embed(
-                                title="Thread Permissions List"
+                                title="Thread Permissions list",
                             )
                     except Exception as e:
                         logger.error(
-                            f"Error fetching user {user_id}: {e}", exc_info=True
+                            f"Error fetching user {user_id}: {e}",
+                            exc_info=True,
                         )
                         continue
 
@@ -5753,10 +5739,7 @@ class Threads(interactions.Extension):
                 logger.error(f"Error fetching thread {post_id}: {e}", exc_info=True)
                 current_embed.add_field(
                     name="Permission Entry",
-                    value=(
-                        f"- Thread: <#{post_id}>\n"
-                        "(Unable to fetch complete information)"
-                    ),
+                    value=(f"- Thread: <#{post_id}>\n(Unable to fetch complete information)"),
                     inline=True,
                 )
 
@@ -5766,13 +5749,16 @@ class Threads(interactions.Extension):
         return embeds
 
     async def _create_stats_embeds(
-        self, stats: Dict[str, PostStats]
-    ) -> List[interactions.Embed]:
-        embeds: List[interactions.Embed] = []
+        self,
+        stats: dict[str, PostStats],
+    ) -> list[interactions.Embed]:
+        embeds: list[interactions.Embed] = []
         current_embed = await self.create_embed(title="Post Statistics")
 
         sorted_stats = sorted(
-            stats.items(), key=lambda item: item[1].message_count, reverse=True
+            stats.items(),
+            key=lambda item: item[1].message_count,
+            reverse=True,
         )
 
         for post_id, post_stats in sorted_stats:
@@ -5800,11 +5786,13 @@ class Threads(interactions.Extension):
         return embeds
 
     async def _create_featured_embeds(
-        self, featured_posts: Dict[str, List[str]], stats: Dict[str, PostStats]
-    ) -> List[interactions.Embed]:
-        embeds: List[interactions.Embed] = []
+        self,
+        featured_posts: dict[str, list[str]],
+        stats: dict[str, PostStats],
+    ) -> list[interactions.Embed]:
+        embeds: list[interactions.Embed] = []
         current_embed: interactions.Embed = await self.create_embed(
-            title="Featured Posts"
+            title="Featured Posts",
         )
 
         for forum_id, posts in featured_posts.items():
@@ -5819,7 +5807,9 @@ class Threads(interactions.Extension):
                     )
 
                     current_embed.add_field(
-                        name=f"<#{post_id}>", value=field_value, inline=True
+                        name=f"<#{post_id}>",
+                        value=field_value,
+                        inline=True,
                     )
 
                     if len(current_embed.fields) >= 5:
@@ -5838,7 +5828,7 @@ class Threads(interactions.Extension):
     async def send_paginated_response(
         self,
         ctx: interactions.SlashContext,
-        embeds: List[interactions.Embed],
+        embeds: list[interactions.Embed],
         empty_message: str,
     ) -> None:
         if not embeds:
@@ -5875,20 +5865,14 @@ class Threads(interactions.Extension):
 
             message_id = str(message.id)
 
-            star_reactions = [
-                r for r in message.reactions if r.emoji.name in self.STAR_EMOJIS
-            ]
+            star_reactions = [r for r in message.reactions if r.emoji.name in self.STAR_EMOJIS]
             total_star_reactions = sum(r.count for r in star_reactions)
             self.model.starred_messages[message_id] = total_star_reactions
 
             now = datetime.now(timezone.utc)
             hour = now.replace(minute=0, second=0, microsecond=0).isoformat()
             day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-            week = (
-                (now - timedelta(days=now.weekday()))
-                .replace(hour=0, minute=0, second=0, microsecond=0)
-                .isoformat()
-            )
+            week = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
             stats = self.model.star_stats
             for period, timestamp in [
@@ -5902,10 +5886,7 @@ class Threads(interactions.Extension):
 
             await self.model.adjust_star_threshold()
 
-            if (
-                total_star_reactions >= self.star_threshold
-                and message_id not in self.model.starboard_messages
-            ):
+            if total_star_reactions >= self.star_threshold and message_id not in self.model.starboard_messages:
                 await self.add_to_starboard(message)
 
             await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
@@ -5923,16 +5904,11 @@ class Threads(interactions.Extension):
             message = await channel.fetch_message(event.message.id)
             message_id = str(message.id)
 
-            star_reactions = [
-                r for r in message.reactions if r.emoji.name in self.STAR_EMOJIS
-            ]
+            star_reactions = [r for r in message.reactions if r.emoji.name in self.STAR_EMOJIS]
             total_star_reactions = sum(r.count for r in star_reactions)
             self.model.starred_messages[message_id] = total_star_reactions
 
-            if (
-                total_star_reactions < self.star_threshold
-                and message_id in self.model.starboard_messages
-            ):
+            if total_star_reactions < self.star_threshold and message_id in self.model.starboard_messages:
                 await self.remove_from_starboard(message_id)
 
             await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
@@ -5957,7 +5933,9 @@ class Threads(interactions.Extension):
             embed.add_field(name="Author", value=message.author.mention, inline=True)
 
             embed.add_field(
-                name="Channel", value=f"<#{message.channel.id}>", inline=True
+                name="Channel",
+                value=f"<#{message.channel.id}>",
+                inline=True,
             )
 
             if message.attachments:
@@ -5978,33 +5956,26 @@ class Threads(interactions.Extension):
                 )
                 if starboard_message:
                     self.model.starboard_messages[str(message.id)] = str(
-                        starboard_message.id
+                        starboard_message.id,
                     )
                     await self.model.save_starred_messages(self.STARRED_MESSAGES_FILE)
 
-                    content = message.content if message.content else ""
+                    content = message.content or ""
                     if message.attachments:
                         attachment_links = "\n".join(
-                            f"[Attachment {i+1}]({a.url})"
-                            for i, a in enumerate(message.attachments)
+                            f"[Attachment {i + 1}]({a.url})" for i, a in enumerate(message.attachments)
                         )
-                        content = (
-                            f"{content}\n\n{attachment_links}"
-                            if content
-                            else attachment_links
-                        )
+                        content = f"{content}\n\n{attachment_links}" if content else attachment_links
 
                     await webhook.send(
                         content=f"{content if content.startswith('# ') else f'# {content}'}",
                         username=message.author.display_name,
-                        avatar_url=(
-                            message.author.avatar.url if message.author.avatar else None
-                        ),
+                        avatar_url=(message.author.avatar.url if message.author.avatar else None),
                         thread=starboard.id,
                         wait=True,
                     )
             except Exception as e:
-                logger.exception(f"Failed to send message: {str(e)}")
+                logger.exception(f"Failed to send message: {e!s}")
             finally:
                 with contextlib.suppress(Exception):
                     await webhook.delete()
@@ -6014,9 +5985,7 @@ class Threads(interactions.Extension):
 
     async def remove_from_starboard(self, message_id: str) -> None:
         try:
-            if not (
-                starboard_message_id := self.model.starboard_messages.get(message_id)
-            ):
+            if not (starboard_message_id := self.model.starboard_messages.get(message_id)):
                 return
 
             starboard_forum = await self.bot.fetch_channel(self.STARBOARD_FORUM_ID)
@@ -6045,9 +6014,7 @@ class Threads(interactions.Extension):
         for task in tasks_to_stop:
             task.stop()
 
-        pending_tasks = [
-            task for task in asyncio.all_tasks() if task.get_name().startswith("Task-")
-        ]
+        pending_tasks = [task for task in asyncio.all_tasks() if task.get_name().startswith("Task-")]
         await asyncio.gather(
             *map(functools.partial(asyncio.wait_for, timeout=10.0), pending_tasks),
             return_exceptions=True,
@@ -6062,7 +6029,7 @@ class Threads(interactions.Extension):
         if event.message.channel.parent_id not in self.FEATURED_CHANNELS:
             return
 
-        await self.increment_message_count("{}".format(event.message.channel.id))
+        await self.increment_message_count(f"{event.message.channel.id}")
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_actions(self, event: MessageCreate) -> None:
@@ -6071,7 +6038,8 @@ class Threads(interactions.Extension):
             msg.guild
             and msg.message_reference
             and isinstance(
-                msg.channel, (interactions.ThreadChannel, interactions.GuildChannel)
+                msg.channel,
+                (interactions.ThreadChannel, interactions.GuildChannel),
             )
         ):
             return
@@ -6094,15 +6062,23 @@ class Threads(interactions.Extension):
 
                 if content == "del":
                     await self.delete_message_action(
-                        msg, msg.channel, referenced_message
+                        msg,
+                        msg.channel,
+                        referenced_message,
                     )
                 elif content == "pin":
                     await self.pin_message_action(
-                        msg, msg.channel, referenced_message, True
+                        msg,
+                        msg.channel,
+                        referenced_message,
+                        True,
                     )
                 elif content == "unpin":
                     await self.pin_message_action(
-                        msg, msg.channel, referenced_message, False
+                        msg,
+                        msg.channel,
+                        referenced_message,
+                        False,
                     )
 
             except Exception as e:
@@ -6114,14 +6090,14 @@ class Threads(interactions.Extension):
     async def on_message_create_for_link(self, event: MessageCreate) -> None:
         if not self.should_process_any_link(event):
             logger.debug(
-                f"Skipping message {event.message.id} - doesn't meet link processing criteria"
+                f"Skipping message {event.message.id} - doesn't meet link processing criteria",
             )
             return
 
         content = event.message.content
         modified = False
         logger.debug(
-            f"Processing links in message: {event.message.id}, content length: {len(content)}"
+            f"Processing links in message: {event.message.id}, content length: {len(content)}",
         )
 
         if self.should_process_bilibili_link(event):
@@ -6129,7 +6105,7 @@ class Threads(interactions.Extension):
             if new_content := await self.bilibili_link(content):
                 if new_content != content:
                     logger.debug(
-                        f"Bilibili link modified in message: {event.message.id}, original length: {len(content)}, new length: {len(new_content)}"
+                        f"Bilibili link modified in message: {event.message.id}, original length: {len(content)}, new length: {len(new_content)}",
                     )
                     content, modified = new_content, True
 
@@ -6155,14 +6131,13 @@ class Threads(interactions.Extension):
                     #     except Exception as e:
                     #         logger.debug(f"Failed to clear URL {url}: {e}")
                     logger.debug(f"Skipping URL shortener processing for {url}")
-                    pass
             except Exception as e:
                 logger.exception(f"Failed to process URL {url}: {e}")
 
         unique_links = {*self.URL_PATTERN.findall(content)}
         if unique_links:
             logger.debug(
-                f"Found {len(unique_links)} unique links in message {event.message.id}"
+                f"Found {len(unique_links)} unique links in message {event.message.id}",
             )
 
             try:
@@ -6175,13 +6150,13 @@ class Threads(interactions.Extension):
                     logger.debug(f"Read {len(file_content)} bytes from rules file")
                     rules = orjson.loads(file_content)
                     logger.debug(
-                        f"Loaded rules with {len(rules.get('providers', {}))} providers"
+                        f"Loaded rules with {len(rules.get('providers', {}))} providers",
                     )
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.debug(f"Using default rules due to error: {e}")
                 rules = self.rules
                 logger.debug(
-                    f"Default rules have {len(rules.get('providers', {}))} providers"
+                    f"Default rules have {len(rules.get('providers', {}))} providers",
                 )
 
             for link in unique_links:
@@ -6190,7 +6165,7 @@ class Threads(interactions.Extension):
                     logger.debug(f"Link cleaned: {link} -> {clean_link}")
                     if await self.should_replace_link(link, clean_link):
                         logger.debug(
-                            f"Replacing link in content: {link} -> {clean_link}"
+                            f"Replacing link in content: {link} -> {clean_link}",
                         )
                         content = content.replace(link, clean_link)
                         modified = True
@@ -6199,7 +6174,7 @@ class Threads(interactions.Extension):
 
         if modified:
             logger.info(
-                f"Content modified for message {event.message.id}, original length: {len(event.message.content)}, new length: {len(content)}"
+                f"Content modified for message {event.message.id}, original length: {len(event.message.content)}, new length: {len(content)}",
             )
             await self.handle_modified_content(event.message, content)
         else:
@@ -6207,10 +6182,12 @@ class Threads(interactions.Extension):
 
     @staticmethod
     async def should_replace_link(
-        original: str, cleaned: str, threshold: int = 2
+        original: str,
+        cleaned: str,
+        threshold: int = 2,
     ) -> bool:
         if not cleaned:
-            logger.debug(f"should_replace_link: cleaned link is empty, not replacing")
+            logger.debug("should_replace_link: cleaned link is empty, not replacing")
             return False
         length_diff = abs(len(original) - len(cleaned))
         original_lower = original.lower()
@@ -6222,12 +6199,14 @@ class Threads(interactions.Extension):
             unquoted_cleaned_lower,
         )
         logger.debug(
-            f"should_replace_link: original={original}, cleaned={cleaned}, diff={length_diff}, result={result}"
+            f"should_replace_link: original={original}, cleaned={cleaned}, diff={length_diff}, result={result}",
         )
         return result
 
     async def handle_modified_content(
-        self, message: interactions.Message, new_content: str
+        self,
+        message: interactions.Message,
+        new_content: str,
     ) -> None:
         try:
             logger.debug(f"Creating embed for modified content in message {message.id}")
@@ -6244,20 +6223,16 @@ class Threads(interactions.Extension):
                 logger.exception(f"Failed to DM {message.author.mention}: {e}")
 
             channel = message.channel
-            thread_id = (
-                channel.id if isinstance(channel, interactions.ThreadChannel) else None
-            )
+            thread_id = channel.id if isinstance(channel, interactions.ThreadChannel) else None
             logger.debug(
-                f"Creating webhook in channel {channel.id}, thread_id={thread_id}"
+                f"Creating webhook in channel {channel.id}, thread_id={thread_id}",
             )
-            webhook = await (
-                channel.parent_channel if thread_id else channel
-            ).create_webhook(name="Link Webhook")
+            webhook = await (channel.parent_channel if thread_id else channel).create_webhook(name="Link Webhook")
             logger.debug(f"Successfully created webhook in channel {channel.id}")
 
             try:
                 logger.debug(
-                    f"Sending webhook message with cleaned content of length {len(new_content)}"
+                    f"Sending webhook message with cleaned content of length {len(new_content)}",
                 )
                 await webhook.send(
                     content=new_content,
@@ -6265,25 +6240,27 @@ class Threads(interactions.Extension):
                     avatar_url=message.author.avatar_url,
                     thread=thread_id,
                 )
-                logger.debug(f"Successfully sent webhook message")
+                logger.debug("Successfully sent webhook message")
                 try:
                     logger.debug(f"Deleting original message {message.id}")
                     await message.delete()
                     logger.debug(f"Successfully deleted original message {message.id}")
                 except NotFound:
                     logger.debug(f"Message {message.id} already deleted")
-                    pass
             finally:
                 with contextlib.suppress(Exception):
-                    logger.debug(f"Cleaning up webhook")
+                    logger.debug("Cleaning up webhook")
                     await webhook.delete()
-                    logger.debug(f"Successfully deleted webhook")
+                    logger.debug("Successfully deleted webhook")
 
         except Exception as e:
             logger.exception(f"Failed to handle modified content: {e}")
 
     async def clean_any_url(
-        self, url: str, rules: dict, loop: bool = True
+        self,
+        url: str,
+        rules: dict,
+        loop: bool = True,
     ) -> Optional[str]:
         logger.debug(f"clean_any_url: Processing {url}, loop={loop}")
         for provider_name, provider in rules.get("providers", {}).items():
@@ -6294,16 +6271,13 @@ class Threads(interactions.Extension):
 
             if provider.get("completeProvider"):
                 logger.debug(
-                    f"Provider {provider_name} is marked as complete provider, skipping"
+                    f"Provider {provider_name} is marked as complete provider, skipping",
                 )
                 return None
 
-            if any(
-                re.match(exc, url, re.IGNORECASE)
-                for exc in provider.get("exceptions", [])
-            ):
+            if any(re.match(exc, url, re.IGNORECASE) for exc in provider.get("exceptions", [])):
                 logger.debug(
-                    f"URL matches exception pattern for provider {provider_name}"
+                    f"URL matches exception pattern for provider {provider_name}",
                 )
                 continue
 
@@ -6316,11 +6290,11 @@ class Threads(interactions.Extension):
 
             parsed_url = urlparse(url)
             logger.debug(
-                f"Parsed URL: scheme={parsed_url.scheme}, netloc={parsed_url.netloc}, path={parsed_url.path[:20]}..."
+                f"Parsed URL: scheme={parsed_url.scheme}, netloc={parsed_url.netloc}, path={parsed_url.path[:20]}...",
             )
             query_params = await self.clean_query_params(parsed_url.query, provider)
             logger.debug(
-                f"Cleaned query params: {len(query_params)} parameters remaining"
+                f"Cleaned query params: {len(query_params)} parameters remaining",
             )
             url = urlunparse(
                 (
@@ -6330,7 +6304,7 @@ class Threads(interactions.Extension):
                     parsed_url.params,
                     urlencode(query_params),
                     parsed_url.fragment,
-                )
+                ),
             )
             logger.debug(f"URL after query cleaning: {url}")
 
@@ -6344,20 +6318,24 @@ class Threads(interactions.Extension):
         return url
 
     async def handle_redirections(
-        self, url: str, provider: dict, loop: bool
+        self,
+        url: str,
+        provider: dict,
+        loop: bool,
     ) -> Optional[str]:
         logger.debug(f"handle_redirections: Processing {url}, loop={loop}")
         if not self.rules:
             try:
                 logger.debug("Loading rules from file")
                 async with aiofiles.open(
-                    os.path.join(BASE_DIR, "scrub_rules.json"), encoding="utf-8"
+                    os.path.join(BASE_DIR, "scrub_rules.json"),
+                    encoding="utf-8",
                 ) as f:
                     file_content = await f.read()
                     logger.debug(f"Read {len(file_content)} bytes from rules file")
                     self.rules = orjson.loads(file_content)
                     logger.debug(
-                        f"Loaded rules with {len(self.rules.get('providers', {}))} providers"
+                        f"Loaded rules with {len(self.rules.get('providers', {}))} providers",
                     )
             except (FileNotFoundError, orjson.JSONDecodeError) as e:
                 logger.error(f"Failed to load rules.json: {e}")
@@ -6371,13 +6349,12 @@ class Threads(interactions.Extension):
                     if group := match.group(1):
                         unquoted = unquote(group)
                         logger.debug(
-                            f"Extracted and unquoted redirect target: {unquoted}"
+                            f"Extracted and unquoted redirect target: {unquoted}",
                         )
                         if loop:
-                            logger.debug(f"Recursively cleaning redirect target")
+                            logger.debug("Recursively cleaning redirect target")
                             return await self.clean_any_url(unquoted, self.rules, False)
-                        else:
-                            return unquoted
+                        return unquoted
             except (IndexError, AttributeError) as e:
                 logger.warning(
                     f"Redirect target match failed: {redir}, error: {e}",
@@ -6388,20 +6365,16 @@ class Threads(interactions.Extension):
         return url
 
     @staticmethod
-    async def clean_query_params(query: str, provider: dict) -> List[Tuple[str, str]]:
+    async def clean_query_params(query: str, provider: dict) -> list[tuple[str, str]]:
         params = parse_qsl(query)
         logger.debug(f"Original query params: {len(params)} parameters")
         rules = [*provider.get("rules", []), *provider.get("referralMarketing", [])]
         logger.debug(f"Applying {len(rules)} query param rules")
 
-        result = [
-            (k, v)
-            for k, v in params
-            if not any(re.match(rule, k, re.IGNORECASE) for rule in rules)
-        ]
+        result = [(k, v) for k, v in params if not any(re.match(rule, k, re.IGNORECASE) for rule in rules)]
 
         logger.debug(
-            f"Cleaned query params: {len(result)} parameters remaining out of {len(params)}"
+            f"Cleaned query params: {len(result)} parameters remaining out of {len(params)}",
         )
         return result
 
@@ -6414,7 +6387,7 @@ class Threads(interactions.Extension):
             and bool(event.message.content)
         )
         logger.debug(
-            f"should_process_any_link for message {event.message.id}: {result}, guild_id={event.message.guild.id if event.message.guild else None}, is_bot={event.message.author.bot}, channel_type={type(event.message.channel).__name__}, has_content={bool(event.message.content)}"
+            f"should_process_any_link for message {event.message.id}: {result}, guild_id={event.message.guild.id if event.message.guild else None}, is_bot={event.message.author.bot}, channel_type={type(event.message.channel).__name__}, has_content={bool(event.message.content)}",
         )
         return result
 
@@ -6423,21 +6396,18 @@ class Threads(interactions.Extension):
         member = guild.get_member(event.message.author.id) if guild else None
         has_taiwan_role = (
             next(
-                (True for role in member.roles if role.id == self.TAIWAN_ROLE_ID), False
+                (True for role in member.roles if role.id == self.TAIWAN_ROLE_ID),
+                False,
             )
             if member
             else False
         )
 
         result = bool(
-            guild
-            and member
-            and guild.id == self.GUILD_ID
-            and event.message.content
-            and not has_taiwan_role
+            guild and member and guild.id == self.GUILD_ID and event.message.content and not has_taiwan_role,
         )
         logger.debug(
-            f"should_process_bilibili_link for message {event.message.id}: {result}, guild_id={guild.id if guild else None}, has_member={bool(member)}, has_taiwan_role={has_taiwan_role}, has_content={bool(event.message.content)}"
+            f"should_process_bilibili_link for message {event.message.id}: {result}, guild_id={guild.id if guild else None}, has_member={bool(member)}, has_taiwan_role={has_taiwan_role}, has_content={bool(event.message.content)}",
         )
         return result
 
@@ -6446,10 +6416,11 @@ class Threads(interactions.Extension):
         logger.debug(f"Processing bilibili links in content: {content}")
 
         def sanitize_url(
-            url_str: str, preserve_params: frozenset[str] = frozenset({"p"})
+            url_str: str,
+            preserve_params: frozenset[str] = frozenset({"p"}),
         ) -> str:
             logger.debug(
-                f"Sanitizing URL: {url_str}, preserving params: {preserve_params}"
+                f"Sanitizing URL: {url_str}, preserving params: {preserve_params}",
             )
             u = URL(url_str)
             query_params = frozenset(u.query.keys())
@@ -6465,12 +6436,8 @@ class Threads(interactions.Extension):
                     r"https?://(?:www\.)?(?:b23\.tv|bilibili\.com/video/(?:BV\w+|av\d+))",
                     re.IGNORECASE,
                 ),
-                lambda url: (
-                    sanitize_url(url)
-                    if "bilibili.com" in url.lower()
-                    else str(URL(url).with_host("b23.tf"))
-                ),
-            )
+                lambda url: (sanitize_url(url) if "bilibili.com" in url.lower() else str(URL(url).with_host("b23.tf"))),
+            ),
         ]
 
         logger.debug(f"Using {len(patterns)} patterns for bilibili link processing")
@@ -6479,21 +6446,17 @@ class Threads(interactions.Extension):
             lambda: re.sub(
                 r"https?://\S+",
                 lambda m: next(
-                    (
-                        transform(str(m.group(0)))
-                        for pattern, transform in patterns
-                        if pattern.match(str(m.group(0)))
-                    ),
+                    (transform(str(m.group(0))) for pattern, transform in patterns if pattern.match(str(m.group(0)))),
                     m.group(0),
                 ),
                 content,
                 flags=re.IGNORECASE,
-            )
+            ),
         )
 
         if result != content:
             logger.debug(
-                f"Bilibili link processing changed content: {content} -> {result}"
+                f"Bilibili link processing changed content: {content} -> {result}",
             )
         else:
             logger.debug(f"No bilibili links modified in content: {content}")
@@ -6506,10 +6469,11 @@ class Threads(interactions.Extension):
     )
 
     @module_group_scrub.subcommand(
-        "update", sub_cmd_description="Update Scrub with the latest rules"
+        "update",
+        sub_cmd_description="Update Scrub with the latest rules",
     )
     @interactions.slash_default_member_permission(
-        interactions.Permissions.ADMINISTRATOR
+        interactions.Permissions.ADMINISTRATOR,
     )
     async def update(self, ctx: interactions.SlashContext) -> None:
         await ctx.defer(ephemeral=True)
@@ -6533,17 +6497,16 @@ class Threads(interactions.Extension):
                             if response.status == 200:
                                 response_text = await response.text()
                                 logger.debug(
-                                    f"Received {len(response_text)} bytes from {url}"
+                                    f"Received {len(response_text)} bytes from {url}",
                                 )
                                 rules = await response.json()
                                 logger.info(
-                                    f"Successfully updated rules from {url} with {len(rules.get('providers', {}))} providers"
+                                    f"Successfully updated rules from {url} with {len(rules.get('providers', {}))} providers",
                                 )
                                 break
-                            else:
-                                logger.warning(
-                                    f"Failed to fetch rules from {url}: HTTP {response.status}"
-                                )
+                            logger.warning(
+                                f"Failed to fetch rules from {url}: HTTP {response.status}",
+                            )
                     except Exception as e:
                         logger.warning(f"Error fetching rules from {url}: {e}")
                         continue
@@ -6558,22 +6521,22 @@ class Threads(interactions.Extension):
                 async with aiofiles.open(scrub_rules_path, mode="wb") as f:
                     serialized = orjson.dumps(
                         rules,
-                        option=orjson.OPT_SERIALIZE_NUMPY
-                        | orjson.OPT_SERIALIZE_DATACLASS,
+                        option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_SERIALIZE_DATACLASS,
                     )
                     await f.write(serialized)
                     logger.debug(f"Wrote {len(serialized)} bytes to rules file")
 
                 self.rules = rules
                 logger.info(
-                    f"Rules updated with {len(rules.get('providers', {}))} providers"
+                    f"Rules updated with {len(rules.get('providers', {}))} providers",
                 )
                 await self.send_success(ctx, "Rules updated and saved locally.")
 
-        except (aiohttp.ClientError, orjson.JSONDecodeError, IOError, Exception) as e:
-            logger.exception(f"Rules update failed: {str(e)}")
+        except (OSError, aiohttp.ClientError, orjson.JSONDecodeError, Exception) as e:
+            logger.exception(f"Rules update failed: {e!s}")
             await self.send_error(
-                ctx, f"Rules update failed: {type(e).__name__}: {str(e)}"
+                ctx,
+                f"Rules update failed: {type(e).__name__}: {e!s}",
             )
 
     # Poll methods
@@ -6589,7 +6552,7 @@ class Threads(interactions.Extension):
 
         if not (parent_id in self.POLL_FORUM_ID or parent_id == self.CONGRESS_ID):
             logger.debug(
-                f"Thread {thread.id} parent {parent_id} is not a monitored forum, skipping"
+                f"Thread {thread.id} parent {parent_id} is not a monitored forum, skipping",
             )
             return
 
@@ -6602,7 +6565,7 @@ class Threads(interactions.Extension):
         owner = await guild.fetch_member(owner_id)
         if not owner or owner.bot:
             logger.debug(
-                f"Thread {thread.id} owner {owner_id} is invalid or bot, skipping"
+                f"Thread {thread.id} owner {owner_id} is invalid or bot, skipping",
             )
             return
 
@@ -6618,14 +6581,15 @@ class Threads(interactions.Extension):
         create_poll = not bool(skip_tags & thread_tags)
 
         logger.info(
-            f"Processing thread {thread.id} in forum {forum_id}. Thread tags: {thread_tags}. Skip tags: {skip_tags}. Tags intersection: {skip_tags & thread_tags}. Will create poll: {create_poll}"
+            f"Processing thread {thread.id} in forum {forum_id}. Thread tags: {thread_tags}. Skip tags: {skip_tags}. Tags intersection: {skip_tags & thread_tags}. Will create poll: {create_poll}",
         )
 
         await self.process_new_post(thread, create_poll=create_poll)
 
     @staticmethod
     async def process_new_post(
-        thread: interactions.GuildPublicThread, create_poll: bool = True
+        thread: interactions.GuildPublicThread,
+        create_poll: bool = True,
     ) -> None:
         try:
             timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
@@ -6644,17 +6608,14 @@ class Threads(interactions.Extension):
                 await task
 
         except Exception as e:
-            error_msg = f"Error processing thread {thread.id}: {str(e)}"
+            error_msg = f"Error processing thread {thread.id}: {e!s}"
             logger.error(error_msg, exc_info=True)
 
     # Ban methods
 
     @interactions.listen(MessageCreate)
     async def on_message_create_for_banned_users(self, event: MessageCreate) -> None:
-        if not (
-            event.message.guild
-            and isinstance(event.message.channel, interactions.ThreadChannel)
-        ):
+        if not (event.message.guild and isinstance(event.message.channel, interactions.ThreadChannel)):
             return
 
         channel_id, post_id, author_id = map(
@@ -6667,7 +6628,9 @@ class Threads(interactions.Extension):
         )
 
         await self.is_user_banned(
-            channel_id, post_id, author_id
+            channel_id,
+            post_id,
+            author_id,
         ) and event.message.delete()
 
     # Check methods
@@ -6683,7 +6646,7 @@ class Threads(interactions.Extension):
 
         if thread_parent == self.CONGRESS_ID:
             return bool(
-                user_roles & {self.CONGRESS_MOD_ROLE, self.CONGRESS_MEMBER_ROLE}
+                user_roles & {self.CONGRESS_MOD_ROLE, self.CONGRESS_MEMBER_ROLE},
             )
 
         return (
@@ -6700,7 +6663,8 @@ class Threads(interactions.Extension):
         )
 
     async def check_permissions(
-        self, ctx: Union[interactions.SlashContext, interactions.ContextMenuContext]
+        self,
+        ctx: Union[interactions.SlashContext, interactions.ContextMenuContext],
     ) -> tuple[bool, str]:
         r, p_id, perms = (
             ctx.author.roles,
@@ -6734,10 +6698,16 @@ class Threads(interactions.Extension):
         return await self.can_manage_post(thread, user)
 
     async def is_user_banned(
-        self, channel_id: str, post_id: str, author_id: str
+        self,
+        channel_id: str,
+        post_id: str,
+        author_id: str,
     ) -> bool:
         return await asyncio.to_thread(
-            self.model.is_user_banned, channel_id, post_id, author_id
+            self.model.is_user_banned,
+            channel_id,
+            post_id,
+            author_id,
         )
 
     # Message methods
@@ -6756,13 +6726,13 @@ class Threads(interactions.Extension):
     async def delete_all_user_messages(self, ctx: interactions.SlashContext) -> None:
         await ctx.defer(ephemeral=True)
         logger.info(
-            f"User {ctx.author} ({ctx.author.id}) initiated message deletion in guild {ctx.guild.name} ({ctx.guild.id})"
+            f"User {ctx.author} ({ctx.author.id}) initiated message deletion in guild {ctx.guild.name} ({ctx.guild.id})",
         )
         deleted_count = 0
         try:
             try:
                 await ctx.author.send(
-                    f"You are about to delete ALL your messages in the server **{ctx.guild.name}**. This action cannot be undone. Reply with `yes` to proceed with deletion; Reply with `no` to cancel. This confirmation will expire in 60 seconds."
+                    f"You are about to delete ALL your messages in the server **{ctx.guild.name}**. This action cannot be undone. Reply with `yes` to proceed with deletion; Reply with `no` to cancel. This confirmation will expire in 60 seconds.",
                 )
                 logger.debug(f"Sent confirmation DM to user {ctx.author.id}")
             except Forbidden:
@@ -6786,19 +6756,19 @@ class Threads(interactions.Extension):
             except asyncio.TimeoutError:
                 logger.info(f"User {ctx.author.id} confirmation timed out")
                 await ctx.author.send(
-                    "Operation timed out. Please run the command again if you wish to delete your messages."
+                    "Operation timed out. Please run the command again if you wish to delete your messages.",
                 )
                 return
 
             if response.message.content.lower() == "no":
                 logger.info(f"User {ctx.author.id} cancelled the operation")
                 await ctx.author.send(
-                    "Operation cancelled. Your messages will remain unchanged."
+                    "Operation cancelled. Your messages will remain unchanged.",
                 )
                 return
 
             await ctx.author.send(
-                "I am now deleting your messages across all channels. This may take some time depending on the number of messages. You will receive progress updates."
+                "I am now deleting your messages across all channels. This may take some time depending on the number of messages. You will receive progress updates.",
             )
 
             async def remove_user_reactions(message: interactions.Message) -> None:
@@ -6809,7 +6779,7 @@ class Threads(interactions.Extension):
                             await message.remove_reaction(reaction.emoji, ctx.author)
                             logger.debug(f"Removed reaction from message {message.id}")
                 except (HTTPException, MessageException, ThreadException, OSError) as e:
-                    logger.error(f"Error removing reactions: {str(e)}")
+                    logger.error(f"Error removing reactions: {e!s}")
                 except Exception:
                     logger.exception(traceback.format_exc())
 
@@ -6818,9 +6788,8 @@ class Threads(interactions.Extension):
                     message
                     and (
                         message.author.id == ctx.author.id
-                        or getattr(message.interaction_metadata, "_user_id", None)
-                        == ctx.author.id
-                    )
+                        or getattr(message.interaction_metadata, "_user_id", None) == ctx.author.id
+                    ),
                 )
 
             async def process_channel(channel: interactions.MessageableMixin) -> int:
@@ -6838,7 +6807,7 @@ class Threads(interactions.Extension):
                             await channel.edit(archived=False)
                             logger.debug(f"Unarchived thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
-                            logger.error(f"Error unarchiving thread: {str(e)}")
+                            logger.error(f"Error unarchiving thread: {e!s}")
                             return 0
                         except Exception:
                             logger.exception(traceback.format_exc())
@@ -6850,7 +6819,7 @@ class Threads(interactions.Extension):
                             await channel.edit(locked=False)
                             logger.debug(f"Unlocked thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
-                            logger.error(f"Error unlocking thread: {str(e)}")
+                            logger.error(f"Error unlocking thread: {e!s}")
                             return 0
                         except Exception:
                             logger.exception(traceback.format_exc())
@@ -6866,7 +6835,7 @@ class Threads(interactions.Extension):
                                         deleted_count += 1
                                         if deleted_count % 100 == 0:
                                             await ctx.author.send(
-                                                f"Progress update: Deleted {deleted_count} messages so far..."
+                                                f"Progress update: Deleted {deleted_count} messages so far...",
                                             )
                                         continue
                                 else:
@@ -6875,36 +6844,38 @@ class Threads(interactions.Extension):
                                 if e.code in {10003, 10008, 50001, 50013}:
                                     break
                                 if e.code == 50083 and isinstance(
-                                    channel, interactions.ThreadChannel
+                                    channel,
+                                    interactions.ThreadChannel,
                                 ):
                                     if channel.archived:
                                         try:
                                             await channel.edit(archived=False)
                                             logger.debug(
-                                                f"Unarchived thread {channel.id} during message processing"
+                                                f"Unarchived thread {channel.id} during message processing",
                                             )
                                             continue
                                         except (StopAsyncIteration, Exception):
                                             break
                                 elif e.code == 160005 and isinstance(
-                                    channel, interactions.ThreadChannel
+                                    channel,
+                                    interactions.ThreadChannel,
                                 ):
                                     if channel.locked:
                                         try:
                                             await channel.edit(locked=False)
                                             logger.debug(
-                                                f"Unlocked thread {channel.id} during message processing"
+                                                f"Unlocked thread {channel.id} during message processing",
                                             )
                                             continue
                                         except Exception:
                                             break
-                                elif e.code not in {50021}:
+                                elif e.code != 50021:
                                     logger.error(
-                                        f"HTTP Exception {e.code} in channel {channel.id}"
+                                        f"HTTP Exception {e.code} in channel {channel.id}",
                                     )
                             except (MessageException, ThreadException, OSError) as e:
                                 logger.error(
-                                    f"Error processing message in channel {channel.id}: {str(e)}"
+                                    f"Error processing message in channel {channel.id}: {e!s}",
                                 )
                             except Exception:
                                 logger.exception(traceback.format_exc())
@@ -6914,7 +6885,7 @@ class Threads(interactions.Extension):
                             await channel.edit(locked=True)
                             logger.debug(f"Re-locked thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
-                            logger.error(f"Error re-locking thread: {str(e)}")
+                            logger.error(f"Error re-locking thread: {e!s}")
                         except Exception:
                             logger.exception(traceback.format_exc())
 
@@ -6923,31 +6894,28 @@ class Threads(interactions.Extension):
                             await channel.edit(archived=True)
                             logger.debug(f"Re-archived thread {channel.id}")
                         except (ThreadException, HTTPException, OSError) as e:
-                            logger.error(f"Error re-archiving thread: {str(e)}")
+                            logger.error(f"Error re-archiving thread: {e!s}")
                         except Exception:
                             logger.exception(traceback.format_exc())
 
                 logger.info(
-                    f"Deleted {channel_deleted} messages in channel {channel.id}"
+                    f"Deleted {channel_deleted} messages in channel {channel.id}",
                 )
                 return channel_deleted
 
             guild_channels = await ctx.guild.fetch_channels()
             logger.info(
-                f"Starting to process {len(guild_channels)} channels in guild {ctx.guild.id}"
+                f"Starting to process {len(guild_channels)} channels in guild {ctx.guild.id}",
             )
 
-            for channel in (
-                c
-                for c in guild_channels
-                if isinstance(c, interactions.MessageableMixin)
-            ):
+            for channel in (c for c in guild_channels if isinstance(c, interactions.MessageableMixin)):
                 await process_channel(channel)
                 await ctx.author.send(f"Processed channel: {channel.name}")
 
                 if isinstance(channel, interactions.GuildText):
                     thread_lists = await asyncio.gather(
-                        channel.fetch_active_threads(), channel.fetch_archived_threads()
+                        channel.fetch_active_threads(),
+                        channel.fetch_archived_threads(),
                     )
                     for thread_list in thread_lists:
                         for thread in thread_list.threads:
@@ -6958,36 +6926,37 @@ class Threads(interactions.Extension):
                     for forum_post in channel.get_posts():
                         await process_channel(forum_post)
                         await ctx.author.send(
-                            f"Processed forum post: {forum_post.name}"
+                            f"Processed forum post: {forum_post.name}",
                         )
 
                     archived_posts = await self.bot.http.list_public_archived_threads(
-                        channel_id=channel.id
+                        channel_id=channel.id,
                     )
                     for post_id in map(
-                        lambda p: int(p["id"]), archived_posts["threads"]
+                        lambda p: int(p["id"]),
+                        archived_posts["threads"],
                     ):
                         if forum_post := await self.bot.fetch_channel(
-                            channel_id=post_id
+                            channel_id=post_id,
                         ):
                             await process_channel(forum_post)
                             await ctx.author.send(
-                                f"Processed archived forum post: {forum_post.name}"
+                                f"Processed archived forum post: {forum_post.name}",
                             )
 
             logger.info(
-                f"Completed message deletion for user {ctx.author.id}. Total messages deleted: {deleted_count}"
+                f"Completed message deletion for user {ctx.author.id}. Total messages deleted: {deleted_count}",
             )
             if dm_channel := ctx.author.get_dm():
                 await dm_channel.send(
-                    f"All your messages have been successfully deleted from **{ctx.guild.name}**. Total messages deleted: {deleted_count}. This included: Messages you sent; Messages from commands you used; Your reactions on other messages."
+                    f"All your messages have been successfully deleted from **{ctx.guild.name}**. Total messages deleted: {deleted_count}. This included: Messages you sent; Messages from commands you used; Your reactions on other messages.",
                 )
 
         except Exception as e:
-            logger.exception(f"Error in delete_all_user_messages: {str(e)}")
+            logger.exception(f"Error in delete_all_user_messages: {e!s}")
             if dm_channel := ctx.author.get_dm():
                 await dm_channel.send(
-                    "An error occurred while deleting messages. Please try again later."
+                    "An error occurred while deleting messages. Please try again later.",
                 )
 
     """
@@ -7020,7 +6989,7 @@ class Threads(interactions.Extension):
         ephemeral: bool = False,
     ) -> None:
         logger.info(
-            f"Crystal ball reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+            f"Crystal ball reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}",
         )
         logger.info(f"Wish: {wish}")
         logger.info(f"Ephemeral: {ephemeral}")
@@ -7040,8 +7009,9 @@ class Threads(interactions.Extension):
                 await ctx.send(
                     embeds=[
                         await self.create_embed(
-                            title="水晶球占卜", description="占卜结果已发送到你的私信！"
-                        )
+                            title="水晶球占卜",
+                            description="占卜结果已发送到你的私信！",
+                        ),
                     ],
                     ephemeral=True,
                 )
@@ -7055,13 +7025,13 @@ class Threads(interactions.Extension):
         else:
             msg = await ctx.send(embeds=[base_embed])
             logger.info(
-                f"Sent crystal ball reading in channel for user {ctx.author.id}"
+                f"Sent crystal ball reading in channel for user {ctx.author.id}",
             )
 
         steps = (
             "- 水晶球中浮现出神秘的能量",
             "- 虚无的形体在其中凝聚",
-            f'- 一个景象浮现：`{random.choice(("光芒", "启示", "预言", "洞察", "清晰"))}`',
+            f"- 一个景象浮现：`{random.choice(('光芒', '启示', '预言', '洞察', '清晰'))}`",
         )
 
         content = [msg.embeds[0].description]
@@ -7071,14 +7041,16 @@ class Threads(interactions.Extension):
             await msg.edit(
                 embeds=[
                     await self.create_embed(
-                        title="水晶球占卜", description="\n".join(content)
-                    )
-                ]
+                        title="水晶球占卜",
+                        description="\n".join(content),
+                    ),
+                ],
             )
             logger.debug(f"Updated crystal ball reading with step: {step}")
 
     @module_group_divination.subcommand(
-        "draw", sub_cmd_description="Draw a fortune to divine your prospects"
+        "draw",
+        sub_cmd_description="Draw a fortune to divine your prospects",
     )
     @interactions.slash_option(
         name="target",
@@ -7097,7 +7069,7 @@ class Threads(interactions.Extension):
         ephemeral: bool = False,
     ) -> None:
         logger.info(
-            f"Fortune drawing requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+            f"Fortune drawing requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}",
         )
         logger.info(f"Target: {target}")
         logger.info(f"Ephemeral: {ephemeral}")
@@ -7119,13 +7091,10 @@ class Threads(interactions.Extension):
                     target,
                     str(ctx.author.id),
                     datetime.now(timezone.utc).strftime("%Y%m%d"),
-                )
+                ),
             )
             fortune_len = len(fortunes)
-            fortune_idx = (
-                sum(ord(c) for c in hashlib.sha384(seed.encode()).hexdigest())
-                % fortune_len
-            )
+            fortune_idx = sum(ord(c) for c in hashlib.sha384(seed.encode()).hexdigest()) % fortune_len
             fortune = fortunes[fortune_idx]
             logger.info(f"Generated fortune for target '{target}': {fortune}")
 
@@ -7146,7 +7115,8 @@ class Threads(interactions.Extension):
             )
 
     @module_group_divination.subcommand(
-        "tarot", sub_cmd_description="Seek guidance through tarot divination"
+        "tarot",
+        sub_cmd_description="Seek guidance through tarot divination",
     )
     @interactions.slash_option(
         name="number",
@@ -7174,7 +7144,7 @@ class Threads(interactions.Extension):
         ephemeral: bool = False,
     ):
         logger.info(
-            f"Tarot reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+            f"Tarot reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}",
         )
         logger.info(f"Number of cards: {num_cards}")
         logger.info(f"Dream: {dream}")
@@ -7198,7 +7168,7 @@ class Threads(interactions.Extension):
                         await self.create_embed(
                             title="Tarot Reading",
                             description="The reading has been sent to your DMs!",
-                        )
+                        ),
                     ],
                     ephemeral=True,
                 )
@@ -7220,7 +7190,7 @@ class Threads(interactions.Extension):
             else f"{ctx.author.mention}\n- 抽取塔罗牌为你指明方向"
         )
         await send(
-            embeds=[await self.create_embed(title="塔罗牌占卜", description=msg)]
+            embeds=[await self.create_embed(title="塔罗牌占卜", description=msg)],
         )
 
         cards = random.sample(
@@ -7244,8 +7214,8 @@ class Threads(interactions.Extension):
                     await self.create_embed(
                         title="Enhanced Reading Available",
                         description="Consider using /super_tarot for an AI-enhanced interpretation of your reading",
-                    )
-                ]
+                    ),
+                ],
             )
 
     def get_tarot_msg_with_image(self, i: int, r: int) -> tuple[str, interactions.File]:
@@ -7300,7 +7270,7 @@ class Threads(interactions.Extension):
         ephemeral: bool = False,
     ) -> None:
         logger.info(
-            f"Tarot card query by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+            f"Tarot card query by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}",
         )
         logger.info(f"Card name: {card_name}")
         logger.info(f"Ephemeral: {ephemeral}")
@@ -7324,7 +7294,8 @@ class Threads(interactions.Extension):
             query_card = next(self.query_pattern.finditer(query)).group()
             logger.info(f"Found matching card: {query_card}")
             return self.get_tarot_msg(
-                self.query[query_card], "reversed" in query.lower()
+                self.query[query_card],
+                "reversed" in query.lower(),
             )
         except (StopIteration, KeyError, AttributeError) as e:
             logger.warning(f"Card query failed: {e}")
@@ -7334,14 +7305,11 @@ class Threads(interactions.Extension):
 
     def calc_similarity(self, query: str) -> str:
         names = {
-            f"{orientation} {card['name']}"[9:]
-            for card in self.tarot.values()
-            for orientation in self.STR_REVERSED
+            f"{orientation} {card['name']}"[9:] for card in self.tarot.values() for orientation in self.STR_REVERSED
         }
         similar = max(
             names,
-            key=lambda x: len(set(x.lower()) & set(query.lower()))
-            / len(set(x.lower()) | set(query.lower())),
+            key=lambda x: len(set(x.lower()) & set(query.lower())) / len(set(x.lower()) | set(query.lower())),
         )
         logger.debug(f"Found most similar card name: {similar}")
         return similar
@@ -7364,15 +7332,13 @@ class Threads(interactions.Extension):
         ctx: interactions.AutocompleteContext,
     ) -> None:
         if not self.tarot:
-            return None
+            return
 
         input_lower = ctx.input_text.lower()
         matches = [
             name
             for name in (
-                f"{orientation} {card['name']}"
-                for card in self.tarot.values()
-                for orientation in self.STR_REVERSED
+                f"{orientation} {card['name']}" for card in self.tarot.values() for orientation in self.STR_REVERSED
             )
             if input_lower in name.lower()
         ][:25]
@@ -7384,16 +7350,15 @@ class Threads(interactions.Extension):
         try:
             if i < 22:
                 return f"m{i:02d}.jpg"
-            elif i < 36:
-                return f"w{i-21:02d}.jpg"
-            elif i < 50:
-                return f"c{i-35:02d}.jpg"
-            elif i < 64:
-                return f"s{i-49:02d}.jpg"
-            elif i < 78:
-                return f"p{i-63:02d}.jpg"
-            else:
-                raise ValueError(f"Invalid card index: {i}")
+            if i < 36:
+                return f"w{i - 21:02d}.jpg"
+            if i < 50:
+                return f"c{i - 35:02d}.jpg"
+            if i < 64:
+                return f"s{i - 49:02d}.jpg"
+            if i < 78:
+                return f"p{i - 63:02d}.jpg"
+            raise ValueError(f"Invalid card index: {i}")
         except Exception as e:
             logger.error(f"Error generating filename for index {i}: {e}")
             raise
@@ -7420,7 +7385,7 @@ class Threads(interactions.Extension):
         ephemeral: bool = False,
     ):
         logger.info(
-            f"Tarot reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}"
+            f"Tarot reading requested by {ctx.author} (ID: {ctx.author.id}) in guild {ctx.guild_id}",
         )
         logger.info(f"Question: {question}")
         logger.info(f"Ephemeral: {ephemeral}")
@@ -7473,11 +7438,15 @@ class Threads(interactions.Extension):
                 for keys in bucket_keys.values()
                 for key in keys
                 if key not in self.url_cache
-            }
+            },
         )
 
         for bucket in self.url_cache.values():
-            if (now - bucket["last_reset"]).total_seconds() >= 60:
+            if "last_reset" not in bucket:
+                bucket["last_reset"] = now
+                bucket["requests"] = 0
+                bucket["tokens"] = 0
+            elif (now - bucket["last_reset"]).total_seconds() >= 60:
                 logger.debug(f"Resetting bucket {bucket}")
                 bucket.update({"requests": 0, "tokens": 0, "last_reset": now})
 
@@ -7486,10 +7455,7 @@ class Threads(interactions.Extension):
             user_key, guild_key = bucket_keys[model]
             logger.info(f"Attempting to use model: {model}")
 
-            if any(
-                self.url_cache[key]["requests"] >= model_config["rpm"]
-                for key in (user_key, guild_key)
-            ):
+            if any(self.url_cache[key]["requests"] >= model_config["rpm"] for key in (user_key, guild_key)):
                 logger.warning(f"Rate limit exceeded for model {model}")
                 continue
 
@@ -7517,14 +7483,14 @@ class Threads(interactions.Extension):
                         **self.model_params,
                     )
                     logger.info(
-                        f"Received response from Groq API. Total tokens: {response.usage.total_tokens}"
+                        f"Received response from Groq API. Total tokens: {response.usage.total_tokens}",
                     )
 
                     for key in (user_key, guild_key):
                         self.url_cache[key]["requests"] += 1
                         self.url_cache[key]["tokens"] += response.usage.total_tokens
                         logger.debug(
-                            f"Updated rate limit bucket {key}: {self.url_cache[key]}"
+                            f"Updated rate limit bucket {key}: {self.url_cache[key]}",
                         )
 
                     wish = self.exchange_name(question)
@@ -7533,7 +7499,7 @@ class Threads(interactions.Extension):
 
                     card_filename = self.get_card_filename(i)
                     logger.info(
-                        f"Card details - Index: {i}, Reversed: {r}, Filename: {card_filename}, Name: {card_name}"
+                        f"Card details - Index: {i}, Reversed: {r}, Filename: {card_filename}, Name: {card_name}",
                     )
                     image_path = os.path.join(BASE_DIR, "cards", card_filename)
 
@@ -7547,7 +7513,7 @@ class Threads(interactions.Extension):
                     if ephemeral:
                         if not (dm_channel := ctx.author.get_dm()):
                             logger.error(
-                                f"Failed to get DM channel for user {ctx.author.id}"
+                                f"Failed to get DM channel for user {ctx.author.id}",
                             )
                             await self.send_error(
                                 ctx,
@@ -7556,14 +7522,14 @@ class Threads(interactions.Extension):
                             return
 
                         logger.info(
-                            f"Sending ephemeral reading to user {ctx.author.id} via DM"
+                            f"Sending ephemeral reading to user {ctx.author.id} via DM",
                         )
                         msg = await dm_channel.send(
                             embeds=[
                                 await self.create_embed(
                                     title="AI Tarot Reading",
                                     description=head_msg + wait_msg,
-                                )
+                                ),
                             ],
                             file=file,
                         )
@@ -7573,7 +7539,7 @@ class Threads(interactions.Extension):
                                 await self.create_embed(
                                     title="AI Tarot Reading",
                                     description="The reading has been sent to your DMs!",
-                                )
+                                ),
                             ],
                             ephemeral=True,
                         )
@@ -7584,13 +7550,13 @@ class Threads(interactions.Extension):
                                 await self.create_embed(
                                     title="AI Tarot Reading",
                                     description=head_msg + wait_msg,
-                                )
+                                ),
                             ],
                             file=file,
                         )
 
                     response_content = self.preprocess_msg(
-                        response.choices[0].message.content
+                        response.choices[0].message.content,
                     )
                     try:
                         logger.debug("Parsing response content as JSON")
@@ -7603,9 +7569,7 @@ class Threads(interactions.Extension):
                             "### Guidance\n"
                             f"{response_json['interpretation']['guidance']}\n"
                             "### Recommended Actions\n"
-                            + "\n".join(
-                                f"- {step}" for step in response_json["action_steps"]
-                            )
+                            + "\n".join(f"- {step}" for step in response_json["action_steps"])
                         )
 
                         logger.info("Updating message with formatted response")
@@ -7614,8 +7578,8 @@ class Threads(interactions.Extension):
                                 await self.create_embed(
                                     title="AI Tarot Reading",
                                     description=head_msg + formatted_response,
-                                )
-                            ]
+                                ),
+                            ],
                         )
                     except Exception as e:
                         logger.error(f"Failed to process response: {e}", exc_info=True)
@@ -7626,8 +7590,8 @@ class Threads(interactions.Extension):
                                     description=head_msg
                                     + "Interpretation unavailable. Please request another reading.",
                                     color=EmbedColor.ERROR,
-                                )
-                            ]
+                                ),
+                            ],
                         )
 
                     logger.info(f"Completed reading for question: {question}")
@@ -7800,7 +7764,7 @@ class Threads(interactions.Extension):
                     if response.status != 200:
                         error_text = await response.text()
                         logger.error(
-                            f"Sticker API request failed with status {response.status}: {error_text}"
+                            f"Sticker API request failed with status {response.status}: {error_text}",
                         )
                         await self.send_error(
                             ctx,
@@ -7814,7 +7778,7 @@ class Threads(interactions.Extension):
                     api_results = [
                         orjson.loads(line)
                         for line in content.strip().split("\n")
-                        if line and "\n" not in line and line.strip()
+                        if (line and "\n" not in line and line.strip())
                         or logger.warning(f"Failed to decode JSON line: {line}")
                     ]
 
@@ -7827,7 +7791,7 @@ class Threads(interactions.Extension):
                                 "Error processing sticker data from API. See logs for details.",
                             )
                             logger.warning(
-                                f"Sticker API for '{query}' returned data but resulted in empty api_results. Raw content: {content}"
+                                f"Sticker API for '{query}' returned data but resulted in empty api_results. Raw content: {content}",
                             )
                         else:
                             await ctx.send(f"No stickers found for '{query}'.")
@@ -7848,23 +7812,23 @@ class Threads(interactions.Extension):
 
                         if not (episode_match and time_match):
                             logger.warning(
-                                f"Could not match filename/timestamp format: {filename}, {timestamp_str}"
+                                f"Could not match filename/timestamp format: {filename}, {timestamp_str}",
                             )
                             continue
 
                         try:
                             folder_id_str = episode_match.group(1)
                             total_seconds = int(time_match.group(1)) * 60 + int(
-                                time_match.group(2)
+                                time_match.group(2),
                             )
                             sticker_url = f"https://vv-indol.vercel.app/api/preview/{folder_id_str}/{total_seconds}"
 
                             sticker_fetch_tasks.append(
-                                (idx, sticker_url, session.get(sticker_url))
+                                (idx, sticker_url, session.get(sticker_url)),
                             )
                         except ValueError:
                             logger.warning(
-                                f"Could not parse folder_id/timestamp: {filename}, {timestamp_str}"
+                                f"Could not parse folder_id/timestamp: {filename}, {timestamp_str}",
                             )
 
                     for idx, sticker_url, fetch_task in sticker_fetch_tasks:
@@ -7877,36 +7841,39 @@ class Threads(interactions.Extension):
                                         interactions.File(
                                             file_name=file_name,
                                             file=io.BytesIO(image_bytes),
-                                        )
+                                        ),
                                     )
                                 else:
                                     logger.warning(
-                                        f"Failed to fetch sticker image from {sticker_url}, status: {image_response.status}"
+                                        f"Failed to fetch sticker image from {sticker_url}, status: {image_response.status}",
                                     )
                         except Exception as e_fetch:
                             logger.error(
-                                f"Error fetching/processing sticker image from {sticker_url}: {e_fetch!r}"
+                                f"Error fetching/processing sticker image from {sticker_url}: {e_fetch!r}",
                             )
 
                     if sticker_files_to_send:
                         await ctx.send(files=sticker_files_to_send)
                     else:
                         await ctx.send(
-                            f"Found results for '{query}', but could not prepare any sticker images. Please check logs."
+                            f"Found results for '{query}', but could not prepare any sticker images. Please check logs.",
                         )
                         logger.warning(
-                            f"API returned data for '{query}', but no sticker files could be prepared/sent. API Data: {api_results}"
+                            f"API returned data for '{query}', but no sticker files could be prepared/sent. API Data: {api_results}",
                         )
 
         except aiohttp.ClientError as e:
             logger.error(f"Network error while fetching stickers: {e}", exc_info=True)
             await self.send_error(
-                ctx, "A network error occurred while trying to fetch stickers."
+                ctx,
+                "A network error occurred while trying to fetch stickers.",
             )
         except Exception as e:
             logger.error(
-                f"An unexpected error occurred in sticker_search: {e}", exc_info=True
+                f"An unexpected error occurred in sticker_search: {e}",
+                exc_info=True,
             )
             await self.send_error(
-                ctx, "An unexpected error occurred while searching for stickers."
+                ctx,
+                "An unexpected error occurred while searching for stickers.",
             )
