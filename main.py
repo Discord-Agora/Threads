@@ -5037,7 +5037,10 @@ class Threads(interactions.Extension):
         self,
         ctx: interactions.ContextMenuContext,
     ) -> None:
+        logger.info(f"User context menu triggered by {ctx.author.id} for target user {ctx.target.id}")
+
         if not await self.validate_channel(ctx):
+            logger.warning(f"Invalid channel type for user context menu: {ctx.channel.id}, type: {type(ctx.channel)}")
             await self.send_error(
                 ctx,
                 "This command can only be used in specific forum threads. Please try this command in a valid thread.",
@@ -5046,8 +5049,10 @@ class Threads(interactions.Extension):
 
         thread = ctx.channel
         target_user = ctx.target
+        logger.debug(f"Managing user {target_user.id} in thread {thread.id} (parent: {thread.parent_id})")
 
         if target_user.id == self.bot.user.id:
+            logger.warning(f"User {ctx.author.id} attempted to manage bot in thread {thread.id}")
             await self.send_error(
                 ctx,
                 "You cannot manage the bot's permissions or status in threads.",
@@ -5055,6 +5060,7 @@ class Threads(interactions.Extension):
             return
 
         if target_user.id == ctx.author.id and self.CONGRESS_MEMBER_ROLE not in {role.id for role in ctx.author.roles}:
+            logger.warning(f"User {ctx.author.id} attempted to manage themselves without required role in thread {thread.id}")
             await self.send_error(
                 ctx,
                 f"Only <@&{self.CONGRESS_MEMBER_ROLE}> have permission to manage their own status in threads. Please contact a <@&{self.CONGRESS_MEMBER_ROLE}> for assistance.",
@@ -5062,6 +5068,7 @@ class Threads(interactions.Extension):
             return
 
         if not await self.can_manage_post(thread, ctx.author):
+            logger.warning(f"User {ctx.author.id} lacks permission to manage users in thread {thread.id}")
             await self.send_error(
                 ctx,
                 "You do not have the required permissions to manage users in this thread. Please ensure you have the correct role or permissions.",
@@ -5072,8 +5079,11 @@ class Threads(interactions.Extension):
             str,
             (thread.parent_id, thread.id, target_user.id),
         )
+        logger.info(f"Checking status for user {user_id} in thread {thread_id} (parent: {channel_id})")
+
         is_banned = await self.is_user_banned(channel_id, thread_id, user_id)
         has_permissions = self.model.has_thread_permissions(thread_id, user_id)
+        logger.info(f"User {user_id} status in thread {thread_id}: banned={is_banned}, has_permissions={has_permissions}")
 
         options = (
             interactions.StringSelectOption(
@@ -5101,6 +5111,7 @@ class Threads(interactions.Extension):
             f"Permissions: {'Shared' if has_permissions else 'Not shared'}",
         )
 
+        logger.debug(f"Sending user management menu for user {user_id} in thread {thread_id}")
         await ctx.send(embeds=[embed], components=[select_menu], ephemeral=True)
 
     manage_user_regex_pattern = re.compile(r"manage_user:(\d+):(\d+):(\d+)")
@@ -5136,6 +5147,7 @@ class Threads(interactions.Extension):
 
         try:
             action = ActionType[ctx.values[0].upper()]
+            logger.info(f"Selected action: {action} for user {user_id} in thread {post_id}")
         except KeyError:
             logger.warning(f"Invalid action: {ctx.values[0]}")
             await self.send_error(
@@ -5146,6 +5158,7 @@ class Threads(interactions.Extension):
 
         try:
             member = await ctx.guild.fetch_member(int(user_id))
+            logger.info(f"Successfully fetched member {member.username} (ID: {user_id})")
         except NotFound:
             logger.warning(f"User with ID {user_id} not found in the server")
             await self.send_error(
@@ -5163,14 +5176,17 @@ class Threads(interactions.Extension):
 
         match action:
             case ActionType.BAN | ActionType.UNBAN:
+                logger.info(f"Processing {action.name} action for user {user_id} in thread {post_id}")
                 return await self.ban_unban_user(ctx, member, ActionType(action))
             case ActionType.SHARE_PERMISSIONS | ActionType.REVOKE_PERMISSIONS:
+                logger.info(f"Processing {action.name} action for user {user_id} in thread {post_id}")
                 return await self.share_revoke_permissions(
                     ctx,
                     member,
                     ActionType(action),
                 )
             case _:
+                logger.warning(f"Unsupported action: {action.name}")
                 await self.send_error(
                     ctx,
                     "The selected action is not supported. Please choose either ban/unban or share/revoke permissions from the menu.",
@@ -5269,7 +5285,9 @@ class Threads(interactions.Extension):
         member: interactions.Member,
         action: ActionType,
     ) -> Optional[ActionDetails]:
+        logger.info(f"Ban/unban action initiated by {ctx.author.id} on {member.id} with action {action.name}")
         if not await self.validate_channel(ctx):
+            logger.warning(f"Invalid channel for ban/unban: {ctx.channel.id} by user {ctx.author.id}")
             await self.send_error(
                 ctx,
                 "This command can only be used in threads. Please navigate to a thread channel and try again.",
@@ -5281,10 +5299,13 @@ class Threads(interactions.Extension):
             lambda x: {role.id for role in x.roles},
             (ctx.author, member),
         )
+        logger.debug(f"Author roles: {author_roles}, Member roles: {member_roles}")
+
         if any(
             role_id in member_roles and thread.parent_id in channels
             for role_id, channels in self.ROLE_CHANNEL_PERMISSIONS.items()
         ):
+            logger.warning(f"Attempt to ban user {member.id} with management permissions by {ctx.author.id}")
             await self.send_error(
                 ctx,
                 "Unable to ban users with management permissions. These users have special privileges that prevent them from being banned.",
@@ -5292,20 +5313,24 @@ class Threads(interactions.Extension):
             return None
 
         if thread.parent_id == self.CONGRESS_ID:
+            logger.debug(f"Congress thread ban check for {thread.id}, author: {ctx.author.id}")
             if self.CONGRESS_MEMBER_ROLE in author_roles:
                 if action is ActionType.BAN or (action is ActionType.UNBAN and member.id != ctx.author.id):
+                    logger.warning(f"Congress member {ctx.author.id} attempted unauthorized action {action.name} on {member.id}")
                     await self.send_error(
                         ctx,
                         f"<@&{self.CONGRESS_MEMBER_ROLE}> members can only unban themselves.",
                     )
                     return None
             elif self.CONGRESS_MOD_ROLE not in author_roles:
+                logger.warning(f"User {ctx.author.id} without Congress mod role attempted {action.name} on {member.id}")
                 await self.send_error(
                     ctx,
                     f"You need to be a <@&{self.CONGRESS_MOD_ROLE}> to manage bans in this forum.",
                 )
                 return None
         elif not await self.can_manage_post(thread, ctx.author):
+            logger.warning(f"User {ctx.author.id} without thread management permissions attempted {action.name} on {member.id}")
             await self.send_error(
                 ctx,
                 f"You can only {action.name.lower()} users from threads you manage.",
@@ -5313,6 +5338,7 @@ class Threads(interactions.Extension):
             return None
 
         if member.id == thread.owner_id:
+            logger.warning(f"Attempt to {action.name} thread owner {member.id} by {ctx.author.id}")
             await self.send_error(
                 ctx,
                 "Thread owners cannot be banned from their own threads. This is a built-in protection for thread creators.",
@@ -5323,6 +5349,7 @@ class Threads(interactions.Extension):
             str,
             (thread.parent_id, thread.id, member.id),
         )
+        logger.info(f"Processing {action.name} for user {user_id} in thread {thread_id} (parent: {channel_id})")
 
         async with self.ban_lock:
             banned_users = self.model.banned_users
@@ -5333,10 +5360,13 @@ class Threads(interactions.Extension):
 
             match action:
                 case ActionType.BAN:
+                    logger.info(f"Banning user {user_id} in thread {thread_id}")
                     thread_users.add(user_id)
                 case ActionType.UNBAN:
+                    logger.info(f"Unbanning user {user_id} in thread {thread_id}")
                     thread_users.discard(user_id)
                 case _:
+                    logger.error(f"Invalid action {action} requested by {ctx.author.id}")
                     await self.send_error(
                         ctx,
                         "Invalid action requested. Please select either ban or unban and try again.",
@@ -5344,6 +5374,7 @@ class Threads(interactions.Extension):
                     return None
 
             if not thread_users:
+                logger.debug(f"No more banned users in thread {thread_id}, cleaning up")
                 del banned_users[channel_id][thread_id]
                 if not banned_users[channel_id]:
                     del banned_users[channel_id]
@@ -5352,6 +5383,7 @@ class Threads(interactions.Extension):
         await self.model.invalidate_ban_cache(channel_id, thread_id, user_id)
 
         action_name = "banned" if action is ActionType.BAN else "unbanned"
+        logger.info(f"Successfully {action_name} user {user_id} in thread {thread_id} by {ctx.author.id}")
         await self.send_success(
             ctx,
             f"User has been successfully {action_name}. {'They will no longer be able to participate in this thread.' if action is ActionType.BAN else 'They can now participate in this thread again.'}",
@@ -6627,11 +6659,17 @@ class Threads(interactions.Extension):
             ),
         )
 
-        await self.is_user_banned(
+        logger.debug(f"Checking if user {author_id} is banned in thread {post_id} (parent: {channel_id})")
+
+        is_banned = await self.is_user_banned(
             channel_id,
             post_id,
             author_id,
-        ) and event.message.delete()
+        )
+
+        if is_banned:
+            logger.info(f"Deleting message from banned user {author_id} in thread {post_id}")
+            await event.message.delete()
 
     # Check methods
 
@@ -6703,12 +6741,15 @@ class Threads(interactions.Extension):
         post_id: str,
         author_id: str,
     ) -> bool:
-        return await asyncio.to_thread(
+        logger.debug(f"Checking if user {author_id} is banned in channel {channel_id}, post {post_id}")
+        result = await asyncio.to_thread(
             self.model.is_user_banned,
             channel_id,
             post_id,
             author_id,
         )
+        logger.debug(f"Ban check result for user {author_id}: {result}")
+        return result
 
     # Message methods
 
