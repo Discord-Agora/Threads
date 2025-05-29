@@ -234,14 +234,14 @@ class Model:
         self.CACHE_DURATION: timedelta = timedelta(minutes=5)
         self.post_stats: dict[str, PostStats] = {}
         self.featured_posts: dict[str, list[str]] = {}
-        self.current_pinned_post: str | None = None
+        self.current_pinned_post: Optional[str] = None
         self.converters: dict[str, StarCC.PresetConversion] = {}
         self.message_history: defaultdict[int, list[datetime]] = defaultdict(list)
         self.timeout_history: dict[str, dict[str, Any]] = {}
         self.violation_history: defaultdict[int, list[datetime]] = defaultdict(list)
         self.last_timeout_adjustment = datetime.now(timezone.utc)
         self.timeout_adjustment_interval = timedelta(hours=1)
-        self.groq_api_key: str | None = None
+        self.groq_api_key: Optional[str] = None
         self.tarot: dict[str, Any] = {}
         self.query: dict[str, int] = {}
         self.query_pattern = re.compile(r".*")
@@ -257,7 +257,7 @@ class Model:
             "last_adjustment": {"timestamp": datetime.now(timezone.utc)},
             "threshold_history": {"history": []},
         }
-        self.star_config: dict[str, int | float] = {
+        self.star_config: dict[str, Union[int, float]] = {
             "min_threshold": 3,
             "max_threshold": 10,
             "adjustment_interval": 3600,
