@@ -3479,18 +3479,18 @@ class Threads(interactions.Extension):
         except Exception as e:
             return await self.send_error(ctx, f"Failed to set GROQ API key: {e!r}")
 
-    @module_group_timeout.subcommand(
-        "check",
-        sub_cmd_description="Check message content with AI",
-    )
-    @interactions.slash_option(
-        name="message",
-        description="ID of the message or message URL to check",
-        required=True,
-        opt_type=interactions.OptionType.STRING,
-        argument_name="message_id",
-    )
-    @interactions.max_concurrency(interactions.Buckets.MEMBER, 1)
+#   @module_group_timeout.subcommand(
+#       "check",
+#       sub_cmd_description="Check message content with AI",
+#   )
+#   @interactions.slash_option(
+#       name="message",
+#       description="ID of the message or message URL to check",
+#       required=True,
+#       opt_type=interactions.OptionType.STRING,
+#       argument_name="message_id",
+#   )
+#   @interactions.max_concurrency(interactions.Buckets.MEMBER, 1)
     async def check_message(
         self,
         ctx: interactions.SlashContext,
