@@ -6216,7 +6216,7 @@ class Threads(interactions.Extension):
     async def should_replace_link(
         original: str,
         cleaned: str,
-        threshold: int = 2,
+        threshold: int = 0,
     ) -> bool:
         if not cleaned:
             logger.debug("should_replace_link: cleaned link is empty, not replacing")
@@ -6419,7 +6419,7 @@ class Threads(interactions.Extension):
             and bool(event.message.content)
         )
         logger.debug(
-            f"should_process_any_link for message {event.message.id}: {result}, guild_id={event.message.guild.id if event.message.guild else None}, is_bot={event.message.author.bot}, channel_type={type(event.message.channel).__name__}, has_content={bool(event.message.content)}",
+            f"should_process_any_link for message {event.message.id}: {result}, guild_id={event.message.guild.id if event.message.guild else None}, is_bot={event.message.author.bot}, channel_type={type(event.message.channel).__name__}, has_content={bool(event.message.content)}, content={event.message.content}",
         )
         return result
 
